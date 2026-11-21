@@ -20,7 +20,9 @@ import { insideRoom } from '../../01_Initialize_World/interiors.ts'
 import type { DeviceProfile, HardwareClass } from '../../05_Observe_Environment/governor.ts'
 import type { SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import type { Engine } from '../engine.ts'
-import { glyph, type GlyphFamily } from '../glyphs.ts'
+import { glyph, isPadFamily, padMenuWord, type GlyphFamily } from '../glyphs.ts'
+import type { PadHand } from '../../04_Connect_Hardware/gamepad.ts'
+import { pageHand } from '../padNav.ts'
 import { FirstWalk, type Beat, type ControlWords, type Stage, type StageCard, type WalkEvent, type WalkPlace, type WalkReading } from '../../09_Cognition/firstWalk.ts'
 import { saveFirstWalkPassed } from './firstWalkStore.ts'
 import { familyOf } from './useMentor.ts'
@@ -29,9 +31,9 @@ import { mustKeep, type Voice } from './voice.ts'
 /** How often the walk is asked whether it is time to say something, ms. */
 export const TICK_MS = 1000
 
-/** The device's words for the controls the walk names, from the glyph family in use. */
-export function wordsOf(f: GlyphFamily): ControlWords {
-  return { move: glyph('move', f), look: glyph('look', f), interact: glyph('interact', f), console: glyph('console', f) }
+/** The device's words for the controls the walk names, from the glyph family in use (a pad's menu, for the player's hand). */
+export function wordsOf(f: GlyphFamily, hand: PadHand = 'both'): ControlWords {
+  return { move: glyph('move', f), look: glyph('look', f), interact: glyph('interact', f), console: isPadFamily(f) ? padMenuWord(f, hand) : glyph('console', f) }
 }
 
 /** Which way (x, z) lies from (x0, z0), as the compass says it (−z is north, as the minimap draws it). */
@@ -220,7 +222,7 @@ export function useFirstWalk({ active, engine, hud, family, name, voice, termOpe
       const rooms = engine.workplaces()
       const w = new FirstWalk({
         family: familyOf(f),
-        words: wordsOf(f),
+        words: wordsOf(f, pageHand()),
         name: n,
         // Whether the map has shops (the city's five, Lakefront Metro's up to five, a surveyed region's none) and homes for
         // sale (the city's seven, Lakefront Metro's up to seven, a surveyed region's none) lets the look stage name them.

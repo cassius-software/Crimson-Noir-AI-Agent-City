@@ -18,6 +18,8 @@
  * found it hands that same ask on to what answers next and is never asked again; and with
  * nothing answering it fails the way the script stands in for, so the operator hears canned words labelled as such.
  * A chat-format server refusing a prompt too long for its window costs an ask one more request at most, never a look.
+ * Where its looks stand and each change the brain readout shows are read from memory (lookState, onChange), and
+ * `ask model auto`, or a look stopped part way, sets aside the look that found Ollama, so the next ask looks again.
  * What breaks if it is removed? A fresh machine with a model server running could still get only the script, or an
  * answer from a server the operator never meant to use.
  */
@@ -1041,4 +1043,71 @@ test("a chat-format server refusing a prompt too long for its window: one more r
   assert.deepEqual([gone.code, gone.message], ['server', `no local model server is answering at ${LLAMACPP_SERVER}: start it, or point ask at the right address (ask server <url>)`])
   assert.deepEqual(caps(), [[chatPost, 2048], [chatPost, 1095]], 'no list was asked for')
   assert.equal(r.settings().found, 'llamacpp')
+})
+
+test('lookState and onChange: where the looks stand and every change the brain readout shows, read from memory', async () => {
+  const m = machine({ 11434: [DEFAULT_MODEL] })
+  const r = createMindRouter({ fetch: m.f })
+  let heard = 0
+  const off = r.onChange(() => { heard++ })
+  assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null })
+  for (let i = 0; i < 20; i++) r.lookState()
+  assert.equal(m.calls.length, 0, 'reading it asks nothing')
+  const looking = r.installed()
+  assert.equal(r.lookState().looking, true)
+  await looking
+  assert.deepEqual(r.lookState(), { looked: true, looking: false, found: 'ollama' })
+  assert.equal(heard, 2, 'a look is heard as it begins and as it settles')
+  await ask(r)
+  assert.equal(heard, 3, 'and an answer as it ends')
+  r.setModel('qwen3:8b'); r.setServer('http://localhost:11500'); r.setApi?.('chat'); r.setVram('8'); r.connect('openai'); r.setProvider('auto')
+  assert.equal(heard, 9, 'each setting the readout shows')
+  r.setKey('k'); r.setEffort('high')
+  assert.equal(heard, 9, "the gateway's key and effort are not the readout's")
+  off()
+  r.setProvider('scripted')
+  assert.equal(heard, 9, 'unsubscribed')
+  // A look that found nothing has looked; one stopped part way has not.
+  const lone = createMindRouter({ fetch: machine({}).f })
+  await lone.installed().catch(() => [])
+  assert.deepEqual(lone.lookState(), { looked: true, looking: false, found: null })
+  const stopped = createMindRouter({ fetch: machine({ 11434: 'hangs' }).f })
+  const ctl = new AbortController()
+  const going = stopped.installed(ctl.signal)
+  ctl.abort(new DOMException('stopped', 'AbortError'))
+  await assert.rejects(going)
+  assert.deepEqual(stopped.lookState(), { looked: false, looking: false, found: null })
+})
+
+test('ask model auto after ask server: no look stands (the next ask looks, as the found row says), and the change is heard once', async () => {
+  const m = machine({ 11434: [DEFAULT_MODEL] })
+  const r = createMindRouter({ fetch: m.f })
+  await r.installed()
+  assert.deepEqual(r.lookState(), { looked: true, looking: false, found: 'ollama' })
+  r.setServer('http://localhost:11500')
+  let heard = 0
+  const off = r.onChange(() => { heard++ })
+  const asked = m.calls.length
+  assert.equal(r.setModel('auto'), 'auto: auto chooses the Ollama model again at its next look')
+  assert.equal(heard, 1, 'heard once')
+  assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null }, 'the look that found Ollama no longer stands')
+  assert.equal(r.settings().auto, 'nothing found yet: the next ask looks on this machine')
+  assert.equal(m.calls.length, asked, 'nothing asked')
+  off()
+})
+
+test('a look stopped part way sets aside the one before it: no look stands, as the found row says', async () => {
+  const m = machine({ 11434: [DEFAULT_MODEL] })
+  const r = createMindRouter({ fetch: m.f })
+  await r.installed()
+  assert.deepEqual(r.lookState(), { looked: true, looking: false, found: 'ollama' })
+  m.servers['11434'] = 'hangs'
+  const ctl = new AbortController()
+  const going = r.installed(ctl.signal)
+  await new Promise((res) => setTimeout(res, 20))
+  assert.deepEqual(r.lookState(), { looked: false, looking: true, found: null })
+  ctl.abort(new DOMException('stopped', 'AbortError'))
+  await assert.rejects(going)
+  assert.deepEqual(r.lookState(), { looked: false, looking: false, found: null }, 'the look that found Ollama no longer stands')
+  assert.equal(r.settings().auto, 'nothing found yet: the next ask looks on this machine')
 })

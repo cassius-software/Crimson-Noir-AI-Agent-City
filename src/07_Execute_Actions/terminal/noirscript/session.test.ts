@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It pins NoirScript's session and its view of the city: the public API of index.ts and
- * the order of `words()`; every reference example of the specification; the tables a fake host hands over (ten
- * crowd rows, three cars) read through `query`, indexed columns and `load_f32x4` with its zero fill; the snapshot
- * taken once per run; the null host as EMPTY_TABLES; the write intrinsics failing with the host's locked message,
- * calling through with `write` (the calls recorded), and turning a throw into the run's error; what a bad line
- * installs (nothing) and what a failing run keeps (its fns and globals); the Turing witnesses (Rule 110 over 64
- * cells for 32 generations against a JS implementation here, and a tape-machine interpreter written in NoirScript);
- * and determinism: two sessions fed the same thirty lines print the same text and count the same steps.
+ * Why does this file exist? It pins Crimson Noir Script's session and its view of the city: the public API of index.ts
+ * and the order of `words()`; every reference example of the specification; the tables a fake host hands over (ten
+ * crowd rows, three cars) read through `query`, indexed columns and `load_f32x4` with its zero fill; the snapshot taken
+ * once per run; the null host as EMPTY_TABLES; the write intrinsics failing with the host's locked message, calling
+ * through with `write` (the calls recorded), and turning a throw into the run's error; what a bad line installs
+ * (nothing) and what a failing run keeps (its fns and globals); the Turing witnesses (Rule 110 over 64 cells for 32
+ * generations against a JS implementation here, and a tape-machine interpreter written in Crimson Noir Script); and
+ * determinism: two sessions fed the same thirty lines print the same text and count the same steps.
  * What breaks if it is removed? The console's `noir` command could drift from the specification, read the host's
  * arrays live, or let a locked write through, and nothing would say so.
  */
@@ -277,7 +277,7 @@ test('a line installs its fns and globals only if the whole line compiles; a run
 // ---------------------------------------------------------------------------------------------------
 // Turing witnesses
 
-/** Rule 110 over 64 cells with zero boundaries, as plain JS: the reference the NoirScript run is pinned against. */
+/** Rule 110 over 64 cells with zero boundaries, in plain JS: the reference the Crimson Noir Script run is held to. */
 function rule110(generations: number): string[] {
   let cells = Array<number>(64).fill(0)
   cells[63] = 1
@@ -321,7 +321,7 @@ test('Turing witness: Rule 110 over a 64-cell array for 32 generations matches a
   assert.notDeepEqual(r.out[31], r.out[0])
 })
 
-test('Turing witness: a tape-machine interpreter written in NoirScript runs two programs to their known output', () => {
+test('Turing witness: a tape-machine interpreter written in Crimson Noir Script runs two programs to their known output', () => {
   // The machine: a tape of 64 cells, a data pointer and seven instructions coded 1..7 (> < + - . [ ]), 0 ending the
   // program; `.` prints the cell as a number. The programs are the ones repl.test.ts runs through R0's interpreter.
   const codes = (text: string): number[] => [...text].map((c) => '><+-.[]'.indexOf(c) + 1)

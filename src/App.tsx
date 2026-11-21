@@ -25,8 +25,8 @@ import { Hud } from './07_Execute_Actions/Hud.tsx'
 import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Terminal.tsx'
 import type { LookBridge, ModelBridge, NetBridge, PendingAct, TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { consoleBridge } from './07_Execute_Actions/terminal/consoleBridge.ts'
-import { hudLine, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
-import { isOpen as micIsOpen, Microphone, voiceStatus } from './04_Connect_Hardware/microphone.ts'
+import { hudLine, onDeviceReady, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
+import { HUSHED_DETAIL, isOpen as micIsOpen, Microphone, voiceStatus, type MicUtterance } from './04_Connect_Hardware/microphone.ts'
 import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
 import { browserDwellEnv, DwellClicker } from './04_Connect_Hardware/dwell.ts'
 import { browserScanEnv, Scanner } from './04_Connect_Hardware/scanning.ts'
@@ -44,7 +44,11 @@ import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_
 import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
+import { bindBrain, createBrainReadout, readBrain, subscribeBrain, type SiteFacts } from './09_Cognition/brainReadout.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
+import SpeechWorker from './09_Cognition/speech.worker.ts?worker&inline'
+import { SpeechEngine, speechNote, type Heard, type SpeechWorkerLike } from './09_Cognition/speechEngine.ts'
+import { speechSize, speechStore } from './09_Cognition/speechPack.ts'
 import { createWllamaRuntime } from './09_Cognition/wllamaRuntime.ts'
 import { canShareMemory } from './07_Execute_Actions/sharedBridge.ts'
 import { trackWorker } from './07_Execute_Actions/longTasks.ts'
@@ -53,7 +57,11 @@ import { createNetClient } from './10_Network/netClient.ts'
 import { admissibleChat, admissibleName } from './10_Network/replication.ts'
 import type { NetControls } from './07_Execute_Actions/engine.ts'
 import { GATE_CHECK_NAMES, type GateHandle, type GateLease, type Mind, type SkillGate } from './07_Execute_Actions/operator.ts'
-import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
+import { TouchControls, type TouchMenuHost } from './04_Connect_Hardware/TouchControls.tsx'
+import { menuItems, type MenuItem } from './04_Connect_Hardware/menuItems.ts'
+import { expectKeys, keysBlocked, keysHost, summonKeys } from './04_Connect_Hardware/keysHost.ts'
+import { PAD_UI } from './04_Connect_Hardware/gamepad.ts'
+import { PadMenu } from './07_Execute_Actions/PadMenu.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
@@ -92,7 +100,7 @@ import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { CONCIERGE_NAME, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -299,6 +307,33 @@ const PAGE_MODEL_REFUSAL = once((): string | null => {
 })
 /** Where the page keeps model files (its own storage, 09_Cognition/modelStore.ts), one per page, each file copied by a worker of its own. */
 const PAGE_MODELS = once(() => createModelStore({ copy: workerCopy(copyWorker) }))
+
+/** The speech recogniser's worker (speech.worker.ts, bundled into this file like the physics worker), counted among the page's live workers until it is ended. */
+function speechWorker(): SpeechWorkerLike {
+  const worker = new SpeechWorker({ name: 'speech' })
+  const untrack = trackWorker()
+  const terminate = worker.terminate.bind(worker)
+  worker.terminate = () => { terminate(); untrack() }
+  return worker as unknown as SpeechWorkerLike
+}
+/**
+ * The page's own speech recogniser (09_Cognition/speechEngine.ts), one per page: it reads what the microphone hears
+ * into words on this device, in any browser that runs it, from the speech pack the site serves beside the page
+ * (speechPack.ts, over siteFetch: the page's own site and nowhere else). It starts nothing until the microphone is
+ * open. Only the web copy serves a pack, and only the web copy links a web app manifest (the site model's rule too):
+ * the launcher, a preview and the apps are not asked. Where the browser says nothing of its connection (Safari,
+ * Firefox), a phone or a tablet is taken as possibly on mobile data: the pack then waits for the visitor's own press.
+ */
+const PAGE_SPEECH = once(() => new SpeechEngine({
+  fetch: siteFetch,
+  worker: speechWorker,
+  served: () => /^https?:$/.test(window.location.protocol) && document.querySelector('link[rel="manifest"]') !== null,
+  link: () => readLink(navigator),
+  unknown: () => (typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 'this browser does not say whether this device is on mobile data' : null),
+  store: speechStore(typeof caches === 'undefined' ? null : caches),
+}))
+/** How long the pill shows the sentence it last understood. */
+const SAID_MS = 6_000
 /** The module that builds the page's cognition router and its providers, for the city and the console alike. */
 type PageMindModule = typeof import('./09_Cognition/pageMind.ts')
 let pageMindLoad: Promise<PageMindModule> | null = null
@@ -582,7 +617,19 @@ function ttyBridge(vram: string | null): TerminalBridge {
       runner: shellRunner(),
       gpuMemory: shellGpuMemory,
       vram,
-    })).then(({ router, inPage }) => ({ router, inPage })),
+    })).then(({ router, inPage, native }) => {
+      // The brain readout (09_Cognition/brainReadout.ts) over the console's router: `ask` prints its brain row. A
+      // forget (ask file forget) is told to it, as the city's console tells its own.
+      const brain = createBrainReadout({ router, native, page: inPage })
+      bindBrain(brain)
+      const file = {
+        load: () => inPage.load(),
+        unload: () => inPage.unload(),
+        forget: (name?: string) => inPage.forget(name).finally(() => brain.refresh()),
+        log: () => inPage.log(),
+      }
+      return { router, inPage: file }
+    }),
   })
 }
 
@@ -910,6 +957,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const termRef = useRef<TerminalHandle>(null)
   const [engine, setEngine] = useState<Engine | null>(null)
   const [bridge, setBridge] = useState<TerminalBridge | null>(null)
+  // The pad's own menu (PadMenu.tsx), opened and closed by the pad's menu button (the engine's onPadUi).
+  const [padMenu, setPadMenu] = useState(false)
+  const closePadMenu = useCallback(() => setPadMenu(false), [])
   const [termOpen, setTermOpen] = useState(false)
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
@@ -989,6 +1039,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [siteModel, setSiteModel] = useState<SiteModelHost | null>(null)
   /** Gets the site's model by itself (09_Cognition/siteAuto.ts), once the city is on screen: set with siteModel, run once a city. */
   const siteAutoRef = useRef<(() => Promise<string>) | null>(null)
+  /** Hands the line that start ended with to the city's brain readout (09_Cognition/brainReadout.ts): set with siteAutoRef. */
+  const siteLineRef = useRef<(why: string) => void>(noop)
   /** Why the model the app runs itself couldn't start (09_Cognition/nativeMind.ts), said on Sloane's card; null elsewhere. */
   const [appModel, setAppModel] = useState<AppModelLine | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
@@ -1043,7 +1095,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   // standing (never under the boot veil or over a halted city). Why it did or did not is one line in the browser's console.
   useEffect(() => {
     if (!veilDone || locked !== null || siteModel === null) return
-    void siteAutoRef.current?.().then((why) => console.info(`Sloane's model: ${why}`), (err: unknown) => console.info(`Sloane's model: ${plain(err)}`))
+    void siteAutoRef.current?.().then((why) => {
+      siteLineRef.current(why)
+      console.info(`Sloane's model: ${why}`)
+    }, (err: unknown) => {
+      siteLineRef.current(plain(err))
+      console.info(`Sloane's model: ${plain(err)}`)
+    })
   }, [veilDone, locked, siteModel])
   // A city action an agent proposed, waiting for the operator's OK (07_Execute_Actions/acts.ts; the bridge's acts.follow
   // feeds it): the card, the input shield and the HUD line all derive from this one state, and actRef is the frame
@@ -1401,6 +1459,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     let unfollow: (() => void) | null = null
     /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
     let unlisten: (() => void) | null = null
+    // The sentence the page's own recogniser last understood, and when: the pill shows it for SAID_MS.
+    const said = { text: '', at: Number.NEGATIVE_INFINITY, n: 0 }
     /** Stops the page's keeper cueing this city's checks (its one listener), and the recruiter's events earning. */
     let uncheck: (() => void) | null = null
     let unearn: (() => void) | null = null
@@ -1446,7 +1506,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // The screen reader's line (announcer.ts): the district, a vehicle beside you, a seat taken or left, a toast.
           if (accessRef.current.announce) { const said = announcer.next(s, now); if (said) s.customer.announce = said }
           // The microphone's pill: its phase, Sloane speaking over it, which detector, and whether words are recognised.
-          s.supplier.voice = { phase: mic.phase, detail: mic.state.detail, speaking: speaker.speaking, path: mic.path, words: recruiter !== null && recruiter.mic.state === 'listening' }
+          s.supplier.voice = { phase: mic.phase, detail: mic.silent ? mic.silentDetail : mic.hushed ? HUSHED_DETAIL : mic.state.detail, speaking: speaker.speaking, path: mic.path, words: (recruiter !== null && recruiter.mic.state === 'listening') || (mic.hearing && PAGE_SPEECH().ready), silent: mic.silent, hushed: mic.hushed, note: speechNote(PAGE_SPEECH().state), speech: PAGE_SPEECH().word(), said: performance.now() - said.at < SAID_MS ? said.text : '', heard: said.n, heardText: said.text }
           // The team at work (08_Swarm/team.ts; Sloane's, or the first walk's swarm): its lanes for the Concierge, its one line for the MIC chip.
           if (crew) { s.supplier.lanes = crew.lines(); s.supplier.team = crew.line() }
           if (recruiter) s.supplier.recruiting = hudLine(recruiter, router?.running ?? 0, activityText(answering, engine.speaking, modelPhase ?? keepLine))
@@ -1529,6 +1589,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // runtime and store: it plans by the engine's profile of this device, holds the city's tier down while it loads
         // or answers (inPagePlan.ts holdTier), and says what it is doing on the HUD's activity line. The onboarding's
         // router has none: a model is never loaded while the city is still being built.
+        // Tells the brain readout (made below, once the site's model's job exists) that something it shows changed.
+        let brainHeard = noop
         const device = (): PageDevice => ({
           mobile: e.profile.mobile, lite: e.profile.lite, gpuClass: e.profile.gpuClass,
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
@@ -1556,10 +1618,21 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             blamed: () => local.provider === 'auto' || local.provider === 'native',
           }),
         })
+        // While the app checks its file (it hashes it on first launch), it is asked again, from memory, about once a
+        // second until the check is done, and again after each change the router announces (an answer stopped after the
+        // check), so the brain readout (below) follows the check to its end.
+        let checkTimer: ReturnType<typeof setTimeout> | undefined
+        const followCheck = (): void => {
+          clearTimeout(checkTimer)
+          if (cancelled || appMind.status()?.status.state !== 'preparing') return
+          checkTimer = setTimeout(() => { void appMind.installed().catch(() => []).then(followCheck) }, 1000)
+        }
         inPageMind = inPage
         // Whether the app runs a model and how it stands, asked once as the router is built (it answers from memory; a
-        // shell without the runner's commands says so at once): the rewording below waits while that model is cold.
-        void appMind.installed().catch(() => [])
+        // shell without the runner's commands says so at once): the rewording below waits while that model is cold, and
+        // the brain readout (below) shows what it said; while the app checks its file, followCheck (above) asks again.
+        void appMind.installed().catch(() => []).then(() => { brainHeard(); followCheck() })
+        const offCheck = local.onChange(followCheck)
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -1600,28 +1673,70 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         e.onRally = (req) => { void r.rally(req.agent, req.x, req.z).then((o) => e.toast('Rally', o.message)) }
         // The microphone's presses (V, the right stick's click, the Menu's item) arrive through the engine as one action.
         e.onMute = onMic
-        // The on-device recogniser (recruitment.ts) runs while the microphone is open, where the browser promises one
-        // (Firefox has none: the pill shows the level and speech only), and its microphone is never open without the
-        // pill: `recruit listen` opens the pill's microphone too, and a mute stops the recogniser. What it hears that
-        // is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal).
+        // Words. The page's own recogniser (speechEngine.ts: the speech pack served beside the page, read on this device
+        // in a worker) starts when the microphone opens and reads every sentence the microphone marks out, in every
+        // browser. The browser's own on-device recogniser (recruitment.ts) stands in only where the page's own is not
+        // to be had (no pack beside this page, or it could not start) and the browser promises one, or when
+        // `recruit listen` asks for it by name; the two never read the same speech. Neither microphone is ever open
+        // without the pill: `recruit listen` opens the pill's microphone too, and a mute stops both. What is heard
+        // that is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal).
+        const speech = PAGE_SPEECH()
         const words = (): boolean => { const R = speechEnv().Recognition; return R !== null && 'processLocally' in R.prototype }
+        const browserLive = (): boolean => { const st = r.mic.state; return st === 'listening' || st === 'starting' }
+        // The microphone hands over sentences only while the page's own recogniser is the one reading.
+        const hearing = (): void => mic.hear(speech.ready && !browserLive())
         let micWasOpen = false
+        // The open the page makes by itself as the city starts is not the visitor's ask: the speech pack then waits on
+        // mobile data or a data saver (siteAuto.ts linkHold). An open the visitor pressed for is their ask, and gets it.
+        let unasked = false
         const onMicChange = () => {
           const open = mic.open
-          const st = r.mic.state
-          const live = st === 'listening' || st === 'starting'
+          const live = browserLive()
           // Settled closed (off, muted, blocked, failed) rather than still opening: the recogniser stops whatever the
           // edge, so a mute pressed while the pill read Opening never leaves it listening behind a Muted pill.
-          if (!open && mic.phase !== 'opening') { micWasOpen = false; if (live) r.stop(); return }
+          // A download under way stops with it, and so does a start (it may fetch a bad file again): the pack is fetched
+          // only while the microphone is open (what was kept already stays kept, and the next open fetches only the rest).
+          if (!open && mic.phase !== 'opening') { micWasOpen = false; speech.flush(); if (speech.fetching) speech.stop(); if (live) r.stop(); unasked = false; return }
           if (open === micWasOpen) return
           micWasOpen = open
-          if (open && !live && words()) void r.listen()
+          const asked = !unasked
+          unasked = false
+          if (open) void speech.start(asked)
+          // The browser's own reads until the page's is ready (it is stopped then), so nothing said meanwhile is lost:
+          // where the page's own is not to be had, always; while it is on its way, only if the browser's needs nothing
+          // installed first (else its "run recruit install" line would stand for a model that will not be needed).
+          if (open && !live && words() && !speech.ready) {
+            if (!speech.claims) void r.listen()
+            else void onDeviceReady().then((ok) => { if (ok && mic.open && speech.claims && !speech.ready && !browserLive()) void r.listen() })
+          }
         }
         mic.addEventListener('change', onMicChange)
         const onRecruiterMic = (ev: Event) => {
           if ((ev as CustomEvent<{ state: string }>).detail.state === 'listening' && !mic.open && mic.phase !== 'opening') void mic.listen()
+          hearing()
         }
         r.addEventListener('mic', onRecruiterMic)
+        // The page's own recogniser changed: ready, it takes the sentences (and the browser's own stops, unless it was
+        // asked for by name after); not to be had, the browser's own stands in where there is one.
+        let speechWas = speech.phase
+        let toldHeld = false
+        const onSpeechChange = () => {
+          const phase = speech.phase
+          const edge = phase !== speechWas
+          speechWas = phase
+          if (edge && phase === 'ready' && browserLive()) r.stop()
+          hearing()
+          if (edge && (phase === 'absent' || phase === 'failed' || phase === 'waiting') && mic.open && words() && !browserLive()) void r.listen()
+          // Held back by the connection: said once, with the way to get it (a phone has no tooltip to read it from).
+          if (edge && speech.held && !toldHeld) {
+            toldHeld = true
+            e.toast('Voice', `Understanding what you say needs a ${speechSize()} speech pack, and ${speech.state.detail}. Mute and unmute the microphone to get it now.`)
+          }
+        }
+        speech.addEventListener('change', onSpeechChange)
+        // Speech starting is the moment to try again for a pack that could not be had a while ago (start() holds off by itself).
+        const onMicSpeech = (ev: Event) => { if ((ev as CustomEvent<boolean>).detail && !speech.claims) void speech.start() }
+        mic.addEventListener('speech', onMicSpeech)
         let heardId = 0
         // Sloane's own line coming back through the speakers is not the visitor's: nothing heard while she speaks, or
         // within heard.ts HEARD_QUIET_MS of her last line, reaches her.
@@ -1629,20 +1744,46 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // A line the visitor cut (a barge-in: the detector hears speech as she stops) leaves no quiet tail: what follows
         // is theirs, the words they cut her off to say.
         const unquiet = speaker.onSpeaking((on) => { if (!on && !mic.speech) quietAt = performance.now() })
+        // A sentence from the microphone, for the page's own recogniser: judged against Sloane's voice now, as it ends
+        // (reading it takes a moment, and she may have begun a line by then), so what is read is vouched for.
+        const onUtterance = (ev: Event) => {
+          const u = (ev as CustomEvent<MicUtterance>).detail
+          if (!heardNow(speaker.speaking, performance.now(), quietAt)) return
+          speech.read(u.samples, u.cut)
+        }
+        mic.addEventListener('utterance', onUtterance)
+        let vouched = false
         const onHeard = (ev: Event) => {
           const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
-          if (!heardNow(speaker.speaking, performance.now(), quietAt)) return
+          if (!vouched && !heardNow(speaker.speaking, performance.now(), quietAt)) return
           if (parseRequest(t) === null) setHeard({ id: ++heardId, text: t })
         }
         r.addEventListener('heard', onHeard)
+        // What the page's own recogniser read goes the way the browser's does: the recruiter's if it asks for a skill,
+        // else Sloane's; and the pill shows it for a moment, so the visitor sees they were understood.
+        const onSpeechHeard = (ev: Event) => {
+          const h = (ev as CustomEvent<Heard>).detail
+          said.text = h.text
+          said.at = performance.now()
+          said.n++
+          vouched = true
+          try { void r.hear(h.text) } finally { vouched = false }
+        }
+        speech.addEventListener('heard', onSpeechHeard)
         unlisten = () => {
           mic.removeEventListener('change', onMicChange)
+          mic.removeEventListener('speech', onMicSpeech)
+          mic.removeEventListener('utterance', onUtterance)
+          speech.removeEventListener('change', onSpeechChange)
+          speech.removeEventListener('heard', onSpeechHeard)
+          mic.hear(false)
+          speech.stop()
           r.removeEventListener('mic', onRecruiterMic)
           r.removeEventListener('heard', onHeard)
           unquiet()
         }
         // The microphone opens as the city starts: on a first visit (the one line), or as the visitor left it (on, not muted).
-        if (mic.opensAtBoot()) void mic.listen()
+        if (mic.opensAtBoot()) { unasked = true; void mic.listen() }
         // The operator's progression (progress.ts, the page's one keeper). The city's own deeds earn into it: the engine
         // says which (a boarding, the clock, ghost and rain keys), someone recruited arriving, a spoken request understood.
         // One listener cues every success, the console's and the city's alike: the chime and the tap (checkCue) at once,
@@ -1762,9 +1903,19 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         const siteEnd = new AbortController()
         const pin = source.pin
         let offered: Promise<SiteModelOffer | null> | null = null
+        // What the page knows of the site's model for the brain readout (below), as it last read or heard it: whether
+        // the source offers it (null: not asked yet), whether it is kept in this page, and the line the page's own start
+        // ended with. Each is noted where the page reads it anyway; the readout itself reads nothing but these.
+        let siteOffered: boolean | null = null
+        let siteKept = false
+        let siteDecided: string | null = null
         // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
-        const keptSite = async (): Promise<KeptModel | null> =>
-          (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+        const keptSite = async (): Promise<KeptModel | null> => {
+          const had = (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+          siteKept = had !== null
+          brainHeard()
+          return had
+        }
         /** Why this device or its storage cannot take the model now, or null (the same checks a tap meets). */
         const siteRefusal = async (): Promise<string | null> => {
           const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
@@ -1779,6 +1930,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const kept = await PAGE_MODELS().list().catch(() => [])
           const chosen = inPage.settings().model
           const caps = PAGE_RUNTIME().caps()
+          // As read now, for the brain readout too.
+          siteKept = kept.some((m) => m.name === pin.file && m.bytes === pin.bytes)
+          brainHeard()
           return {
             cannot: PAGE_MODEL_REFUSAL(),
             provider: local.settings().provider ?? 'auto',
@@ -1812,6 +1966,25 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             release()
           }
         })
+        // The brain readout (09_Cognition/brainReadout.ts): which brain Sloane is using and how the site's model stands,
+        // read from memory (the router, the app's model as last heard, this job, the facts noted above), never asking
+        // anything; bound for the page's readers (the first walk, the console's ask, ?debug's __SIM__.brain) until this
+        // city ends.
+        const brain = createBrainReadout({
+          router: local,
+          native: appMind,
+          page: inPage,
+          site: {
+            facts: (): SiteFacts => ({
+              from: source.from, file: pin.file, title: pin.title, bytes: pin.bytes,
+              served: source.served(), refusal: PAGE_MODEL_REFUSAL(), offered: siteOffered,
+              kept: siteKept || inPage.settings().model === pin.file, decided: siteDecided,
+            }),
+            job: siteJob,
+          },
+        })
+        const unbindBrain = bindBrain(brain)
+        brainHeard = () => brain.refresh()
         /** The job's work (siteJob above): the checks, the download, the hand-off to keepPicked. */
         const siteWork = async (how: SiteJobHow, onProgress: (p: SiteModelProgress) => void, signal: AbortSignal): Promise<string> => {
           if (keeping || fetching) throw new Error('a model file is being kept in this page already: wait for it to finish')
@@ -1858,7 +2031,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // Handed to the copy from here, in the same turn as the checks above, so no Stop lands between them: the
           // card drops its Stop now (step 'keep'), not at the copy's first progress after the header check.
           onProgress({ step: 'keep', done: 0, total: file.size })
-          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap')
+          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap').then((line) => {
+            // Kept, as the brain readout knows before the job says done (a forget reads it again: modelBridge below).
+            siteKept = true
+            return line
+          })
         }
         const siteHost = Object.freeze<SiteModelHost>({
           offer: async (): Promise<SiteModelLine | null> => {
@@ -1866,6 +2043,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             // Asked once a visit, unless the source could not say just now (webSource.offer).
             offered ??= source.offer(siteEnd.signal).catch(() => { offered = null; return null })
             const offer = await offered
+            // Heard for the brain readout, unless the source could not say just now (asked again then).
+            if (offered !== null && siteOffered !== (offer !== null)) {
+              siteOffered = offer !== null
+              brainHeard()
+            }
             if (!offer) return null
             return { title: pin.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
           },
@@ -1911,6 +2093,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           now: Date.now,
         }, pin, 'Sloane', source.from)
         siteAutoRef.current = siteAuto
+        // The line it ends with (GuiShell's effect below hears it) is the brain readout's too: the first one, since a
+        // second call only says it has looked.
+        siteLineRef.current = (why) => {
+          siteDecided ??= why
+          brain.refresh()
+        }
         stopSite = () => {
           siteJob.stop('page')
           siteEnd.abort()
@@ -1950,6 +2138,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           siteAutoRef.current = null
           siteJob.stop('page')
           siteEnd.abort()
+          siteLineRef.current = noop
+          clearTimeout(checkTimer)
+          offCheck()
+          unbindBrain()
+          brain.dispose()
           picker?.dispose()
           main?.removeEventListener('dragover', onDragOver)
           main?.removeEventListener('drop', onDrop)
@@ -1959,7 +2152,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // The console's `ask file` and `ask gpu` (terminal/bridge.ts ModelBridge).
         const modelBridge: ModelBridge = Object.freeze({
           pick: () => pickFiles().then((files) => (files ? keepPicked(files) : 'no model file was chosen')),
-          forget: (name?: string) => inPage.forget(name),
+          // The brain readout hears a forget at once, and again once whether the site's model is still kept is read.
+          forget: (name?: string) => inPage.forget(name).finally(() => {
+            brainHeard()
+            void keptSite().catch(() => null)
+          }),
           load: () => inPage.load(),
           unload: () => inPage.unload(),
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
@@ -1970,6 +2167,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // its doorstep card (the chip calls openHome itself).
         e.onBrowse = openStore
         e.onHome = openHome
+        // The pad's menu button opens or closes its menu; its select button asks for the on-screen keys
+        // (04_Connect_Hardware/ScreenKeys.tsx), on the field that has the caret, else the console's prompt.
+        e.onPadUi = (ui) => {
+          if (ui & PAD_UI.menu) setPadMenu((o) => !o)
+          if (ui & PAD_UI.keys) summonKeys()
+        }
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
@@ -2026,10 +2229,20 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           agent: agentBridge(roster, { recruit: (skill) => recruitBridge(r).ask(skill), wear: (agent, look) => e.setLook(agent, look), skills: () => SKILLS }),
           concierge: conciergeBridge(speaker),
           mic: Object.freeze({
-            status: () => voiceStatus(mic, speaker.speaking, words()
-              ? r.mic.state === 'listening' ? 'on-device recognition listening (recruitment.ts): a skill asked for, or "Sloane, ..." for a goal' : 'on-device recognition available: it listens while the microphone is open'
-              : 'on-device recognition: none in this browser; the pill shows the level and speech only (recruit <skill> types a request)'),
-            on: (on: boolean) => (on ? mic.listen().then((st) => `${st.phase}${st.detail ? ` · ${st.detail}` : ''}`) : (mic.mute(), 'muted: the device is released')),
+            status: () => [
+              ...voiceStatus(mic, speaker.speaking, words()
+                ? r.mic.state === 'listening' ? "the browser's on-device recognition listening (recruitment.ts): a skill asked for, or \"Sloane, ...\" for a goal" : "the browser's on-device recognition: available (the page's own reads first; recruit listen asks for the browser's)"
+                : "the browser's on-device recognition: none in this browser (the page's own reads where its speech pack is served)"),
+              `${speech.word()}${speech.ready ? ` · ${speech.counts.heard} sentence${speech.counts.heard === 1 ? '' : 's'} understood` : speech.claims || speech.phase === 'absent' || !speech.served ? '' : ' · mic on asks for it again'}`,
+            ],
+            // The visitor's own ask also asks again for the speech pack (past a data saver's wait or an earlier failure),
+            // once the microphone is open: a blocked or missing device fetches nothing. An open still under way (the one
+            // the city makes as it starts) becomes the visitor's ask too, so the pack is not held when it settles.
+            on: (on: boolean) => {
+              if (!on) { mic.mute(); return 'muted: the device is released' }
+              unasked = false
+              return mic.listen().then((st) => { if (micIsOpen(st.phase)) void speech.start(true); return `${st.phase}${st.detail ? ` · ${st.detail}` : ''}` })
+            },
           }),
           access: accessBridge(() => accessRef.current, () => prefersRef.current, onAccess, () => engineRef.current?.visionBlocked() ?? null),
           goal: (text: string) => goalPlan(text, { ...engineBridge, lanes }),
@@ -2039,10 +2252,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
-          // The first walk's exam, behind NoirScript's verify_ring0 / spawn_subagents / unlock_city: it reads the
-          // kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through the
-          // page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
-          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its own.
+          // The first walk's exam, behind Crimson Noir Script's verify_ring0 / spawn_subagents / unlock_city: it reads
+          // the kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through
+          // the page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
+          // earshot with a desk's skill asked over by the runner), and tells the walk; it has no write surface of its
+          // own.
           exam: createExam({
             contained: () => airgapInstalled(globalThis),
             standing: () => lockedRef.current === null,
@@ -2080,6 +2294,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           Object.assign(window, {
             __SIM__: {
               snapshot: () => e.snapshot(),
+              // The brain readout (09_Cognition/brainReadout.ts), as the walk reads it: read from memory, never a request.
+              brain: () => readBrain(),
+              onBrain: (listener: () => void) => subscribeBrain(listener),
               errors: () => e.errors,
               setHour: (h: number) => e.debugSetHour(h),
               teleport: (x: number, z: number, yaw = 0) => e.debugTeleport(x, z, yaw),
@@ -2157,6 +2374,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       link.source = null
       link.sound = () => true
       setEngine(null)
+      setPadMenu(false)
       setBridge(null)
       setSloane(null)
       setSloaneTalk(null)
@@ -2183,6 +2401,74 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const env = useMemo(() => pageEnv(), [])
   const failure = error !== null ? classify(error.cause, env) : locked !== null && haltClass(locked) !== 'audit' ? explainHalt(locked, env) : null
 
+  // The one-key actions for a pad's menu and a phone's touch Menu alike (TouchControls.tsx menuItems).
+  const menuHost: TouchMenuHost | null = engine && hud ? {
+    onConsole: () => termRef.current?.open(),
+    // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
+    onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
+    onHud: () => setHudVisible((v) => !v),
+    hudVisible,
+    ghost: hud.output.ghost === true,
+    rain: hud.output.matrix === true,
+    // The headset item only where a session can be asked for; the tap itself is the user activation.
+    onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
+    headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
+    mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
+    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+    contrast: high,
+    onContrast: () => onAccess(toggleContrast(access, prefersMore)),
+    textScale: access.scale,
+    onTextScale: () => onAccess(cycleScale(access)),
+  } : null
+  // A card that must be answered first (the action card, the way-out card, the halted city's lock screen) has the pad
+  // and the screen, and a headset shows no page at all: the pad's menu closes and the on-screen keys fold to their chip
+  // (keysHost.ts keysBlocked), taking no pad, until it is gone.
+  const inHeadset = hud !== null && (hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar')
+  const blocked = (act !== null && veilDone && locked === null && bridge !== null) || failure !== null || locked !== null || inHeadset
+  useEffect(() => {
+    keysBlocked.set(blocked)
+    if (blocked) setPadMenu(false)
+  }, [blocked])
+  useEffect(() => () => keysBlocked.set(false), [])
+  // What the on-screen keys need of the running city: player 1's pads as the game reads them, the lending of them (to
+  // the keys and the pad's menu, each its own lender: the game has them back once both have given them), the console.
+  useEffect(() => {
+    if (!engine) return
+    const lenders = new Set<string>()
+    keysHost.set({
+      pads: () => engine.input.padViews,
+      polledAt: () => engine.input.polledAt,
+      lend: (owner, on) => {
+        if (on) lenders.add(owner)
+        else lenders.delete(owner)
+        engine.input.lend(lenders.size > 0)
+      },
+      openConsole: () => termRef.current?.open(),
+    })
+    return () => {
+      keysHost.set(null)
+      engine.input.lend(false)
+    }
+  }, [engine])
+  // Sloane's card is opened from the pad's menu as her chip's own press opens it, and the goal field it focuses gets the
+  // on-screen keys open; where her card is open already, the keys go to its field.
+  const sloaneShown = hud !== null && veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null
+  const padItems: MenuItem[] = menuHost && engine ? [
+    // With the keys set off (access keys off: never on screen) the menu offers none.
+    ...(access.keys === 'off' ? [] : [{ label: 'Keyboard', run: () => { summonKeys() } }]),
+    ...(sloaneShown ? [{
+      label: CONCIERGE_NAME,
+      run: () => {
+        const chip = document.querySelector<HTMLElement>('[data-concierge="chip"]')
+        if (!chip) { summonKeys(); return }
+        expectKeys()
+        chip.click()
+      },
+    }] : []),
+    // Its Console opens the console with the keys up on the prompt (the touch Menu's, a finger's, opens them on a tap).
+    ...menuItems({ ...menuHost, onConsole: () => { expectKeys(); menuHost.onConsole() } }, engine.input),
+  ] : []
+
   return (
     <main ref={mainRef} className="relative h-full w-full overflow-hidden bg-slate-900">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
@@ -2196,24 +2482,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           input={engine.input}
           driving={hud.input.mode === 'vehicle'}
           nearVehicle={hud.input.nearVehicle}
-          menu={{
-            onConsole: () => termRef.current?.open(),
-            // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
-            onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
-            onHud: () => setHudVisible((v) => !v),
-            hudVisible,
-            ghost: hud.output.ghost === true,
-            rain: hud.output.matrix === true,
-            // The headset item only where a session can be asked for; the tap itself is the user activation.
-            onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
-            headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
-            mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
-            // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
-            contrast: high,
-            onContrast: () => onAccess(toggleContrast(access, prefersMore)),
-            textScale: access.scale,
-            onTextScale: () => onAccess(cycleScale(access)),
-          }}
+          menu={menuHost ?? undefined}
         />
       )}
       {/* Never over a halted city: the way-out card (RecoveryCard.tsx) holds focus on Restart, and Sloane's name field,
@@ -2314,6 +2583,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           dark={hud.customer.daylight < 0.35}
         />
       )}
+      {/* The pad's own menu: over the console (a pad player may open it there), under a card that must be answered first,
+          which closes it. */}
+      <PadMenu open={padMenu && !blocked} items={padItems} onClose={closePadMenu} />
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}

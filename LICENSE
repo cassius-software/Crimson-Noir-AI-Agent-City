@@ -70,8 +70,8 @@ this file.
 
 4. Third-party software
 
-The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS, and wllama in a page
-that carries the in-page model runtime). Each package remains under its own license, not under any licence above.
+The build bundles third-party open-source software (React, three.js, Rapier, Tailwind CSS, ONNX Runtime Web's
+script, and wllama in a page that carries the in-page model runtime). Each package remains under its own license, not under any licence above.
 NOTICE.md lists them; their full license texts are embedded at the end of dist/index.html by the build. The bootable
 image links font8x8 (MIT) and log (MIT OR Apache-2.0); crimson_noir_os/NOTICE.txt carries their notices.
 
@@ -87,7 +87,12 @@ their own licence, not under any licence above. The directory third_party/qwen2.
 the one model the Windows installer carries beside the app and the NixOS package's launcher serves beside its page
 (tools/nix/model.nix fetches it), Qwen2.5 1.5B Instruct (Apache-2.0, Copyright 2024 Alibaba Cloud, as quantized by
 bartowski), whose weights are not in the repository either and remain under their own licence, not under any licence
-above.
+above. The directories third_party/moonshine-tiny-en/ and third_party/onnxruntime-web/ are the record (the licences,
+the notices and the SHA-256 sums) of the speech pack the web copy serves beside its page: Moonshine Tiny, the English
+speech-to-text model (MIT, Copyright (c) 2025 Useful Sensors, Inc.), whose two model files are not in the repository
+(its vocabulary, tokens.json, is), and the WebAssembly module of ONNX Runtime Web (MIT, Copyright (c) Microsoft
+Corporation), which is not in the repository either; the notices there list what is compiled into that module. Both
+remain under their own licences, not under any licence above.
 
 
 5. Prior releases of Crimson Noir OS

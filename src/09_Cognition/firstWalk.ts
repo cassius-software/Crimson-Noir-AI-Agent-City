@@ -45,7 +45,7 @@ export const WALK = Object.freeze({
   walkMetres: 3,
 } as const)
 
-/** The role the exit program names and the swarm it asks for (docs/noirscript.md, the exam intrinsics). */
+/** The role the exit program names and the swarm it asks for (docs/crimson-noir-script.md, the exam intrinsics). */
 export const SWARM_ROLE = 'sim2real_workplaces'
 export const SWARM_SIZE = 24
 
@@ -278,7 +278,8 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
     }
     case 'console':
       if (o.family === 'touch') return { text: `Last one${name}, and then the city is yours. Open the Menu in the corner and tap Console: the city’s command line, where the city answers to typed words. The moment it opens, everything here is open to you.`, keep: ['Menu', 'Console'] }
-      if (o.family === 'pad') return { text: `Last one${name}, and then the city is yours. Open the console with the button on this card, or the ${o.words.console} key on a keyboard: the city’s command line, where the city answers to typed words. The moment it opens, everything here is open to you.`, keep: ['console'] }
+      // A pad has no ~ key: its own menu opens the console too, and the on-screen keys rise with it to type on.
+      if (o.family === 'pad') return { text: `Last one${name}, and then the city is yours. Open the console with the button on this card, or press ${o.words.console} and choose Console: the city’s command line, where the city answers to typed words, on keys that rise with it. The moment it opens, everything here is open to you.`, keep: ['console'] }
       return { text: `Last one${name}, and then the city is yours. Press the ${o.words.console} key to open the console: the city’s command line, where the city answers to typed words. The moment it opens, everything here is open to you.`, keep: [o.words.console] }
   }
 }
@@ -306,7 +307,7 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
     }
     case 'console':
       if (o.family === 'touch') return { text: 'The Menu is the button marked Menu in the corner. Tap it, then tap Console at the top of the list; the button on this card opens it too.', keep: ['Menu', 'Console'] }
-      if (o.family === 'pad') return { text: 'The button on this card opens the console; on a keyboard it is the key left of 1, under Esc.', keep: ['console'] }
+      if (o.family === 'pad') return { text: `The button on this card opens the console; so does ${o.words.console}, then Console, with keys that rise with it. On a keyboard it is the key left of 1, under Esc.`, keep: ['console'] }
       return { text: `The ${o.words.console} key is the one left of 1, under Esc. Press it once and the console drops down from the top of the screen; the button on this card opens it too.`, keep: [o.words.console] }
   }
 }

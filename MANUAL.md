@@ -78,11 +78,13 @@ at all, where Sloane still answers through a model on this machine or in the app
 | Right the car | R | north face button | Reset |
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
-| Ghost view | G | | Menu: Ghost view |
-| Rain mode | M | | Menu: Rain mode |
+| Ghost view | G | menu button, then Ghost view | Menu: Ghost view |
+| Rain mode | M | menu button, then Rain mode | Menu: Rain mode |
 | Microphone on · mute (the HUD's pill does the same) | V | right-stick click | Menu: Microphone |
-| Hide HUD | H | | Menu: Hide HUD |
-| Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
+| Hide HUD | H | menu button, then Hide HUD | Menu: Hide HUD |
+| Ring-0 console | `~` (Backquote) | menu button, then Console | Menu: Console (Close shuts it) |
+| The pad's menu | | menu button (start) | |
+| On-screen keys (see below) | not shown | select button, or the pad's menu: Keyboard | a tap on the console's prompt; the keys' chip |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
 | Allow / refuse a city action an agent proposed | Y / N with the console closed; act ok / act no, or y / n, in it | d-pad and the south face button on the card | tap Allow / Refuse |
 
@@ -95,8 +97,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   Like them it answers the touch itself, so it opens with the other thumb on the stick. It opens a sheet with the
   keyboard's one-key actions, upward and to the button's left (above the button where there is no room to its left),
   never past the edge of the screen (a sheet taller than the room scrolls); turning the phone or getting in or out of
-  a car closes it. The console opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button
-  on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
+  a car closes it. The console opens from the tap itself, its prompt served by the page's own keys (see On-screen keys
+  below), and shows a Close button on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
   takes focus. Held upright while driving, Ping, Reset and Exit car stand in a column, clear of the stick (on a phone
   under 376 px across, Reset and Exit car share a row above the brakes, which stand one over the other). On a short
   screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
@@ -173,6 +175,54 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   when centred), and then the order is dropped for good. Two real triggers held still at half pull together for half
   a second drop it too, until the pad reconnects. It is still a guess: a lever parked at its middle when the pad
   wakes, or a pair of triggers on a four-axis pad, is read as a stick and can turn or spin the view.
+- **The pad's menu** (`07_Execute_Actions/PadMenu.tsx`). The menu button (start; on a pad read by position with no
+  centre buttons, the left shoulder; with a one-handed layout, select with that hand's shoulder held) opens a menu that
+  holds the touch Menu's items (Console, Model file, Clock, Ghost view, Rain mode, Microphone, Headset, High contrast,
+  Text size, Hide HUD; one list, `04_Connect_Hardware/menuItems.ts`, so the two never drift apart), with Keyboard (the
+  on-screen keys; not offered with `access keys off`) and Sloane (her card, while her chip shows) first. The d-pad or
+  the stick moves the highlight. With both hands south chooses, and east, west, start or the left shoulder closes it
+  (the left shoulder being what opens it on a pad read by position); with the left hand the left trigger chooses and
+  start or the left shoulder closes it; with the right hand south or the right trigger chooses and east, west or start
+  closes it. A pad read by position with no centre buttons has the menu only with both hands. Its Console opens the
+  console with the on-screen keys up. While it is open it has player 1's pads, so the game stands still and no card
+  acts on the same press. Model file and Headset need a person's own press (the browser opens a file picker or a
+  headset session only inside a key, a click or a tap, and a pad's button is none), so the menu says to press them
+  again that way. The controls' hints and the first walk name the pad's own menu button (Menu, +, Start; with one
+  hand, select with that shoulder held) where they named `~` before.
+- **On-screen keys** (`04_Connect_Hardware/ScreenKeys.tsx`, `keysDesk.ts`, `keyboardSense.ts`). A keyboard the page
+  draws, with the keys a console needs (Esc, Tab, Ctrl, the arrows, a numbers board and a symbols board, an accent key
+  that turns the letter before the caret into its next accented form, Shift and caps lock), which types into the field
+  with the caret as a real key would (the key down, the edit, the field's input event, the key up after the page has
+  had its turn), so the console's history, Tab completion and Ctrl+C work from it. No browser says whether a keyboard
+  is plugged in, so the page goes by the device last used instead. After a pad's button the keys are offered on any
+  text field as a chip at the foot of the screen (the panels and the console's prompt stand above it), and open when
+  asked for: the select button, the pad's menu's Keyboard or Console, a pad press that opened the console, or the chip.
+  On a phone or tablet (a coarse main pointer and a touch screen) they open on a tap on the console's prompt (a tap, not
+  a swipe across it), keeping the phone's own keyboard down, since a phone's keyboard has no Esc, Tab, Ctrl or arrows; a
+  chat line or a name keeps the phone's own keyboard, which has the languages and the dictation the page's keys lack.
+  A key pressed on a real keyboard (a key down the browser made, with a board key's code, not a key in the middle of
+  composing) puts them away; on a phone or tablet a key typed into a field the phone's own keyboard may be serving is
+  not counted (a phone's keyboard can send the same codes), and after a counted key they stay away for ten minutes,
+  until a pad's button offers them again. With switch scanning or the dwell click on, they serve every text field.
+  `access keys on` serves every field and `access keys off` never shows them (`?keys=`, kept with the other settings).
+  With a pad the legend above the keys names its own buttons: the d-pad or the left stick moves, south types, west
+  deletes, north is a space, the shoulders move the caret, the left trigger is Shift, the right trigger or the menu
+  button is Enter, select changes the board, east puts the keys down to the chip (the caret stays); a held south button
+  repeats a letter; a stick that drifts off centre is still at rest. A tap or a click types on release, on the key it
+  ends on, and two thumbs can type at once; Backspace and the arrows act on press and repeat while held. On a phone the
+  keyboard key hands the field to the phone's own keyboard until the field loses the caret (a pad's select takes it
+  back). In the console shell with the caret at the prompt, a pad's south button presses nothing, so a letter is never
+  taken for Back to the city: the d-pad reaches the shell's buttons first. While the keys are open they have player 1's
+  pads, Sloane's card and the console stand above them and the field with the caret is scrolled into view above them,
+  and a card that must be answered first (the action card, the way-out card, the halted city's lock screen) or a
+  headset session folds them to the chip and closes the pad's menu. A finger on a key never counts as a press outside
+  Sloane's card or the first walk's. With the system's forced colours (a Windows contrast theme) the lit keys and the
+  highlight are drawn in its colours. Checked in CI and emulation only: unit suites for each part, and the browser
+  smoke test (headless Chrome with a simulated standard pad on the console alone, and the console on an emulated
+  Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or with a screen reader.
+  Headset controllers do not yet count as a device of their own (the page is not shown inside a headset session).
+  Firefox for Android has been reported to expose no gamepads to pages; there a pad's d-pad reaches the field as arrow
+  keys and `access keys on` brings the keys.
 
 ## URL options
 
@@ -990,7 +1040,11 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   Pings and the rally). The chip goes with `H`; the caption strip and the microphone pill do not (see Spatial audio).
 - **The microphone pill and Sloane's ear** (`04_Connect_Hardware/microphone.ts`, `vad.ts`). A pill under the header
   reads the microphone's state: **Mic off**, **Listening** (with a live meter of the room), **Hearing you**,
-  **Speaking** (Sloane talking over an open microphone), **Muted**, or why it could not open. It is a button: a press,
+  **Speaking** (Sloane talking over an open microphone), **Muted**, **Mic silent** (in the failure's colour: the
+  system holds the device muted, or its audio stopped arriving at all), **No sound yet** (in the usual colour: since it
+  opened, every sample has been exact silence; that is how an input behind a noise gate or a voice-isolation filter
+  waits for the first word, and it is also what the wrong input or a system mute looks like, so if you have spoken
+  and it stays, check those), or why it could not open. It is a button: a press,
   `V`, the right stick's click or the touch Menu's Microphone item mutes the microphone or opens it again, even while an action card waits for your OK or a home's doorstep card holds you still. Mute releases the device, so the browser's own microphone indicator goes
   out with the pill's; the device is never open without the pill, which outlives `H` like REC. On a phone (and in
   any compact window) the pill is a round badge on the minimap's lower-left corner instead (a microphone, struck
@@ -1018,13 +1072,51 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   it runs at 8, 16 or 32 kHz, as it can while a Bluetooth headset is in call mode, or at 64 or 128 kHz, they are three
   quarters as long.) With headphones, talking over her works after
   that; through speakers whose sound the browser does not cancel, you need to be clearly louder than her and may need
-  to keep talking. A line whose loudness swings widely can still cut itself. Where the browser promises on-device speech recognition (see Recruitment), it runs while the
-  microphone is open and the pill adds **words on-device**: a skill asked for is the recruiter's, and a line that names
-  Sloane first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt
-  open on the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken,
-  so her own line never becomes yours; when you cut her off, what you say is kept. A screen reader hears the microphone's state change wherever it was switched. Firefox has no on-device recognition, so there the pill shows the
-  level and speech only. No audio leaves the page: nothing is recorded, nothing is sent, and no speech model ships
-  with the page (no Whisper). `mic` in the console prints all of this; `mic on` and `mic off` are the switch.
+  to keep talking. A line whose loudness swings widely can still cut itself. A screen reader hears the microphone's state change wherever it was switched.
+- **Words** (`09_Cognition/speechEngine.ts`, `speechPack.ts`, `speech.worker.ts`). The page turns what you say into
+  words with a recogniser of its own, on your device, so it does not depend on the browser having one (a few
+  browsers do, and most have none). On the published web copy, when the microphone opens the page gets the **speech
+  pack** served beside it in `speech/`: Moonshine Tiny, a small English speech-to-text model, and the WebAssembly
+  module of ONNX Runtime, which runs it; four files, 41 MB, downloaded once a browser. It checks every file against
+  the SHA-256 the page was built with before it runs any, keeps the pack in the browser (Cache Storage,
+  `speech-pack:<id>`; a later visit downloads nothing and understands words offline), and reads each sentence the
+  detector marks out in a worker of the page that fetches nothing (its network is held to the page's own site and
+  this machine; one thread, so it needs no cross-origin isolation). Before reading it cuts the sentence to the part
+  that holds your words: the microphone keeps some room around them, which this model can take for the end of a
+  sentence and write nothing. While the pack is on its way the pill reads **words soon**, **words 40%** (of the whole
+  pack), **words starting**; then **words on-device**, and each sentence it understood shows on the pill in quotes
+  for a few seconds, so you can see what it took you to say. On a phone or any compact window the microphone is a
+  badge on the minimap, so the same words stand in a small chip beside it, on the minimap's lower edge; a screen
+  reader is told each sentence once. While the pack is on its way, a browser whose own on-device recogniser needs
+  nothing installed reads in the meantime, and stops once the page's is ready. The page does not download 41 MB
+  unasked on mobile data, a 2G link or with the browser's data saver on, nor on a phone or tablet whose browser does
+  not say what it is connected to (Safari and Firefox say nothing, so on an iPhone this is every time until you
+  press): the pill reads **words waiting**, a toast says why once, and muting and unmuting the microphone (or `mic on`) gets it. A mute stops a download under way, and the next
+  open fetches only what is not kept yet. A site that does not answer in 20 s, or a download that stalls for 30 s,
+  counts as a failed try. If it cannot be had, the pill reads **no words** with the reason in its tooltip, and speech
+  starting tries again a while later (a few times, further apart; the count starts again once it has read something).
+  - What is done with the words: a skill asked for is the recruiter's (Recruitment), and a line that names Sloane
+    first ("Sloane, make it night") goes to the goal dialogue as if typed; with a question or the goal prompt open on
+    the card, whatever you say is the answer. Nothing heard while she speaks, or in the 1.5 s after, is taken, so her
+    own line never becomes yours; when you cut her off, what you say is kept.
+  - Where there is no pack (`dist/index.html` opened from a file or served by `npm run preview`, and the Windows,
+    Linux, macOS, Android, iOS, NixOS and OS builds, none of which carries one yet), the browser's own on-device
+    recognition stands in where the browser promises one (see Recruitment); otherwise the pill shows the level and
+    speech only.
+  - Its limits. The model is small and English only: it mishears, more so with an accent, noise or a far microphone,
+    and it understands no other language. A sentence is at most 12 s; a longer one is read in parts and passed on as
+    one. A word said over and over ("no, no, no") and a number's repeated digits are kept; a model that loses the
+    audio and writes the same thing until its length runs out is cut back to one copy.
+  - Safari may clear a site's storage after seven days without a visit; the pack is then downloaded again.
+  - No audio leaves the device: nothing is recorded and nothing is sent. A sentence is held in memory until it is
+    read, then dropped; only its text goes on, to the recruiter or to Sloane, inside the page.
+  - What was checked: CI's `speech` job (`.github/workflows/ci.yml`) reads a synthetic spoken sentence with the pinned
+    pack under Node, and then in a desktop Chromium through a fake microphone, on a first visit and on a second that
+    must download nothing (`tools/browser/speech.mjs`). A real microphone, a phone, Safari and Firefox were not tried
+    by anyone.
+  - `mic` in the console prints the microphone's state and the recogniser's; `mic on` and `mic off` are the switch,
+    and `mic on`, once the microphone is open, also asks for the pack again, past a data saver's wait or an earlier
+    failure.
 - **Accessibility** (`07_Execute_Actions/access.ts`). Four settings, kept between visits (key
   `civic-simulation:access:v1`) and set for one visit in the URL (a URL's setting stays for that visit: changing
   another setting keeps only the one changed). Changing any of them never restarts the city. **High contrast** (`access contrast high`, the touch
@@ -1058,7 +1150,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
-  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
+  glance with the shoulder leaves it), select with the shoulder held opens the pad's menu instead, and start is a ping
+  for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake) and has no
   clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
   position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
@@ -1071,7 +1164,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
   has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
   first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
-  own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
+  own. The **on-screen keys** (`access keys auto|on|off`, `?keys=`) are under Controls. Sticky keys are the operating
+  system's own feature. How the filter and the zoom look on a real display, and the
   dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
@@ -1081,7 +1175,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
   Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
   now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
-  NoirScript lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
+  Crimson Noir Script lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
   control tower, the clearing floor, the gait lab and the rest of the sixteen indoor workplaces; a count in the
   goal is how many, up to 32, in digits or words such as "twenty-four"), and a goal nothing maps to sends two
@@ -1220,8 +1314,8 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
      deed (the Micro-Loft's costs nothing to claim; the others need a level and credits), and put the card away
      (**Done**, ×, Escape, B or the console). Sloane names the homes only where there are some, and the walk's card
      steps aside while a doorstep card is open.
-  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button
-     on a pad). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
+  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button,
+     or the pad's menu and its Console, on a pad, which also raises the on-screen keys). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
      prints her line and where to go from here (Esc closes it, or its **Close** button on touch; `help` lists every
      command), the card goes and the pass is kept. Arriving at this stage with the console already open counts as
      reaching it. Opening the console on an earlier stage passes nothing; the walk goes on where it was. (On the look
@@ -1262,25 +1356,24 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   noir unlock_city(seal, swarm);
   ```
 
-  The three words are ordinary NoirScript intrinsics (`docs/noirscript.md`) behind an exam the city wires into the
-  console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the elite tier, and
-  the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now (the four laws
-  by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it, the Ring-0 audit
-  standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a number typed from
-  memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for the role through
-  the same team runner Sloane's goals use: one lane each, a small NoirScript program at one of the sixteen workplaces,
-  dealt round the desks in order (twenty-four are two at each of the first eight and one at each of the rest), under
-  the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with nobody near, and
-  anyone within earshot who has a desk's skill is asked over too. The one role today is `sim2real_workplaces`. It
-  answers with how many lanes are still running after their first tick, never the number wished for, says which team
-  it replaced, and opens nothing while the page is not contained or the realm is halted. On a map without workplaces
-  (a surveyed region) its lanes read the city around where you started and nobody is asked over. The swarm stays at
-  work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads "Team 24 · 16
-  workplaces". `unlock_city(seal, swarm)` opens the city
-  for a seal that matches the live one and a swarm of one or more, refuses with its reason otherwise, and after the
-  pass answers that the city is already yours. After each line the console prints what the doors said. In the console
-  shell (`?boot=tty`) there is no city and no exam: the three words answer so. `tutorial [status|program]` reads the
-  stage and the program; there is no `tutorial off`.
+  The three words are ordinary Crimson Noir Script intrinsics (`docs/crimson-noir-script.md`) behind an exam the city
+  wires into the console (`src/07_Execute_Actions/onboarding/exam.ts`). None of them bypasses the Ring-0 gate or the
+  elite tier, and the exam has no write of its own. `verify_ring0()` is a seal: a 32-bit hash of what holds right now
+  (the four laws by rank and title, the gate's fifteen checks by name, the page's air gap as the host vouches for it,
+  the Ring-0 audit standing) salted with a number drawn once per page load, so it is 0 when any of that fails and a
+  number typed from memory never matches. `spawn_subagents(n, role)` sets up to `n` sub-agents (at most 32) to work for
+  the role through the same team runner Sloane's goals use: one lane each, a small Crimson Noir Script program at one of
+  the sixteen workplaces, dealt round the desks in order (twenty-four are two at each of the first eight and one at each
+  of the rest), under the lane limits and the Ring-0 gate. It works from wherever you stand, a room or a street with
+  nobody near, and anyone within earshot who has a desk's skill is asked over too. The one role today is
+  `sim2real_workplaces`. It answers with how many lanes are still running after their first tick, never the number
+  wished for, says which team it replaced, and opens nothing while the page is not contained or the realm is halted. On
+  a map without workplaces (a surveyed region) its lanes read the city around where you started and nobody is asked
+  over. The swarm stays at work after the city opens: `lanes` shows it, `lanes stop` closes it, and the MIC chip reads
+  "Team 24 · 16 workplaces". `unlock_city(seal, swarm)` opens the city for a seal that matches the live one and a swarm
+  of one or more, refuses with its reason otherwise, and after the pass answers that the city is already yours. After
+  each line the console prints what the doors said. In the console shell (`?boot=tty`) there is no city and no exam: the
+  three words answer so. `tutorial [status|program]` reads the stage and the program; there is no `tutorial off`.
 - **Debug hooks** (`?debug`): `__SIM__.walk()` is the stage on the card (`null` when off or passed) and
   `__SIM__.walkNote(event)` reports an event into it, for the browser smoke. Its `walk` scenario does the whole walk
   on the accessible path in CI's Chrome (the machine rows, the console opened early passing nothing, every button,
@@ -1766,21 +1859,21 @@ anywhere in the product.
   `XMLHttpRequest`, `WebSocket`, `EventSource`, WebRTC, `WebTransport`, `navigator.sendBeacon`), dynamic code
   (`eval`, `Function`, `importScripts`, WebAssembly), a window (`window.open`) and the host process (`process`,
   `require`, the file system). A grant keeps only the grantable bits; the check is the kernel's own `asked & !held`,
-  without a branch. A lane runs one NoirScript program a tick (`08_Swarm/lanes.ts`), in a session of its own (its
-  own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
+  without a branch. A lane runs one Crimson Noir Script program a tick (`08_Swarm/lanes.ts`), in a session of its own
+  (its own arena: no lane reads another's memory) under the lane limits: `MAX_OPS_PER_TICK`, 4,096 instructions of gas a
   tick, 256 characters of output, 256 KiB of room for its globals and frames above the city's columns (copied into its
-  own arena each tick, however many rows the city has), 32 frames of stack. The gate
-  reads every tick and every effect: `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas
-  out or reached past its bounds (an index past an array or a column, memory, depth, output, each in the VM's own
-  words), `LaneCapable` (Second Law) refuses a write or an effect the word does not cover, and a refusal trips the
-  lane panic: the lane's word is zeroed and sealed (nothing is granted to it again), the fault is hashed onto a
-  ledger chained from a fixed genesis with the city's SHA-256, one line goes to the console (`[RING-0 LANE 3]
-  isolated (gas): Zeroth Law: the lane ran its 4096-step budget out this tick; … audit 9f3a…`), and the frame goes
-  on: the other lanes run their next tick, and unlike the realm's kernel panic, which locks the page, a lane's panic
-  isolates the lane and nothing else. A plain mistake in a program (a division by zero, a type error) is an error on
-  the lane's readout and the lane runs again next tick. The network and window doors are the air gap's to hold on
-  the page's own global (`window.open` is held to this machine like `fetch`); the code and host doors are not
-  reachable from a lane at all, since a lane runs NoirScript, whose folder names none of them.
+  own arena each tick, however many rows the city has), 32 frames of stack. The gate reads every tick and every effect:
+  `GasWithin` and `MemoryWithin` (Zeroth Law) refuse a program that ran its gas out or reached past its bounds (an index
+  past an array or a column, memory, depth, output, each in the VM's own words), `LaneCapable` (Second Law) refuses a
+  write or an effect the word does not cover, and a refusal trips the lane panic: the lane's word is zeroed and sealed
+  (nothing is granted to it again), the fault is hashed onto a ledger chained from a fixed genesis with the city's
+  SHA-256, one line goes to the console (`[RING-0 LANE 3] isolated (gas): Zeroth Law: the lane ran its 4096-step budget
+  out this tick; … audit 9f3a…`), and the frame goes on: the other lanes run their next tick, and unlike the realm's
+  kernel panic, which locks the page, a lane's panic isolates the lane and nothing else. A plain mistake in a program (a
+  division by zero, a type error) is an error on the lane's readout and the lane runs again next tick. The network and
+  window doors are the air gap's to hold on the page's own global (`window.open` is held to this machine like `fetch`);
+  the code and host doors are not reachable from a lane at all, since a lane runs Crimson Noir Script, whose folder
+  names none of them.
 - **The physics realm** (`physics.worker.ts`, `simHost.ts`, `simCore.ts`). The Rapier world runs in a dedicated
   Web Worker, inlined into the single HTML file, together with everything that touches it: the fleet and its
   Bouncer, the avatar, the Sanctuary, the Ring-0 audit, the promoted pedestrians' rigs and their balance machine,
@@ -2069,7 +2162,8 @@ cinema camera, the HUD. Track B is this console on its own.
   file kept and chosen in this page, then the Claude gateway; The model providers, below). One function builds that
   router for both, `09_Cognition/pageMind.ts` `createPageMind`, so the two cannot drift. The console prints
   `ask: asking Sloane`, her reply streams in whole words, and the answer ends with its time; `ask stop` stops it and
-  keeps the words shown; one answer comes at a time. `ask` alone shows the provider and what `auto` found, and `ask
+  keeps the words shown; one answer comes at a time. `ask` alone shows the provider, what `auto` found and the brain
+  row (The model providers, below), and `ask
   provider`, `ask connect`, `ask model`, `ask server`, `ask key`, `ask effort`, `ask think`, `ask api` and `ask vram`
   change the same kept settings the city's console does. The gate is the city's: `ask` needs `operator unlock` in
   the city's console too (The operator tier, below), and the same Zeroth Law check (the page contained, the model on
@@ -2115,22 +2209,21 @@ cinema camera, the HUD. Track B is this console on its own.
   - Definitions and memory last for the console session; `r0 reset` forgets every definition and zeroes the
     memory, and `r0 words` lists the words. A line of 100,000 steps or more prints its step count. A definition
     cannot span lines; there is no `do … loop`, no floating point and no string beyond `." text"`.
-- **`noir`** is NoirScript, the console's second language (`terminal/noirscript/`): statically typed, compiled to
-  bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
+- **`noir`** is Crimson Noir Script, the console's second language (`terminal/noirscript/`): statically typed, compiled
+  to bytecode and run on a bounded VM over one memory arena. Types `i32`, `u32`, `f32` (true IEEE binary32: every
   operation rounds through `Math.fround`), `bool`, fixed arrays `[f32; 64]`, and the lane types `f32x4`, `i32x4`,
   `u32x4`, `u32x8` with lane-wise arithmetic, comparisons to masks (`vlt`, `vge`, …), `select(mask, a, b)` and
   `mask(bool)` for branchless code, horizontals (`hsum`, `hmin`, `hmax`, `any`, `all`), and the bit intrinsics
-  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound
-  operators, `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`,
-  `loop`, `for i in a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are
-  built-in tables: `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`,
-  `cars.mode` (0 ai, 1 player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`;
-  `query cars where speed > 5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four
-  lanes of a column (past the end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for
-  i in 0..10 { s += i * i; } print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1)
-  + fib(n - 2) } } print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v *
-  splat_f32x4(2.0), hsum(v));` prints `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing
-  instead of running it.
+  `popcount`, `clz`, `ctz`, `rotl`, `rotr`, `morton2`. Statements: `let`/`let mut`, assignment with compound operators,
+  `fn` with parameters, a return type and recursion, `if`/`else` (also as an expression), `while`, `loop`, `for i in
+  a..b`, `break`/`continue`; `print(a, b, …)` prints its values on one line. The city's columns are built-in tables:
+  `crowd.n`, `crowd.x`, `crowd.z`, `cars.n`, `cars.x`, `cars.z`, `cars.heading`, `cars.speed`, `cars.mode` (0 ai, 1
+  player, 2 parked), `kernel.law1`/`law2`/`law3`/`flips`/`shielded`, `frame.fps`/`ms`/`p95`; `query cars where speed >
+  5.0` counts the rows where the expression holds, and `load_f32x4(crowd.x, i)` reads four lanes of a column (past the
+  end reads 0) so a loop can stride over any length. Examples: `noir let mut s = 0; for i in 0..10 { s += i * i; }
+  print(s);` prints 285; `noir fn fib(n: i32) -> i32 { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+  print(fib(20));` prints 6765; `noir let v = f32x4(1.0, 2.0, 3.0, 4.0); print(v * splat_f32x4(2.0), hsum(v));` prints
+  `f32x4(2, 4, 6, 8) 10`. `noir asm <source>` prints the bytecode listing instead of running it.
   - **What it reads, and what it cannot touch.** The tables are copies: the engine builds fresh arrays from the
     realm's newest reading when a line runs (the bridge's one `soa.tables` reader), and the VM copies them again
     into its own arena, so a run is one consistent moment and nothing of the realm is ever handed out by reference.
@@ -2139,7 +2232,7 @@ cinema camera, the HUD. Track B is this console on its own.
     compile, and reach the city only through the Ring-0 elite tier (below): until `ring0 unlock --elite` they fail
     at run time with `elite tier locked: 'ring0 unlock --elite <passphrase>' opens it`; open, they run through the
     operator facade's four vetted paths and the line has the tier's raised limits (50,000,000 steps, 65,536
-    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/noirscript.md`.
+    characters, 16 MiB of cells, 4,096 frames). In the console alone (`?boot=tty`) every table is empty. The language's full rules, and the decisions its tests pin (a column binding names the column and reads each run's snapshot; a big array copy is charged to the step budget; a line adds memory only within its own limits), are in `docs/crimson-noir-script.md`.
   - **Bounded.** A line may run 1,000,000 steps (a vector operation is one; a `query` row costs its condition plus
     three; copying an array costs one more per 16 cells, so the budget bounds the work and not only the count), print 16,384
     characters, hold 1 MiB of 32-bit cells and nest 1,024 calls; past a bound it ends with a named error (`step
@@ -2428,11 +2521,13 @@ tethered to you, part of your swarm, until the tether breaks.
   nobody, nor does a request turned down ("I don't need a Rust developer", "we aren't hiring"), and a bare
   "go" is a verb. A later request in the same breath still counts ("never mind, recruit a designer").
   `recruit listen` reports what happened: listening, or why not (permission refused, no model, no
-  microphone), and a failure also shows on the HUD. The recogniser runs whenever the microphone pill is open
-  (see The microphone pill under Onboarding and the spatial HUD), and `recruit listen` opens the pill's
-  microphone too: the pill reads **Listening · words on-device** whenever the recogniser is open, even with the
-  HUD hidden, and muting the pill (`V`) stops the recogniser. `recruit install` is refused while the microphone
-  is open.
+  microphone), and a failure also shows on the HUD. `recruit listen` asks for the browser's own on-device
+  recogniser by name. Where the page's own recogniser is ready (the speech pack, see Words under Onboarding and the
+  spatial HUD) the same requests are heard without it, whenever the microphone pill is open: the page's own reads
+  every sentence, and the browser's stands in only where the page's is not to be had; the two never read the same
+  speech. `recruit listen` opens the pill's microphone too: the pill reads **Listening · words on-device** whenever
+  either recogniser is open, even with the HUD hidden, and muting the pill (`V`) stops both. `recruit install` is
+  refused while the microphone is open.
 - **Without a microphone.** `recruit rust` in the console, or `recruit("Rust")` in the browser's
   developer console, makes the same request. The call returns a promise with the outcome.
 - **Who can hear you.** Only people within 5 m (`AUDIBLE_RADIUS`), standing on the sidewalk, on your
@@ -2480,10 +2575,10 @@ A short two-note cue sounds where the person you asked stands, so you hear who i
 ### The Ring-0 elite tier (`ring0`)
 
 Above the operator tier sits one more, opened by a passphrase rather than a word: `ring0 unlock --elite
-<passphrase>`. It exists for the owner's own hand on the city: it opens NoirScript's write intrinsics (`tune`,
-`intent`, `cull`, `steer`) and raises NoirScript's limits for the console session, so a NoirScript program can
-set a tuning knob, send a parked car a player-style intent (a car with a driver is refused, as the realm's door
-refuses it: park it first with `setMode parked`), set the crowd's density or lean a feature of the inspector.
+<passphrase>`. It exists for the owner's own hand on the city: it opens Crimson Noir Script's write intrinsics (`tune`,
+`intent`, `cull`, `steer`) and raises Crimson Noir Script's limits for the console session, so a Crimson Noir Script
+program can set a tuning knob, send a parked car a player-style intent (a car with a driver is refused, as the realm's
+door refuses it: park it first with `setMode parked`), set the crowd's density or lean a feature of the inspector.
 
 - **Setting the passphrase.** `operator unlock`, then `ring0 elite set <passphrase>` (8 to 256 characters;
   inner spaces kept). The page keeps a record of it, `v1:<salt>:<SHA-256 of salt:passphrase>`, in this browser's
@@ -2705,6 +2800,33 @@ the OS media carry none. The city works exactly the same without any of them.
   figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
   provider joined it, read back from the earlier shape without loss; the in-page provider's file chosen, `think` and
   `gpu` are one more slice of it, and its model files are kept elsewhere, below).
+- **The brain row: which brain Sloane is using.** `ask` alone, in the city's console and in the console alone, also
+  prints a `brain` row right after the provider (and `found`) rows: one plain line saying which brain answers Sloane
+  (a model server on this machine, with its address and model; the gateway to the Claude API, which answers from off
+  this machine and is never called local; the model the app carries; the model file kept in this page; or the
+  scripted planner, when nothing answered at the last look and nothing kept since will answer the next, when
+  `ask provider scripted` chose it, or when the model chosen cannot run here, which the row says with why: the app's
+  runner failed, this page is not in an app that runs one, it cannot run a model, or it keeps no model file). Under
+  `auto` it may say instead that her next answer looks for a model: before a look stands (also after
+  `ask model auto` or a look stopped part way), once the page has kept its default model since a look found nothing,
+  or when the model found cannot run here now. After it comes how the model this build gets by default stands:
+  downloading or being kept in this page with its percentage, being checked by the app, kept, not decided yet, or
+  waiting and why (a Stop, a failed try, data saver, another provider chosen, or forgotten with `ask file forget`
+  since it was got); a page served no default model says nothing of one. The row is read from what the page already
+  holds; the look `ask` alone makes is its own, made before the row is read, and reading the row starts no look and
+  no download.
+  For contributors: `src/09_Cognition/brainReadout.ts` (it imports types only) exports `readBrain()`, which returns
+  one frozen object, `{ provider, settled, brain: 'server' | 'app' | 'page' | 'scripted' | null, local, gateway,
+  server, model, where, downloading: { done, total } | null, default: { from, file, title, bytes, state, step, done,
+  total, why } | null }` (`where` is the brain row's line; the default's `state` is `kept`, `getting`, `checking`,
+  `held`, `waiting` or `none`), the same object until something in it changes, and `subscribeBrain(listener)`, which
+  returns the unsubscribe. App.tsx binds the store (`createBrainReadout` over the router, the app's model, the
+  in-page mind and the site model's job; `bindBrain`) as the city or the console alone builds its router; before
+  that `readBrain()` returns `BRAIN_UNKNOWN`. The router, the job and the app's model (`nativeMind.ts` `onStatus`)
+  tell it of their changes, and the console's `ask file forget` does too; while the app checks its file, the city
+  asks the app again, from memory, about once a second until the check is done. `buildBrain(facts)` is the pure rule
+  the tests drive. With `?debug`, `window.__SIM__.brain()` and `window.__SIM__.onBrain(listener)` read and follow it
+  from the browser.
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -3202,12 +3324,11 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   2.39, and the `.deb` installed with apt and asked for one answer through `nativeE2e.mjs --packaged` (15 of 15
   checks; with the model moved away, 15 checks naming `native_model`'s null answer); with the console's ask added, a
   tiny-model `.deb` passed 24 of 24 (the tiny model ends before any word streams, so `ask stop` was forced once, typed
-  after the answer had ended: 24 of 24; a stop during an answer is not verified). The console alone's ask through the
-  app's own runner is also run in the tiny-model debug app under
-  WebKitGTK (`native-e2e.yml`). Run by CI, and not counted as verified above: the real model in the packages, the
-  Ubuntu 22.04 builds and their glibc floor, and the installed x86-64 app answering with the real model, in its
-  console too. Not verified: the app on a real Linux desktop, how fast it answers there, and how fast it answers on
-  Arm.
+  after the answer had ended). The console alone's ask through the app's own runner is also run in the tiny-model
+  debug app under WebKitGTK (`native-e2e.yml`). CI has run the rest on its Ubuntu 22.04 runners: the packages carry the
+  real model and need GLIBC_2.34 at most, and the installed x86-64 app answered with the real model, in its console
+  too, where `ask stop` typed after the first words stopped the answer (24 of 24 checks). Not verified: the app on a
+  real Linux desktop, how fast it answers there, and how fast it answers on Arm.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
@@ -4655,7 +4776,9 @@ by `tools/web/pwa.mjs`:
 - a service worker (`sw.js`) that keeps a copy of every file on the phone after the first visit, except anything
   under `models/` (the site's model, its manifest and its licence, which the web workflow adds beside the page and
   which it leaves to the network: the page keeps a model it downloads in its own storage, so the cache holds no
-  second 0.4 GB copy, and a load of `models/LICENSE` is the licence, not the city). From then on the city starts with
+  second 0.4 GB copy, and a load of `models/LICENSE` is the licence, not the city) or under `speech/` (the speech
+  pack, the same way: the page keeps it in a cache of its own name, `speech-pack:<id>`, which no new build's worker
+  clears, so the 41 MB are downloaded once a browser and not once a publish). From then on the city starts with
   no network at all, airplane mode included. **The host decides which build runs, and the copy delivers
   it.** On each launch the worker asks the host for one small file (`build.txt`, the published build's name, some
   forty bytes; never kept, and never taken from the browser's cache) and waits two seconds at most. The same name as
@@ -4712,6 +4835,11 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
   After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
   only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
+  Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the model's two files
+  from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin, the runtime's
+  module from the installed dependency and the vocabulary from the repository, each checked against the pin's size
+  and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and notices of both
+  beside them; a file that fails the check fails the publish.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
@@ -4721,7 +4849,12 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
 What the phone copy keeps, and what it cannot have yet:
 - **The air gap is the page's own.** The policy and the loopback gate are unchanged: the page connects to its own
   host (which only serves these files, the site's model in `models/` among them, fetched by the page once the city is
-  on screen or when you tap for it on Sloane's card) and to the phone's own `localhost`, nowhere else.
+  on screen or when you tap for it on Sloane's card, and the speech pack in `speech/`, fetched while the microphone
+  is open) and to the phone's own `localhost`, nowhere else.
+- **Words.** Safari does not say whether an iPhone is on Wi-Fi or mobile data, so the page does not download the 41 MB
+  speech pack by itself there: the pill reads **words waiting** until you press the microphone (mute and unmute it
+  once). Safari may clear the kept pack after seven days without a visit. Whether Safari runs it, and how well it
+  hears through an iPhone's microphone, nobody has tried: CI checks it in a desktop Chromium only.
 - **Models.** The model servers live on a computer's loopback (The model providers), and an iPhone runs none. The
   model in this page (A model in this page) needs pieces of WebAssembly Safari does not offer yet, so on an iPhone
   `ask`'s runtime row names what is missing, Sloane speaks from their script with the phone's own voices, and `ask`
@@ -4747,7 +4880,7 @@ load runs (isolated, then kept by its own worker, the older copy dropped), and w
 from the phone's copy of that build with its touch controls. `src/webApp.test.ts` holds the policy change, the icons,
 the registration at the page's load and the service worker's answers against a scripted host and a clock the test
 turns (every deadline, refusal, pace and query string, a newer worker's install waiting for a launch's page, and
-`models/` left to the network), and the placing of the site's model beside the web copy only; `src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
+`models/` and `speech/` left to the network, the page's keep of the speech pack never cleared), and the placing of the site's model and the speech pack beside the web copy only; `src/bootWatchdog.test.ts` holds the page's one load again and the card after it. Not verified, and needing a real
 iPhone: Safari's WebGPU in the physics worker, the home-screen launch, the isolation headers from a service worker in
 Safari on the copy and on a page streamed from the host, Safari ending a page whose download was given up so that it
 loads again, Safari's own look for a newer worker a second into a launch and its locks between two workers, and heat
@@ -5162,18 +5295,20 @@ reset and a real pad.
   (`02_Define_The_Rules/airgap.ts`). The gate: `loopbackOnly` is the one definition of "this machine" (http, https, ws
   or wss to `localhost`, `127.0.0.0/8` or `[::1]`, with no credentials), and every client (the model providers,
   speech, the room client) asks it, or an alias of it, before anything is sent. The guard: `main.tsx` calls
-  `installAirgap(globalThis)` before anything else, and `physics.worker.ts` on the worker's own global; it replaces
+  `installAirgap(globalThis)` before anything else, and `physics.worker.ts` and `speech.worker.ts` each on its own
+  global; it replaces
   `fetch`, `WebSocket`, `EventSource`, `XMLHttpRequest.prototype.open` and `importScripts` with versions that refuse,
   in one sentence, any URL that is not loopback, the page's own origin or a `blob:`/`data:` URL the page made, removes
   `RTCPeerConnection`, `WebTransport` and `navigator.sendBeacon` outright, holds `window.open` to the same places, and freezes those properties, so an
   operator script or an injected one cannot put the originals back. The proof: `10_Network/airgap.test.ts` reads the
   source and fails if any runtime file names an address off this machine, or an outbound primitive outside its
-  allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if either entry
-  point does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
+  allowlist, or an allowlisted call site whose enclosing function does not go through the gate, or if any of the three
+  entry points does not install the guard first. The page opens no connection at boot and polls nothing; on the web copy its
   only requests off this machine go to its own site, for the model served beside the page, once the city is on screen
-  or when Sloane's card needs it (`App.tsx siteFetch`, held by `09_Cognition/siteModel.ts siteUrl` to a `models/` file
+  or when Sloane's card needs it, and for the speech pack, while the microphone is open (`App.tsx siteFetch`, held by
+  `09_Cognition/siteModel.ts siteUrl` to a `models/` or `speech/` file
   beside the page: the manifest once a visit, the model once by the page itself unless it holds back (The site's model)
-  or on a tap; the airgap test allowlists that one call site); the Claude provider
+  or on a tap, the speech pack once a browser; the airgap test allowlists that one call site); the Claude provider
   needs a gateway on this machine (`http://localhost:8089`); `net join` reaches a host on this machine. What the guard
   cannot close from script (loads the HTML parser and CSS make, navigation, a remote `import()`, a fresh realm from an
   iframe or a blob worker, the browser's own speech recognition) is listed in `docs/zero-trust-audit.md`. Most of it
@@ -5300,6 +5435,26 @@ the production page finds no physics object in the page and has every crafted me
   (the Lite tier on a Mali-G52 phone, keeping a 1 GB file, the unloading in the background, the crash guard after a
   real kill, the picker and the Menu tap), a real GPU (WebGPU's speed, the frame rate under the hold, a device
   reset), the Windows app's WebView2, the NixOS launcher, a file over 2 GB, and what an iPhone's runtime row says.
+
+**The page's own speech recogniser (unreleased).** What is proved, and where:
+- **In Node, on every CI run:** the utterance tap and its resampler (`utterance.test.ts`), the microphone handing
+  sentences over only when asked (`microphone.test.ts`), the pin and the manifest (`speechPack.test.ts`), the
+  decoding loop over a fake runtime and the hash check of every file (`speechCore.test.ts`), the engine over a fake
+  worker, site and keep, from the data saver's wait to a damaged kept file, a crash and a stop (`speechEngine.test.ts`),
+  the fitting to ONNX Runtime's interface (`speechOrt.test.ts`), the build's transform of the runtime's script
+  (`speechRuntimeLean.test.ts`), the tool that fetches, checks and places the pack and the browser check's own
+  arithmetic (`speechTool.test.ts`), the air gap's structural checks on the worker (`airgap.test.ts`), the service
+  worker leaving `speech/` and the keep alone (`webApp.test.ts`), and the licences (`compliance.test.ts`).
+- **With the real pack, on every CI run (the `speech` job):** `tools/web/speechPack.mjs read` runs the pinned model
+  on the pinned runtime under Node over a sentence spoken by a speech synthesiser (espeak-ng) and must read its
+  words; then `tools/browser/speech.mjs` serves the built web copy with the pack beside it, opens it in a desktop
+  Chromium whose microphone is that recording in a quiet room, and must see the sentence on the pill, the site asked
+  for the manifest and each of the four files exactly once, and, on a second visit, the sentence again with nothing
+  under `speech/` asked for.
+- **Not verified, and needing the device or a person:** a real voice through a real microphone (accents, noise,
+  distance, a headset), every browser but that desktop Chromium (Safari and an iPhone, Firefox, Android Chrome and
+  its memory on a small phone), how long the first sentence takes on a slow phone, and the pack's 41 MB on a real
+  mobile connection.
 
 **City actions (unreleased).** What is proved, and where:
 - **In Node, on every CI run:** the catalogue and its parser (`actions.test.ts`: the eleven answers of the protocol,

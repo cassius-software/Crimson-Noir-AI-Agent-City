@@ -22,7 +22,13 @@
  * - a runner whose model would not load after a look found it, or that refuses this device when chosen with no look:
  *   failed for good, said as there being none with its reason, the card told, and every look and answer after it
  *   passing it over; a per-request failure while it stands loaded stays that answer's;
- * - whether the app's model is cold (still to be loaded) as last heard; never with no model.
+ * - whether the app's model is cold (still to be loaded) as last heard; never with no model;
+ * - what the app last said of its model (status), as the brain readout reads it: nothing before a look or an answer
+ *   asked, the file, its size and its status from a look, the file's check heard during an answer, loaded after one,
+ *   failed for good with the file's name taken out; none with no runner or no model; reading it asks the shell nothing;
+ * - whether the page has the app's model to run (present): false in a browser, a shell without the runner or an app
+ *   that carries none, null before anything asked, true once the app named one; each change of status or present told
+ *   once (onStatus), and a load beginning after the file's check heard as the check done.
  * What breaks if it is removed? The page could drift from the runner's words, keep waiting on a runner that went
  * quiet, leave it working after a Stop, or keep asking a runner that failed for good, and nothing would say so.
  */
@@ -444,4 +450,88 @@ test('chosen with ask provider native on a device the runner refuses (no look): 
   assert.deepEqual(told, [failed.status.reason])
   assert.equal(m.settings().model, FILE, 'ask\'s model row names the file the app said it carries')
   await assert.rejects(m.installed(), (e: unknown) => e instanceof CognitionError && e.code === 'refused' && e.message === failed.status.reason)
+})
+
+test('status: what the app last said of its model, read from memory, asking the shell nothing', async () => {
+  assert.equal(createNativeMind({ host: null }).status(), null, 'no runner')
+  let asked = 0
+  const s = shell(carrying('preparing'), async (_req, send) => {
+    send(WIRE.events.find((e) => e.kind === 'preparing'))
+    assert.deepEqual(m.status()?.status, { state: 'preparing', done: 4194304, total: 397808192 }, "the file's check heard during the answer")
+    send(WIRE.events.find((e) => e.kind === 'text'))
+    return WIRE.done.find((d) => d.reason === 'eog')
+  })
+  const model = s.host.model
+  s.host.model = async () => { asked++; return model() }
+  const m = createNativeMind({ host: s.host })
+  assert.equal(m.status(), null, 'nothing heard before a look or an answer asked')
+  assert.deepEqual(await m.installed(), [FILE])
+  assert.equal(asked, 1)
+  assert.deepEqual(m.status(), { file: FILE, bytes: 156992, status: { state: 'preparing', done: 0, total: 397808192 } })
+  for (let i = 0; i < 20; i++) m.status()
+  assert.equal(asked, 1, 'reading it asks the shell nothing')
+  assert.ok(Object.isFrozen(m.status()))
+  await m.answer(req(), () => {})
+  assert.deepEqual(m.status(), { file: FILE, bytes: 156992, status: { state: 'loaded' } }, 'an answer that ran says it is loaded')
+  // Failed for good after a look found it: the reason with the file's name taken out, as the card hears it.
+  const why = `the app's model (${FILE}) could not be loaded (out of memory)`
+  const f = failsToLoad(why)
+  const gone = createNativeMind({ host: f.host })
+  await gone.installed()
+  assert.deepEqual(gone.status()?.status, { state: 'ready' })
+  await assert.rejects(gone.answer(req(), () => {}))
+  assert.deepEqual(gone.status(), { file: FILE, bytes: 156992, status: { state: 'failed', reason: "the app's model could not be loaded (out of memory)", refused: false } })
+  // A failed status from a look: named the same way. No model, or a shell without the runner: none.
+  const refused = createNativeMind({ host: shell(carrying('failed')).host })
+  await assert.rejects(refused.installed())
+  assert.deepEqual(refused.status()?.status, { state: 'failed', reason: 'a plain sentence', refused: true })
+  const none = createNativeMind({ host: shell(null).host })
+  await none.installed()
+  assert.equal(none.status(), null, 'it carries no model')
+  const old = createNativeMind({ host: { model: async () => { throw new Error('unknown command native_model') }, generate: never, stop: async () => true } })
+  await old.installed()
+  assert.equal(old.status(), null, 'a shell without the runner has none')
+})
+
+test('present and onStatus: whether this page has the app\'s model, from memory, and each change told once; a load after the check is the check done', async () => {
+  assert.equal(createNativeMind({ host: null }).present(), false, 'a browser')
+  const older = createNativeMind({ host: { model: async () => { throw new Error('unknown command native_model') }, generate: never, stop: async () => true } })
+  assert.equal(older.present(), null, 'not asked yet')
+  let olderTold = 0
+  older.onStatus(() => { olderTold++ })
+  await older.installed()
+  assert.deepEqual([older.present(), olderTold], [false, 1], 'a shell without the runner: known absent, told')
+  const none = createNativeMind({ host: shell(null).host })
+  await none.installed()
+  assert.equal(none.present(), false, 'an app that carries none')
+  // Chosen with no look: the answer's own question counts too.
+  const unasked = createNativeMind({ host: shell(null).host })
+  await assert.rejects(unasked.answer(req(), () => {}), (e: unknown) => e instanceof CognitionError && e.message === NO_RUNNER)
+  assert.equal(unasked.present(), false)
+
+  // The file's check heard during an answer, then the load that follows it: each told once, as it comes.
+  const seen: string[] = []
+  const s = shell(carrying('preparing'), async (_req, send) => {
+    const preparing = WIRE.events.find((e) => e.kind === 'preparing')
+    send(preparing)
+    send(preparing)
+    send(WIRE.events.find((e) => e.kind === 'loading'))
+    send(WIRE.events.find((e) => e.kind === 'text'))
+    return WIRE.done.find((d) => d.reason === 'eog')
+  })
+  const m = createNativeMind({ host: s.host })
+  const off = m.onStatus(() => { seen.push(`${m.present()} ${m.status()?.status.state ?? 'none'}`) })
+  assert.equal(m.present(), null)
+  await m.installed()
+  assert.deepEqual(seen, ['true preparing'], 'the look: present, still checking')
+  for (let i = 0; i < 20; i++) { m.status(); m.present() }
+  await m.answer(req(), () => {})
+  assert.deepEqual(seen, ['true preparing', 'true preparing', 'true ready', 'true loaded'], 'the check heard once (the same report again is no change), ready as the load begins, loaded at the end')
+  off()
+  await m.installed()
+  assert.equal(seen.length, 4, 'an unsubscribed listener hears nothing')
+  // A listener's own failure is not the provider's.
+  const loud = createNativeMind({ host: shell(carrying('ready')).host })
+  loud.onStatus(() => { throw new Error('a reader failed') })
+  assert.deepEqual(await loud.installed(), [FILE])
 })

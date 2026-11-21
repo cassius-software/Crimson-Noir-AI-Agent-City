@@ -3,10 +3,12 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It is the page's entry point: before the page does anything it holds the global's outbound
- * primitives to this machine (02_Define_The_Rules/airgap.ts installAirgap), then mounts App under React's StrictMode,
- * tells index.html's boot watchdog that the page's script ran (window.__bootDone), and hands the watchdog any error
- * React could not catch, which would otherwise unmount the whole page to a blank screen (window.__bootFatal draws the
- * card with Restart and Open the console without React).
+ * primitives to this machine (02_Define_The_Rules/airgap.ts installAirgap), then mounts App under React's StrictMode
+ * with the on-screen keys beside it (04_Connect_Hardware/ScreenKeys.tsx: after the app, so at the console's height
+ * they draw over it, and above every shell, so the onboarding and the console alone have them), tells index.html's
+ * boot watchdog that the page's script ran (window.__bootDone), and hands the watchdog any error React could not
+ * catch, which would otherwise unmount the whole page to a blank screen (window.__bootFatal draws the card with
+ * Restart and Open the console without React).
  * What breaks if it is removed? The page never starts, and nothing would hold its outbound requests to this machine
  * before the first one.
  */
@@ -17,6 +19,7 @@ import { BRAND } from './brand.ts'
 import './index.css'
 import App from './App.tsx'
 import { TitleBar } from './07_Execute_Actions/TitleBar.tsx'
+import { ScreenKeys } from './04_Connect_Hardware/ScreenKeys.tsx'
 
 // Before anything else the page does: the global's outbound primitives are held to this machine and frozen
 // (02_Define_The_Rules/airgap.ts). The imports above evaluate first, and none of them addresses anything at load
@@ -40,6 +43,7 @@ createRoot(document.getElementById('root')!, {
   <StrictMode>
     <TitleBar />
     <App />
+    <ScreenKeys />
   </StrictMode>,
 )
 // The boot watchdog (index.html) stands down: from here a failure has the page's own cards.

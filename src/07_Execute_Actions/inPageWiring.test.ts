@@ -40,6 +40,7 @@ const code = (text: string): string => text.replace(/\{?\/\*[\s\S]*?\*\/\}?/g, '
 const APP = read('../App.tsx')
 const APP_CODE = code(APP)
 const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
+const MENU_ITEMS = read('../04_Connect_Hardware/menuItems.ts')
 const ENGINE = read('./engine.ts')
 /** The effect that builds the city around the engine (its frame loop, the engine's wiring, its teardown). */
 const EFFECT = between(APP, '    const canvas = canvasRef.current\n', '  // The boot\'s failure first')
@@ -139,7 +140,9 @@ test('the Menu: a Model file item that calls the host inside its click handler, 
   const host = between(TOUCH, 'export interface TouchMenuHost {', '\n}\n')
   assert.match(host, /^ {2}onModelFile\?: \(\) => void$/m)
   const sheet = between(TOUCH, 'function MenuSheet(', '\n}\n')
-  assert.match(sheet, /\.\.\.\(host\.onModelFile \? \[\{ label: 'Model file', run: host\.onModelFile \}\] : \[\]\),/)
+  // The items are shared with the pad's menu (PadMenu.tsx); the sheet draws them.
+  assert.match(between(MENU_ITEMS, 'export function menuItems(', '\n}\n'), /\.\.\.\(host\.onModelFile \? \[\{ label: 'Model file', run: host\.onModelFile, gesture: true \}\] : \[\]\),/)
+  assert.match(sheet, /^ {2}const items = menuItems\(host, input\)$/m)
   // act() runs the item's own function at once, inside the button's onClick (a whole tap), never on pointerdown.
   assert.match(sheet, /const act = \(fn: \(\) => void, close = true\) => \(\) => \{\n\s+input\.engageTouch\(\)\n\s+fn\(\)\n/)
   assert.match(sheet, /onClick=\{act\(it\.run, !it\.keep\)\}/)

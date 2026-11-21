@@ -10,7 +10,8 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { SCAN, Scanner, type ScanEnv, type ScanKey, type ScanTarget } from './scanning.ts'
+import { readFileSync } from 'node:fs'
+import { browserScanEnv, SCAN, Scanner, type ScanEnv, type ScanKey, type ScanTarget } from './scanning.ts'
 
 /** What has the focus in the fake page; moving it blurs the one that had it (the page's own element while it does)
  *  and tells the window's focus listeners, unless the window is in the back (`away`), where no blur or focus fires. */
@@ -350,4 +351,15 @@ test('a field the round merely offers is not taken: with no key it is passed lik
   p.tick()
   assert.deepEqual([s.current, page0.focused], [b, b], 'no key: passed on the next offer, not held')
   s.stop()
+})
+
+test('the switch is the player\'s own key: a key a script sends into a field (the on-screen keys typing) never reaches the round', () => {
+  const doc = new EventTarget()
+  const env = browserScanEnv(doc as unknown as Document)
+  const heard: unknown[] = []
+  const off = env.onKey((e) => { heard.push(e) })
+  doc.dispatchEvent(Object.assign(new Event('keydown'), { code: 'Space', key: ' ' }))
+  assert.equal(heard.length, 0, 'a made-up key is not the switch, nor typing that holds the round')
+  off()
+  assert.match(readFileSync(new URL('./scanning.ts', import.meta.url), 'utf8'), /const h = \(\(e: Event\) => \{ if \(e\.isTrusted\) fn\(e as unknown as ScanKey\) \}\) as EventListener/, 'the browser\'s own keys pass')
 })

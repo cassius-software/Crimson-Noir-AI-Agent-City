@@ -42,6 +42,7 @@ import { CONCIERGE_NAME } from './script.ts'
 import type { MachineReading } from './useFirstWalk.ts'
 import { familyOf } from './useMentor.ts'
 import { FOLD_METRES, UNMEASURED, fitLines } from './walkFold.ts'
+import { insideKeys } from '../../04_Connect_Hardware/keyboardSense.ts'
 
 /** What each key the card shows while it lends a hand does, in a word or two. */
 const CONTROL_WORD: Record<AssistControl, string> = { look: 'Look', move: 'Walk', interact: 'Get in', console: 'Console' }
@@ -206,7 +207,8 @@ export function FirstWalkCard({ visible, card, beat, assisting = false, family =
   const focusIn = useRef(false)
   const folding = foldable && shown && open
   const onOutside = useEffectEvent((e: PointerEvent) => {
-    if (e.pointerType === 'mouse') return
+    // A press on the on-screen keys (04_Connect_Hardware/ScreenKeys.tsx) is typing, not the visitor under way.
+    if (e.pointerType === 'mouse' || insideKeys(e.target)) return
     const at = e.target instanceof Node ? e.target : null
     if (at && (cardRef.current?.contains(at) || stripRef.current?.contains(at))) return
     setFolded(true)
