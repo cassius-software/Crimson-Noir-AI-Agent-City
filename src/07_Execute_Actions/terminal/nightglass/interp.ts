@@ -299,14 +299,15 @@ function binaryOf(fn: Exclude<BinaryFn, Geometric>, k: Scalar): Fn2 {
   }
 }
 
-const odd = new Float64Array(1)
-const oddWords = new Uint32Array(odd.buffer)
+/** The double fusedF32 rounds to odd, read and written little-endian whatever the host's byte order. */
+const odd = new DataView(new ArrayBuffer(8))
 
 /**
  * a b + c rounded once to f32. The product of two f32 values is exact in a double; the sum's rounding error is
  * recovered exactly (two-sum), and when it is not zero the double is rounded to odd (its last bit set, toward the
  * true value) before the one rounding to f32. A double carries more than 24 + 2 bits, so that rounding cannot land
- * on a false tie and the result is the correctly rounded f32 of the exact a b + c.
+ * on a false tie and the result is the correctly rounded f32 of the exact a b + c. The double's words go through a
+ * DataView with the byte order given, so the result is the same on every host.
  */
 function fusedF32(a: number, b: number, c: number): number {
   const p = a * b
@@ -315,17 +316,18 @@ function fusedF32(a: number, b: number, c: number): number {
   const v = s - p
   const err = (p - (s - v)) + (c - v)
   if (err === 0) return f32(s)
-  odd[0] = s
-  if ((oddWords[0] & 1) === 0) {
+  odd.setFloat64(0, s, true)
+  const lo = odd.getUint32(0, true)
+  if ((lo & 1) === 0) {
     // One step of the last bit toward the true value s + err: away from zero when err has s's sign, else toward it.
-    // The words are little-endian (the low word first); a step down from a low word of 0 borrows from the high word.
-    if (err > 0 === s > 0) oddWords[0] += 1
-    else if (oddWords[0] === 0) {
-      oddWords[0] = 0xffffffff
-      oddWords[1] -= 1
-    } else oddWords[0] -= 1
+    // The low word is at byte 0 and the high word at byte 4; a step down from a low word of 0 borrows from the high.
+    if (err > 0 === s > 0) odd.setUint32(0, lo + 1, true)
+    else if (lo === 0) {
+      odd.setUint32(0, 0xffffffff, true)
+      odd.setUint32(4, odd.getUint32(4, true) - 1, true)
+    } else odd.setUint32(0, lo - 1, true)
   }
-  return f32(odd[0])
+  return f32(odd.getFloat64(0, true))
 }
 
 function ternaryOf(fn: TernaryFn): Fn3 {

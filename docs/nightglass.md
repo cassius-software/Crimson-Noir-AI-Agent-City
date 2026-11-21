@@ -218,10 +218,12 @@ Semantics shared by every back end (**pinned**, and the GPU back end is to emit 
   and its outputs are dropped.
 - A `loop` leaves, as if by `break`, after 65,536 iterations of one entry. The reference renderer also stops a
   submission whose work passes its step budget (by default 2^30 steps across all its draws and dispatches: one per
-  invocation started, one per instruction each invocation runs, one per loop iteration, and one per rasterised
-  2 x 2 quad) with a Fault of code `bound`; the work before the stop stays in memory, no fence is signalled, and the
-  device is lost from then on (as a GPU's watchdog resets a device whose work runs too long). A back end refuses a
-  submit either before any of its work runs, or by losing the device.
+  invocation started, one per instruction each invocation runs, one per loop iteration, one per 2 x 2 quad the
+  rasteriser scans, covered or not (every quad of each triangle's bounding box within the attachment, the scissor
+  and the viewport), and one per restart index of an indexed strip) with a Fault of code `bound`; the work before
+  the stop stays in memory, no fence is signalled, and the device is lost from then on (as a GPU's watchdog resets a
+  device whose work runs too long). A back end refuses a submit either before any of its work runs, or by losing
+  the device.
 - Implicit-level `sample` and `deriv` sit at the top level of the body, before any instruction that holds a `return`
   (the rate of change is measured across neighbouring pixels, which must all reach it).
 - Outputs never written are zero; a vertex whose position is never written draws nothing.
@@ -258,6 +260,9 @@ rasterisation rules (**pinned**; the GPU back end's results are to be compared a
 - A triangle faces the viewer when its vertices run counter-clockwise as the image is seen (top row first) and
   `front` is `ccw`, or clockwise and `front` is `cw`. Triangle i of a strip uses vertices i, i+1, i+2 (i+1, i, i+2
   when i is odd); flat values come from vertex i.
+- An indexed strip restarts, as WebGPU's always do, at index 0xFFFF (`u16` indices) or 0xFFFFFFFF (`u32`), compared
+  before the base vertex is added: no triangle uses that position, and the strip begins again at the next one, its
+  triangles counted from 0 there. A list, or a strip that is not indexed, never restarts.
 - A vertex attribute whose bytes lie outside its buffer (an indexed draw can reach there) reads zero.
 - Attributes are interpolated with perspective correction; depth linearly in screen space. Fragments are shaded in
   2 x 2 quads so `deriv` and implicit-level `sample` can take differences across them (fine differences: within the
@@ -273,7 +278,8 @@ rasterisation rules (**pinned**; the GPU back end's results are to be compared a
   `texel`.
 - The contents after an `any` load or store are undefined; this renderer keeps them, and no test may rely on that.
 - Indirect numbers that the same direct command would have refused when recorded are skipped: the command draws or
-  dispatches nothing.
+  dispatches nothing. So is an indirect draw whose first instance is not 0, as WebGPU skips one without its optional
+  `indirect-first-instance` feature; a direct draw keeps its first instance.
 
 ## Limits
 
