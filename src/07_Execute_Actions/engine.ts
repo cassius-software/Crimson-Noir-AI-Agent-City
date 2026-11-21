@@ -44,10 +44,8 @@ import { GRAPHICS_RESET, gpuPaused, noteGpuLoss, recentGpuLosses } from './bootF
 import { watchLongTasks } from './longTasks.ts'
 import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
-import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics } from '../01_Initialize_World/region/regionWorld.ts'
-import { regionShopLots } from '../01_Initialize_World/region/shops.ts'
-import { regionHomeLots } from '../01_Initialize_World/region/homes.ts'
-import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics, regionStart } from '../01_Initialize_World/region/regionWorld.ts'
+import { regionPlacement } from '../01_Initialize_World/region/placement.ts'
 import { doorDir, doorFront, drawRooms, stationTable, toLocal, toWorld, WORKPLACE_KINDS, workplaceTable, workplaces, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { craftBoxesOf, regionTransit, windowNetwork } from '../01_Initialize_World/region/transit.ts'
 import { drawShops, orbitEye, shopAt, shops as cityShops, SHOP, SHOP_ORBIT, type Shop } from '../01_Initialize_World/storefronts.ts'
@@ -607,12 +605,12 @@ export class Engine {
   /** The one landmark the city has (the tallest tower: The Spire in the generated metropolis), in the engine's frame, or null in the procedural city. */
   private readonly landmarkAt: Landmark | null
   /**
-   * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots of its street
-   * window (region/workplaces.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
+   * The world's indoor workplaces (interiors.ts): the city's from its seed, a generated region's on lots all over its
+   * map (region/placement.ts), none in a surveyed region. A region's minimap draws them; the HUD counts who is at
    * work in them; the console's `rooms` lists them; `workplaceTable` and `stationTable` hand them to a swarm.
    */
   private readonly rooms: readonly Workplace[]
-  /** Where player 1 started (the city's centre sidewalk, a region's downtown arterial): the team runner's point for a desk this map has no room for. */
+  /** Where player 1 started (the city's centre sidewalk, the chosen quarter's start in a generated region, a surveyed one's downtown arterial): the team runner's point for a desk this map has no room for. */
   private readonly startAt: { readonly x: number; readonly z: number }
   /** The rooms as the team runner reads them (08_Swarm/team.ts TeamRoom), built on the first read and kept: the rooms never change while the engine lives. */
   private roomDoors: readonly { kind: string; name: string; door: { x: number; z: number } }[] | null = null
@@ -621,7 +619,7 @@ export class Engine {
   private roomStations: Float32Array | null = null
   /**
    * The world's storefronts (01_Initialize_World/storefronts.ts): the city's five from its seed, or a generated region's
-   * from its pack (region/shops.ts; none in a surveyed region).
+   * five, one in each of its quarters (region/placement.ts; none in a surveyed region).
    * The page tells which one the avatar stands in (the HUD's chip, E or B opens its catalogue) and circles the body
    * with the mirror camera while the catalogue is open.
    */
@@ -632,7 +630,7 @@ export class Engine {
   private showroom: { shop: number; angle: number } | null = null
   /**
    * The world's homes (01_Initialize_World/properties.ts): the city's seven from its seed, or a generated region's on
-   * lots of its street window (region/homes.ts: up to seven, none in a surveyed region), each with its deed's name, its
+   * lots all over its map (region/placement.ts: up to seven, none in a surveyed region), each with its deed's name, its
    * address and its arrival on the sidewalk. A home is known by its property index (Home.home), the same in every map,
    * never by its place in this list. The page tells which one the avatar stands in (the HUD's chip, E or B opens its
    * doorstep card), and Go home takes the avatar to one.
@@ -1171,8 +1169,14 @@ export class Engine {
       const layout = pack ? layoutOf(pack) : null
       const places = pack && layout ? new RegionPlaces(pack, layout) : null
       const landmark = pack && layout ? landmarkOf(pack, layout.offset) : null
-      // In a region: a sidewalk of the arterial nearest the region's origin (its downtown), facing along the street.
-      const start = places && layout ? places.spawn({ x: layout.offset.x, z: layout.offset.z }) : null
+      // A generated region's places (region/placement.ts): its sixteen workplaces, five shops and seven homes shared out
+      // over the whole map by quarter, and where a visitor who chose each quarter first stands. Null in the city and in a
+      // surveyed region (no street grid).
+      const placement = pack && layout ? regionPlacement(pack, layout, requested.seed) : null
+      // In a generated region: the sidewalk across from the shop of the quarter the visitor chose (regionWorld.ts
+      // regionStart), facing along the street toward that quarter's heart. In a surveyed one: a sidewalk of the arterial
+      // nearest the region's origin (its downtown), facing along the street.
+      const start = pack && layout && places ? regionStart(pack, layout, places, placement) : null
       const spawn = start ? { x: start.x, z: start.z } : { x: CITY_SIZE / 2 + CITY.lane, z: CITY_SIZE / 2 + 12 }
       // A generated region's street window (region/streets.ts): the CITY.blocks × CITY.blocks blocks around the start that
       // the crowd walks and the fleet drives, so the lakefront metropolis has people and traffic like the city. A surveyed
@@ -1197,18 +1201,17 @@ export class Engine {
       // The ambient occlusion (governor.ts aoCandidate), built into the chain once here where the chain can run; the tier
       // then only writes its taps, strength and switch (frame), so no tier change compiles it.
       const aoBuilt = options.post && aoCandidate(profile, requested.ao)
-      // A generated region's indoor workplaces (region/workplaces.ts): up to sixteen lots of its street window near the start,
-      // picked from the pack as it came, then hollowed out of a copy of it (regionWorld.ts hollowLots), which the page
-      // draws with the rooms' boxes and paved floors and the worker walls; the worker gets the lots themselves and builds
-      // the same rooms from them. Its five storefronts (region/shops.ts) take the lots nearest the start after them and
-      // are hollowed the same way, and then its seven homes (region/homes.ts) take theirs from what is left. The homes'
+      // A generated region's indoor workplaces, storefronts and homes: the placement's lots (region/placement.ts: all
+      // over the map, the same lots whichever quarter the visitor starts in), picked from the pack as it came, then
+      // hollowed out of a copy of it (regionWorld.ts hollowLots), which the page draws with the rooms' boxes and paved
+      // floors and the worker walls; the worker gets the lots themselves and builds the same rooms from them. The homes'
       // glass reaches the worker as the world's boxes (no car fits through a home's planters); it is handed their lots
       // only to check each home's furniture against that home's room frame (properties.ts homeFrames, the 'home'
       // command). In the city the worker builds the frames from the seed itself. A surveyed region has no window and no
       // lots: its copy is the pack.
-      const lots = pack && layout && streets ? regionWorkplaceLots(pack, layout, streets, spawn, options.seed) : []
-      const shopLots = pack && layout && streets ? regionShopLots(pack, layout, streets, spawn, options.seed, lots) : []
-      const homeLots = pack && layout && streets ? regionHomeLots(pack, layout, streets, spawn, options.seed, [...lots, ...shopLots]) : []
+      const lots = placement && streets ? placement.workplaces : []
+      const shopLots = placement && streets ? placement.shops : []
+      const homeLots = placement && streets ? placement.homes : []
       const hollow = pack && layout ? hollowLots(pack, layout, lots, shopLots, homeLots) : null
       // The window's transit (region/transit.ts regionTransit): the zebra crossings and the STOL strip the region draws,
       // the pier the page draws and the worker walls (in the plan with the rooms), and the pier's opening through the
@@ -3016,10 +3019,10 @@ export class Engine {
     }
   }
 
-  /** "Region · Street & Cross Street" (the region's name alone where no street is near). */
+  /** "Region · Street & Cross Street" (regionWorld.ts RegionPlaces.label): led by the one of the map's five regions the
+   *  point stands in, the map's own name where it stands in none; the lead alone where no street is near. */
   private regionPlace(x: number, z: number): string {
-    const here = this.places?.place(x, z) ?? ''
-    return here && here !== this.regionName ? `${this.regionName} · ${here}` : (this.regionName ?? '')
+    return this.places?.label(x, z) ?? this.regionName ?? ''
   }
 
   /**

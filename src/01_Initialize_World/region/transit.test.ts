@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? Lakefront Metro's transit (transit.ts) is laid over a street window that has dropped
  * streets, dead ends, water and a 554 m needle, and the physics worker lays it again from what the page sends. These
- * tests hold it to its promises on the real generated map (three seeds, the four land zones each): the elevated loop
+ * tests hold it to its promises on the real generated map (three seeds, the five land zones each): the elevated loop
  * rounds walkable streets with four stations and its columns stand clear of every lamp, tree, signal and the
  * carriageway; every train, drone, plane and VTOL piece clears every craft box as the city's INV-1 holds (same
  * envelopes); the racetrack stays inside the region and off The Spire; the network's craft audit clean on the realm's
@@ -33,8 +33,8 @@ import { packOf } from '../lakefrontPack.ts'
 import { MACRO } from '../macroCity.ts'
 import type { Pt, Rect } from './clip.ts'
 import { polygonAt, polygonCount, roadAt, validatePack, type RegionPack } from './pack.ts'
+import { regionPlacement } from './placement.ts'
 import { SEG, hSeg, streetGridOf, vSeg, windowFurniture, type StreetGrid } from './streets.ts'
-import { regionWorkplaceLots } from './workplaces.ts'
 import {
   HIGH_BAND, MAX_CRAFT_BOXES, RACETRACK_REACH, TRANSIT, WALK_STREET_HALF, craftBoxesOf, crosswalks, droneCells, ferryBerth, ferryDock, needlesOf, padCells,
   regionTransit, stolStrip, trainRectangle, walkableRectangle, windowDroneCorridors, windowNetwork, windowPlaneCorridor, windowTrainLoop, windowVtolRoutes,
@@ -49,7 +49,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { RegionPlaces, SHORE_WALL, SURFACE, hollowLots, layoutOf, regionMeshes, regionPhysics } = await import('./regionWorld.ts')
+const { RegionPlaces, SHORE_WALL, SURFACE, hollowLots, layoutOf, regionMeshes, regionPhysics, regionStart } = await import('./regionWorld.ts')
 const { SimCore } = await import('../../07_Execute_Actions/simCore.ts')
 const { createSimHost } = await import('../../07_Execute_Actions/simHost.ts')
 
@@ -63,16 +63,18 @@ const WINDOWS: Window[] = [1337, 7, 42].flatMap((seed) => {
   return Object.entries(ZONE).filter(([name]) => name !== 'lake').map(([zone, z]) => {
     const pack = packOf(map, z)
     const layout = layoutOf(pack)
-    const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+    const placed = regionPlacement(pack, layout, seed)!
+    const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placed)
     const g = streetGridOf(pack, layout.offset, start)!
-    const hollow = hollowLots(pack, layout, regionWorkplaceLots(pack, layout, g, start, seed))
+    const hollow = hollowLots(pack, layout, placed.workplaces, placed.shops, placed.homes)
     const transit = regionTransit(hollow.pack, layout, g)
     const plan = [...hollow.plan, ...transit.plan].map((b) => b.box)
     const boxes = craftBoxesOf(hollow.pack, layout.offset, g, plan)
     return { seed, zone, pack: hollow.pack, layout, start, g, boxes, plan, net: windowNetwork(seed, g, boxes, layout.bounds), transit }
   })
 })
-// The five zones of a seed share one map, and two of them (northRidge, grandRavine) the same window: fourteen distinct.
+// The five zones of a seed share one map and one set of places (placement.ts); each starts in its own quarter, so the
+// fifteen windows are fifteen different ones.
 const name = (w: Window) => `seed ${w.seed} ${w.zone}`
 const walk = (bits: number) => (bits & SEG.walk) !== 0
 const kinds = (w: Window) => w.net.tracks.reduce<Record<string, number>>((n, t) => ({ ...n, [t.kind]: (n[t.kind] ?? 0) + 1 }), {})
@@ -235,10 +237,10 @@ test('INV-1 for the window: every train, drone, plane and VTOL piece clears ever
     assert.ok(HIGH_BAND.cruise[1] < TRACKS.plane.altitude - TRACKS.plane.halfHeight && HIGH_BAND.cruise[0] > TRACKS.drone.altitude[1] + TRACKS.drone.halfSize)
   }
   // A generated map's houses are 10 m and its towers 60 m and more, so the city's band rarely serves; the high band
-  // finds a loop round a hub's towers on twelve of the fifteen windows (seed 7's east bluffs and its north ridge, the
-  // grand ravine's window too, have no tower in theirs).
-  assert.ok(withVtol >= 11, `${withVtol} windows with a VTOL route`)
-  assert.deepEqual(WINDOWS.filter((w) => !kinds(w).vtol).map(name), ['seed 7 eastBluffs', 'seed 7 northRidge', 'seed 7 grandRavine'])
+  // finds a loop round a hub's towers on fourteen of the fifteen windows (each quarter starts by its tallest cluster;
+  // seed 7's east bluffs has no four towers a clear loop joins).
+  assert.ok(withVtol >= 14, `${withVtol} windows with a VTOL route`)
+  assert.deepEqual(WINDOWS.filter((w) => !kinds(w).vtol).map(name), ['seed 7 eastBluffs'])
   assert.deepEqual(windowVtolRoutes(WINDOWS[0].g, []), [], 'no boxes, no routes')
 })
 
@@ -264,7 +266,8 @@ test('windowNetwork: the car rings first then the loop, the corridors, the racet
     assert.ok(firstSky > 0 && order.slice(0, firstSky).every((k) => k === 'car') && order.slice(firstSky).every((k) => k !== 'car'), `${name(w)}: the car rings first`)
     assert.equal(w.net.tracks.filter((t) => t.kind === 'train').length, 1)
     assert.equal(w.net.tracks.filter((t) => t.kind === 'plane').length, 1)
-    assert.ok(w.net.tracks.filter((t) => t.kind === 'drone').length >= 6, `${name(w)}: ${kinds(w).drone} drone corridors`)
+    // A window with a ravine or the lake across it has fewer walkable cells: four corridors at the least (two cells).
+    assert.ok(w.net.tracks.filter((t) => t.kind === 'drone').length >= 4, `${name(w)}: ${kinds(w).drone} drone corridors`)
     assert.deepEqual(windowNetwork(w.seed, w.g, w.boxes, w.layout.bounds), w.net, `${name(w)}: deterministic`)
     const fleet = new TrackFleet(w.net)
     assert.ok(fleet.count > 0, `${name(w)}: ${fleet.count} craft`)
@@ -276,22 +279,36 @@ test('windowNetwork: the car rings first then the loop, the corridors, the racet
   }
 })
 
-test('craftBoxesOf: the standing rectangular buildings of the window and its ring, every needle, then the plan; under the worker\'s cap; the same every time', () => {
+test('craftBoxesOf: the standing rectangular buildings of the window and its ring, every needle, then the plan\'s boxes on those lots (a room across the map is no pad); under the worker\'s cap; the same every time', () => {
+  let far = 0
   for (const w of WINDOWS) {
     assert.ok(w.boxes.length > 100 && w.boxes.length <= MAX_CRAFT_BOXES, `${name(w)}: ${w.boxes.length} boxes`)
     for (const b of w.boxes) assert.ok(b[1] >= 0 && b[4] > b[1] && b[0] < b[3] && b[2] < b[5], `${name(w)}: a standing box with its low corner first`)
-    for (const b of w.boxes.slice(0, w.boxes.length - w.plan.length)) assert.equal(b[1], 0, `${name(w)}: a building stands on the ground`)
     const B = w.g.blocks, k0 = w.g.originX / P, m0 = w.g.originZ / P
     const needle = TRACKS.plane.altitude - TRACKS.plane.halfHeight
-    const planFrom = w.boxes.length - w.plan.length
-    for (const [i, b] of w.boxes.entries()) {
-      if (i >= planFrom) { assert.deepEqual(b, w.plan[i - planFrom]); continue }
+    const onWindow = (b: Box) => {
       const kc = ((b[0] + b[3]) / 2) / P, mc = ((b[2] + b[5]) / 2) / P
-      const onWindow = kc >= k0 - 1 && kc < k0 + B + 1 && mc >= m0 - 1 && mc < m0 + B + 1
-      assert.ok(onWindow || b[4] > needle, `${name(w)}: a box off the window and its ring is a needle`)
+      return kc >= k0 - 1 && kc < k0 + B + 1 && mc >= m0 - 1 && mc < m0 + B + 1
+    }
+    // The plan (the places' boxes all over the map, the pier wherever the nearest shore is): its boxes on the window
+    // and its ring, in the plan's order, after the buildings.
+    const near = w.plan.filter(onWindow)
+    far += w.plan.length - near.length
+    assert.ok(near.length > 0 && near.length < w.plan.length, `${name(w)}: ${near.length} of the plan's ${w.plan.length} boxes are the window's`)
+    const planFrom = w.boxes.length - near.length
+    for (const b of w.boxes.slice(0, planFrom)) assert.equal(b[1], 0, `${name(w)}: a building stands on the ground`)
+    for (const [i, b] of w.boxes.entries()) {
+      if (i >= planFrom) { assert.deepEqual(b, near[i - planFrom]); continue }
+      assert.ok(onWindow(b) || b[4] > needle, `${name(w)}: a box off the window and its ring is a needle`)
     }
     assert.deepEqual(craftBoxesOf(w.pack, w.layout.offset, w.g, w.plan), w.boxes)
+    // No VTOL pad is a roof off the window and its ring (a far room's carried tower, before, could have been one).
+    for (const t of w.net.tracks.filter((x) => x.kind === 'vtol')) for (const s of t.stations) {
+      const q = poseAt(t, s)
+      assert.ok(q.x >= (k0 - 1) * P && q.x <= (k0 + B + 1) * P && q.z >= (m0 - 1) * P && q.z <= (m0 + B + 1) * P, `${name(w)}: a VTOL pad at (${q.x}, ${q.z}) is the window's`)
+    }
   }
+  assert.ok(far > 1000, `${far} plan boxes stand off their windows`)
 })
 
 test('crosswalks: one on every walkable arm of every node where two or more meet, in the city\'s band from the centre, six stripes across a car street and three across a pedestrian one, inside the carriageway', () => {
@@ -368,6 +385,15 @@ test('the ferry dock: a pier from the shore nearest the window, its deck from th
     assert.ok(Math.abs(Math.sin(dock.berth.heading) - n[0]) < 1e-9 && Math.abs(Math.cos(dock.berth.heading) - n[1]) < 1e-9, 'the berth faces out over the water')
     // Nine boxes: the deck, the platform, two side rails, two platform rails, two steps between them, the end rail.
     assert.equal(dock.boxes.length, 9)
+    // No column of the window's elevated loop stands in the pier's mouth or its railings, from the shore's line to the
+    // platform's end (seed 1337's metropolis runs its loop along the quay: there the pier opens at a street's foot,
+    // between two columns sixteen metres apart).
+    const t: Pt = [-n[1], n[0]]
+    for (const [x, z] of guideway(windowTrainLoop(w.g)!, w.g.furniture).columns) {
+      const along = (x - e[0]) * n[0] + (z - e[1]) * n[1], across = Math.abs((x - e[0]) * t[0] + (z - e[1]) * t[1])
+      const half = along > quay + length ? platform.halfWidth : halfWidth
+      assert.ok(along < -1 || along > quay + length + platform.length + 1 || across >= half + TRACKS.train.columnRadius + 1 - 1e-9, `${name(w)}: a column at (${x}, ${z}) stands in the pier`)
+    }
     const decks = dock.boxes.filter((b) => b.box[4] === deck), rails = dock.boxes.filter((b) => b.box[4] === deck + rail)
     assert.equal(decks.length, 2)
     assert.equal(rails.length, 7)

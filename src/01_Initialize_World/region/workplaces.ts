@@ -2,34 +2,36 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It gives a generated region (Lakefront Metro, through its street window, streets.ts) the
- * procedural city's sixteen indoor workplaces (interiors.ts): which lots of the window become rooms, which street front
- * each doorway faces, and the commute's route table the crowd shader walks to them.
+ * Why does this file exist? It gives a generated region (Lakefront Metro) the procedural city's sixteen indoor
+ * workplaces (interiors.ts): which lots may become rooms, which street front each doorway faces, and the commute's
+ * route table the crowd shader walks to them.
  * - The lots. The city picks its sixteen from the seed alone, on a grid where every lot has four streets. A region's
- *   window has dropped streets, pedestrian streets, water and ravines, so the lots are read from the pack: a lot is a
- *   candidate when one of its street fronts is a two-way street with a sidewalk (SEG.walk | SEG.drive) whose sidewalk
- *   corner on the corner graph is reachable from where the visitor starts. The candidates are ranked by what stands on
- *   them (a low podium carrying a tower first: the transit hubs, whose podium becomes the ceiling and whose tower is
- *   carried above the room; then lots one or two tall buildings fill; then one mid-rise; then one low building; then
- *   open lots), then by how near the start's lot they are, then by the seed's dice; never the tallest building's lot
- *   (the landmark stays) and never a lot under water. Sixteen (ROOM.slots) at most, the kinds in WORKPLACE_KINDS order;
- *   fewer is legal, and a window short of candidates gives fewer.
+ *   map has dropped streets, pedestrian streets, water and ravines, so the lots are read from the pack: a lot is a
+ *   candidate (lotCandidates) when one of its street fronts is a two-way street with a sidewalk (SEG.walk | SEG.drive)
+ *   whose sidewalk corner is on the grid's largest connected piece of the corner graph (or the piece a given start
+ *   stands on); never the tallest building's lot (the landmark stays) and never a lot under water. Each candidate
+ *   carries its tier by what stands on it (lotTier: a low podium carrying a tower first, the transit hubs, whose podium
+ *   becomes the ceiling and whose tower is carried above the room; then lots one or two tall buildings fill; then one
+ *   mid-rise; then one low building; then open lots). Which candidates become which places is region/placement.ts's:
+ *   it shares the workplaces, shops and homes out over the whole map by quarter.
  *   The page picks them and the physics worker receives them as data (simProtocol.ts SimInit.workplaces), so the two
  *   never disagree.
  * - The route table. The city's commuters walk the corner graph greedily towards the workplace's corner, which always
  *   arrives where every street exists. In a window it can stall against a missing street for good. So each room gets
  *   a table over the window's intersections (packRoutes, crowd.wgsl Params.routes): from each intersection, the street
  *   to take to come one intersection nearer the workplace's (a breadth-first search over the streets with a sidewalk),
- *   5 at the workplace's own, 0 where it cannot be reached. The procedural city's table is all zero: its commute is
- *   the greedy one, bit for bit.
+ *   5 at the workplace's own, 0 where it cannot be reached. A room whose lot is off the window has an empty table (the
+ *   crowd lives in the window, and nobody commutes out of it). The procedural city's table is all zero: its commute
+ *   is the greedy one, bit for bit.
+ * The lot and corner helpers (windowLotBuildings, lotCandidates, cornerComponent, frontOf) read any street grid, the
+ * window's or the whole map's (streets.ts mapStreetGrid); the route table alone is the window's, as the shader's is.
  * Pure, and no three.js: the physics worker builds the route table from it.
  * What breaks if it is removed? Lakefront Metro has no indoor workplaces: no rooms, no workday, nobody at work indoors.
  */
-import { createRng } from '../../02_Define_The_Rules/degrees.ts'
 import { CITY } from '../city.ts'
-import { ROOM, WORKPLACE_KINDS, targetCorner, type Side, type WorkplaceLot } from '../interiors.ts'
+import { ROOM, targetCorner, type Side } from '../interiors.ts'
 import { DM, polygonAt, polygonCount, tallestBuilding, type Polygons, type RegionPack } from './pack.ts'
-import { SEG, WINDOW_BLOCKS, hSeg, vSeg, type StreetGrid } from './streets.ts'
+import { SEG, WINDOW_BLOCKS, hSeg, lotInWindow, vSeg, type StreetGrid } from './streets.ts'
 
 const P = CITY.pitch
 /** A lot's square, m: CITY.lotHalf either side of the lot's centre, the macro map's built square (macroCity.ts). */
@@ -85,7 +87,10 @@ export function buildingLot(pack: Pick<RegionPack, 'buildings'>, offset: { x: nu
   return { K, M, b: { i, x0, z0, x1, z1, area: Math.abs(area2(ring)) / 2, height } }
 }
 
-/** The buildings standing on each lot of the window, by window lot index j · blocks + i. */
+/**
+ * The buildings standing on each lot of grid `g`, by the grid's lot index j · blocks + i: the window's lots, or every
+ * lot of the map when `g` is the whole map's grid (streets.ts mapStreetGrid). A building off the grid is on no list.
+ */
 export function windowLotBuildings(pack: Pick<RegionPack, 'buildings'>, offset: { x: number; z: number }, g: StreetGrid): LotBuilding[][] {
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
   const out: LotBuilding[][] = Array.from({ length: B * B }, () => [])
@@ -135,7 +140,10 @@ export function lotTier(on: readonly LotBuilding[]): number {
 
 // ---------------------------------------------------------------- the corner graph (crowd.wgsl's, mirrored)
 
-/** A sidewalk corner: quadrant (sx, sz) of window intersection (k, m), as crowd.wgsl cornerPos has it. */
+/**
+ * A sidewalk corner: quadrant (sx, sz) of intersection (k, m) of a grid (the window, as crowd.wgsl cornerPos has it,
+ * or the whole map's grid: the corner graph below reads any StreetGrid, whatever its size).
+ */
 export interface Corner { k: number; m: number; sx: 1 | -1; sz: 1 | -1 }
 
 const walk = (bits: number): boolean => (bits & SEG.walk) !== 0
@@ -175,7 +183,10 @@ export function cornerNear(g: StreetGrid, p: { x: number; z: number }): Corner {
   return { k, m, sx: x - k * P >= 0 ? 1 : -1, sz: z - m * P >= 0 ? 1 : -1 }
 }
 
-/** Every corner reachable on the corner graph from `from` (none when `from` itself does not exist), by key. */
+/**
+ * Every corner reachable on grid `g`'s corner graph from `from` (none when `from` itself does not exist), by key. Any
+ * grid: the window's graph stops at the window's edge, the whole map's (streets.ts mapStreetGrid) at the map's.
+ */
 export function cornerComponent(g: StreetGrid, from: Corner): Map<string, Corner> {
   const seen = new Map<string, Corner>()
   if (!cornerExists(g, from.k, from.m, from.sx, from.sz)) return seen
@@ -192,9 +203,28 @@ export function cornerComponent(g: StreetGrid, from: Corner): Map<string, Corner
   return seen
 }
 
+/**
+ * The largest connected part of grid `g`'s corner graph, by key (empty when the grid has no sidewalk): what can be
+ * walked to when nobody's start decides it. Of two parts the same size, the one holding the first corner in the scan's
+ * order wins (intersections row by row, m then k; at each, sz then sx, -1 before 1), so the answer depends on the grid
+ * alone.
+ */
+export function largestCornerComponent(g: StreetGrid): Map<string, Corner> {
+  const seen = new Set<string>()
+  let best = new Map<string, Corner>()
+  for (let m = 0; m <= g.blocks; m++) for (let k = 0; k <= g.blocks; k++) for (const sz of [-1, 1] as const) for (const sx of [-1, 1] as const) {
+    const c: Corner = { k, m, sx, sz }
+    if (seen.has(cornerKey(c))) continue
+    const part = cornerComponent(g, c)
+    for (const key of part.keys()) seen.add(key)
+    if (part.size > best.size) best = part
+  }
+  return best
+}
+
 // ---------------------------------------------------------------- the lots
 
-/** The street segment of a lot's front `side` (interiors.ts Side), window lot (i, j). */
+/** The street segment of a lot's front `side` (interiors.ts Side), lot (i, j) of grid `g` (the window, or the whole map's). */
 export function frontOf(g: StreetGrid, i: number, j: number, side: Side): number {
   return side === 0 ? hSeg(g, i, j + 1) : side === 1 ? hSeg(g, i, j) : side === 2 ? vSeg(g, i + 1, j) : vSeg(g, i, j)
 }
@@ -207,71 +237,61 @@ const pointIn = (x: number, z: number, ring: readonly (readonly [number, number]
   }
   return c
 }
+/** A pack's water, read once: every polygon's rings, in the pack's own metres. */
+type WaterRings = readonly (readonly (readonly (readonly [number, number])[])[])[]
+const waterRings = (water: Polygons): WaterRings => Array.from({ length: polygonCount(water) }, (_, i) => polygonAt(water, i))
 /** Whether (x, z), in the pack's own metres, lies in a water polygon (even-odd over its rings). */
-const inWater = (water: Polygons, x: number, z: number): boolean => {
-  for (let i = 0; i < polygonCount(water); i++) {
+const inWater = (water: WaterRings, x: number, z: number): boolean => {
+  for (const rings of water) {
     let inside = false
-    for (const ring of polygonAt(water, i)) if (pointIn(x, z, ring)) inside = !inside
+    for (const ring of rings) if (pointIn(x, z, ring)) inside = !inside
     if (inside) return true
   }
   return false
 }
 
 /**
- * A lot of the window a room may take (lotCandidates): window lot (i, j), its tier (lotTier), its Chebyshev ring of
- * lots from the start's, and the street fronts its doorway may face.
+ * A lot a room may take (lotCandidates): lot (i, j) of the grid it was asked on (the window, or the whole map's), its
+ * tier (lotTier), its Chebyshev ring of lots from the start's (0 when no start was given), and the street fronts its
+ * doorway may face.
  */
 export interface LotCandidate { i: number; j: number; tier: number; ring: number; sides: Side[] }
 
 /**
- * The lots of window `g` a room may stand on, for a visitor starting at `start` (engine metres), in row order: never
- * the tallest building's lot (the landmark stays) nor a lot under water, and only a lot with a street front that is a
- * two-way street with a sidewalk whose room corner (interiors.ts targetCorner) the start's corner graph reaches; each
- * with every such front. The pack is only read.
+ * The lots of grid `g` a room may stand on, in row order: never the tallest building's lot (the landmark stays) nor a
+ * lot under water, and only a lot with a street front that is a two-way street with a sidewalk whose room corner
+ * (interiors.ts targetCorner) can be walked to; each with every such front. `g` is the street window or the whole
+ * map's grid (streets.ts mapStreetGrid): any size.
+ * - With a `start` (engine metres; the visitor's): the corners are those the start's corner graph reaches on `g`, and
+ *   each lot's ring is its Chebyshev distance in lots from the start's lot.
+ * - Without one: the corners are the largest connected part of `g`'s corner graph (largestCornerComponent), and every
+ *   ring is 0: nobody's start decides which lots count.
+ * The pack is only read.
  */
-export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }): LotCandidate[] {
-  if (g.blocks !== WINDOW_BLOCKS) throw new RangeError(`a street window is ${WINDOW_BLOCKS} blocks across, got ${g.blocks}`)
+export function lotCandidates(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start?: { x: number; z: number } | null): LotCandidate[] {
   const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P, off = layout.offset
   const on = windowLotBuildings(pack, off, g)
   const landmark = tallestBuilding(pack)
   const tallK = landmark ? Math.floor((landmark.x + off.x) / P) : NaN, tallM = landmark ? Math.floor((landmark.z + off.z) / P) : NaN
-  const reach = cornerComponent(g, cornerNear(g, start))
-  const si = Math.floor((start.x - g.originX) / P), sj = Math.floor((start.z - g.originZ) / P)
+  const reach = start ? cornerComponent(g, cornerNear(g, start)) : largestCornerComponent(g)
+  const si = start ? Math.floor((start.x - g.originX) / P) : NaN, sj = start ? Math.floor((start.z - g.originZ) / P) : NaN
+  const water = waterRings(pack.water)
   const two = SEG.walk | SEG.drive
   const candidates: LotCandidate[] = []
   for (let j = 0; j < B; j++) {
     for (let i = 0; i < B; i++) {
       if (K0 + i === tallK && M0 + j === tallM) continue
-      if (inWater(pack.water, (K0 + i + 0.5) * P - off.x, (M0 + j + 0.5) * P - off.z)) continue
+      if (inWater(water, (K0 + i + 0.5) * P - off.x, (M0 + j + 0.5) * P - off.z)) continue
       const sides = ([0, 1, 2, 3] as const).filter((side) => {
         if (frontOf(g, i, j, side) !== two) return false
         const t = targetCorner({ k: i, m: j, side })
         return reach.has(cornerKey(t))
       })
       if (sides.length === 0) continue
-      candidates.push({ i, j, tier: lotTier(on[j * B + i]), ring: Math.max(Math.abs(i - si), Math.abs(j - sj)), sides })
+      candidates.push({ i, j, tier: lotTier(on[j * B + i]), ring: start ? Math.max(Math.abs(i - si), Math.abs(j - sj)) : 0, sides })
     }
   }
   return candidates
-}
-
-/**
- * The region's workplace lots in the window `g` (streets.ts streetGridOf), for a visitor starting at `start` (engine
- * metres): at most ROOM.slots, in WORKPLACE_KINDS order, as interiors.ts workplacesAt takes them (engine lot indices).
- * The ranking is the file's header's: among lotCandidates, the tier (lotTier), then the Chebyshev ring of lots from
- * the start's, then the dice (createRng(seed ^ 0x1a7e): one draw per window lot in row order, then one per pick for
- * its doorway's side among the fronts that qualify). Deterministic, and the pack is only read.
- */
-export function regionWorkplaceLots(pack: RegionPack, layout: { offset: { x: number; z: number } }, g: StreetGrid, start: { x: number; z: number }, seed: number): WorkplaceLot[] {
-  const candidates = lotCandidates(pack, layout, g, start)
-  const B = g.blocks, K0 = g.originX / P, M0 = g.originZ / P
-  const rng = createRng((seed ^ 0x1a7e) >>> 0)
-  const dice = new Float64Array(B * B)
-  for (let j = 0; j < B; j++) for (let i = 0; i < B; i++) dice[j * B + i] = rng()
-  candidates.sort((a, b) => a.tier - b.tier || a.ring - b.ring || dice[a.j * B + a.i] - dice[b.j * B + b.i] || a.j - b.j || a.i - b.i)
-  return candidates.slice(0, ROOM.slots).map((c, n) => ({
-    kind: WORKPLACE_KINDS[n], k: K0 + c.i, m: M0 + c.j, side: c.sides[Math.min(c.sides.length - 1, Math.floor(rng() * c.sides.length))],
-  }))
 }
 
 // ---------------------------------------------------------------- the route table (crowd.wgsl Params.routes)
@@ -298,8 +318,9 @@ export function routeWay(words: Uint32Array, r: number, k: number, m: number): n
  * The route table of the rooms (interiors.ts Workplace, on lots of window `g`) as crowd.wgsl reads it: per room slot,
  * a breadth-first search from the intersection of the room's workplace corner (interiors.ts targetCorner) over the
  * window's streets with a sidewalk, each intersection given the first street (in the order +x, −x, +z, −z) that leads
- * one intersection nearer. A slot with no room, or a room whose corner is outside the window, is all zero (the greedy
- * commute). Little-endian nibbles in u32s, ROUTE_ROOM_VEC4S rows per slot.
+ * one intersection nearer. A slot with no room, or a room whose lot is not one of the window's (streets.ts lotInWindow:
+ * the same rule interiors.ts packRooms is given, so a room the shader does not have has no table either), is all zero.
+ * Little-endian nibbles in u32s, ROUTE_ROOM_VEC4S rows per slot.
  */
 export function packRoutes(rooms: readonly { k: number; m: number; side: Side }[], g: StreetGrid): Uint32Array {
   if (g.blocks !== WINDOW_BLOCKS) throw new RangeError(`a street window is ${WINDOW_BLOCKS} blocks across, got ${g.blocks}`)
@@ -312,6 +333,7 @@ export function packRoutes(rooms: readonly { k: number; m: number; side: Side }[
     [k, m + 1, walk(vSeg(g, k, m))], [k, m - 1, walk(vSeg(g, k, m - 1))],
   ]
   rooms.forEach((room, r) => {
+    if (!lotInWindow(g, room.k, room.m)) return
     const t = targetCorner(room)
     const tk = t.k - K0, tm = t.m - M0
     if (tk < 0 || tm < 0 || tk >= L || tm >= L) return

@@ -22,7 +22,7 @@ import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { REGION_FORMAT, polygons, pushPolygon, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import type { Pt } from '../01_Initialize_World/region/clip.ts'
-import { regionWorkplaceLots } from '../01_Initialize_World/region/workplaces.ts'
+import { regionPlacement } from '../01_Initialize_World/region/placement.ts'
 import { doorDir, toLocal, toWorld, workplacesAt } from '../01_Initialize_World/interiors.ts'
 import { ZONE, generateLakefront } from '../01_Initialize_World/lakefront.ts'
 import { packOf } from '../01_Initialize_World/lakefrontPack.ts'
@@ -30,7 +30,7 @@ import { Physics } from './physics.ts'
 import { Avatar } from './player.ts'
 import { SimCore } from './simCore.ts'
 import type { SimInit } from './simProtocol.ts'
-import { cityStreetGrid, streetGridOf } from '../01_Initialize_World/region/streets.ts'
+import { cityStreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { createSimHost } from './simHost.ts'
 import { homeFrames, homesAt } from '../01_Initialize_World/properties.ts'
 
@@ -43,7 +43,7 @@ registerHooks({
     return { format: 'module', source: `export default ${JSON.stringify(text)}`, shortCircuit: true }
   },
 })
-const { RegionPlaces, hollowLots, layoutOf, regionPhysics } = await import('../01_Initialize_World/region/regionWorld.ts')
+const { hollowLots, layoutOf, regionPhysics } = await import('../01_Initialize_World/region/regionWorld.ts')
 
 const H = 1 / 60
 
@@ -157,8 +157,7 @@ test('real Rapier: a workplace in a region is solid as in the city: its back wal
 test('the hollowed pack walls nothing on a room\'s lot, and with no lots it walls as the pack does', () => {
   const pack = packOf(generateLakefront(1337, 64), ZONE.metropolis)
   const layout = layoutOf(pack)
-  const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
-  const lots = regionWorkplaceLots(pack, layout, streetGridOf(pack, layout.offset, start)!, start, 1337)
+  const lots = regionPlacement(pack, layout, 1337)!.workplaces
   assert.equal(lots.length, 16)
   const before = regionPhysics(pack, layout).walls
   const walls = regionPhysics(hollowLots(pack, layout, lots).pack, layout).walls
@@ -254,9 +253,9 @@ test('the worker refuses malformed workplaces, each with its own reason, and han
   await refused({ ...init(lots), region: null }, /^init: workplaces need a region's street window$/, 'the city has its own')
   await refused(init({ 0: lots[0] }), /^init: workplaces are a list of at most 16$/, 'not a list')
   await refused(init(Array.from({ length: 17 }, (_, n) => ({ ...lots[0], k: 50 + n }))), /^init: workplaces are a list of at most 16$/, 'seventeen')
-  await refused(init([{ ...lots[0], k: 49 }]), /^init: a workplace stands on a lot of the street window$/, 'west of the window')
-  await refused(init([{ ...lots[0], m: 66 }]), /^init: a workplace stands on a lot of the street window$/, 'south of the window')
-  await refused(init([{ ...lots[0], k: 52.5 }]), /^init: a workplace stands on a lot of the street window$/, 'between lots')
+  await refused(init([{ ...lots[0], k: 49 }]), /^init: a workplace stands on a lot of the region$/, 'west of the region')
+  await refused(init([{ ...lots[0], m: 66 }]), /^init: a workplace stands on a lot of the region$/, 'south of the region')
+  await refused(init([{ ...lots[0], k: 52.5 }]), /^init: a workplace stands on a lot of the region$/, 'between lots')
   await refused(init([{ ...lots[0], side: 4 }]), /^init: a workplace's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no fifth street')
   await refused(init([{ ...lots[0], kind: 'casino' }]), /^init: a workplace is one of the sixteen kinds$/, 'an unknown kind')
   await refused(init([lots[0], { ...lots[1], k: 52 }]), /^init: one workplace to a lot$/, 'two on a lot')
@@ -265,7 +264,11 @@ test('the worker refuses malformed workplaces, each with its own reason, and han
   const take = async (o: Parameters<typeof SimCore.create>[0]) => { handed.push(o.workplaces); return SimCore.create(o, null) }
   assert.equal((await answer(init(lots), take)).t, 'ready')
   assert.equal((await answer(init(undefined), take)).t, 'ready')
-  assert.deepEqual(handed, [lots, []])
+  // A lot of the region that is off the street window is taken as it is (region/placement.ts spreads the places over
+  // the whole map; the window is only where the visitor started): here the window lies wholly east of the region.
+  const elsewhere = { ...sound, originX: 2000 + 16 * 40 }
+  assert.equal((await answer(init(lots, elsewhere), take)).t, 'ready')
+  assert.deepEqual(handed, [lots, [], lots])
 })
 
 test('the worker refuses malformed shops, each with its own reason, and hands sound ones to the core', async () => {
@@ -290,10 +293,10 @@ test('the worker refuses malformed shops, each with its own reason, and hands so
   await refused({ ...init(shops), region: null, workplaces: undefined }, /^init: shops need a region's street window$/, 'the city has its own')
   await refused(init({ 0: shops[0] }), /^init: shops are a list of at most 5$/, 'not a list')
   await refused(init([...shops, ...shops, ...shops]), /^init: shops are a list of at most 5$/, 'six')
-  await refused(init([{ ...shops[0], k: 49 }]), /^init: a shop stands on a lot of the street window$/, 'west of the window')
-  await refused(init([{ ...shops[0], m: 66 }]), /^init: a shop stands on a lot of the street window$/, 'south of the window')
-  await refused(init([{ ...shops[0], k: 66 }]), /^init: a shop stands on a lot of the street window$/, 'east of the window')
-  await refused(init([{ ...shops[0], m: 53.5 }]), /^init: a shop stands on a lot of the street window$/, 'between lots')
+  await refused(init([{ ...shops[0], k: 49 }]), /^init: a shop stands on a lot of the region$/, 'west of the region')
+  await refused(init([{ ...shops[0], m: 66 }]), /^init: a shop stands on a lot of the region$/, 'south of the region')
+  await refused(init([{ ...shops[0], k: 66 }]), /^init: a shop stands on a lot of the region$/, 'east of the region')
+  await refused(init([{ ...shops[0], m: 53.5 }]), /^init: a shop stands on a lot of the region$/, 'between lots')
   await refused(init([null]), /^init: a shop is a kind, a lot \(k, m\) and a side$/, 'not a record')
   await refused(init([{ ...shops[0], side: -1 }]), /^init: a shop's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no such street')
   await refused(init([{ ...shops[0], kind: 'casino' }]), /^init: a shop is one of the five kinds, once each$/, 'an unknown kind')
@@ -305,6 +308,10 @@ test('the worker refuses malformed shops, each with its own reason, and hands so
   const take = async (o: Parameters<typeof SimCore.create>[0]) => { handed.push(o.shops); return SimCore.create(o, null) }
   assert.equal((await answer(init(shops), take)).t, 'ready')
   assert.equal((await answer(init(undefined), take)).t, 'ready')
+  // A shop on a lot of the region off the street window is taken as it is (the window lies wholly east of the region).
+  assert.equal((await answer(init(shops, { ...sound, originX: 2000 + 16 * 40 }), take)).t, 'ready')
+  assert.deepEqual(handed.at(-1), shops)
+  handed.pop()
   assert.deepEqual(handed, [shops, []])
 })
 
@@ -331,10 +338,10 @@ test('the worker refuses malformed homes, each with its own reason, and hands so
   await refused({ ...init(homes), region: null, workplaces: undefined, shops: undefined }, /^init: homes need a region's street window$/, 'the city has its own')
   await refused(init({ 0: homes[0] }), /^init: homes are a list of at most 7$/, 'not a list')
   await refused(init(Array.from({ length: 8 }, (_, i) => ({ home: i % 7, k: 50 + i, m: 60, side: 0 }))), /^init: homes are a list of at most 7$/, 'eight')
-  await refused(init([{ ...homes[0], k: 49 }]), /^init: a home stands on a lot of the street window$/, 'west of the window')
-  await refused(init([{ ...homes[0], m: 66 }]), /^init: a home stands on a lot of the street window$/, 'south of the window')
-  await refused(init([{ ...homes[0], k: 66 }]), /^init: a home stands on a lot of the street window$/, 'east of the window')
-  await refused(init([{ ...homes[0], m: 53.5 }]), /^init: a home stands on a lot of the street window$/, 'between lots')
+  await refused(init([{ ...homes[0], k: 49 }]), /^init: a home stands on a lot of the region$/, 'west of the region')
+  await refused(init([{ ...homes[0], m: 66 }]), /^init: a home stands on a lot of the region$/, 'south of the region')
+  await refused(init([{ ...homes[0], k: 66 }]), /^init: a home stands on a lot of the region$/, 'east of the region')
+  await refused(init([{ ...homes[0], m: 53.5 }]), /^init: a home stands on a lot of the region$/, 'between lots')
   await refused(init([7]), /^init: a home is a property index \(home\), a lot \(k, m\) and a side$/, 'not a record')
   await refused(init([{ ...homes[0], side: 4 }]), /^init: a home's doorway faces one of its lot's four streets \(0 to 3\)$/, 'no fifth street')
   await refused(init([{ ...homes[0], home: 7 }]), /^init: a home is one of the seven properties \(0 to 6\), once each$/, 'an eighth property')
@@ -353,6 +360,10 @@ test('the worker refuses malformed homes, each with its own reason, and hands so
   assert.equal((await answer(init(homes), take)).t, 'ready')
   assert.equal((await answer(init(undefined), take)).t, 'ready')
   assert.deepEqual(handed, [homes, []])
+  // A home on a lot of the region off the street window is taken as it is (the window lies wholly east of the region).
+  const far: unknown[] = []
+  assert.equal((await answer(init(homes, { ...sound, originX: 2000 + 16 * 40 }), async (o) => { far.push(o.homes); return SimCore.create(o, null) })).t, 'ready')
+  assert.deepEqual(far, [homes])
   // The core takes a set for the timber loft and the sky-mansion where the region put them, and refuses every other home.
   const [f2] = homeFrames(homesAt([homes[0]])).filter((f) => f !== null)
   const a = toWorld(f2, 2, -1), b = toWorld(f2, 4, 1)

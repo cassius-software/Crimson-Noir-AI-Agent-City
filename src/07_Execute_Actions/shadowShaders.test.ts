@@ -47,9 +47,9 @@ const { CityLightsNode, FIXTURE, LAMP } = await import('../01_Initialize_World/c
 const { SHADOW_TAPS, SUN_SHADOW } = await import('../01_Initialize_World/sunShadow.ts')
 const { workplaces } = await import('../01_Initialize_World/interiors.ts')
 const { buildLakefrontPack } = await import('../01_Initialize_World/lakefrontPack.ts')
-const { RegionPlaces, hollowLots, layoutOf } = await import('../01_Initialize_World/region/regionWorld.ts')
+const { RegionPlaces, hollowLots, layoutOf, regionStart } = await import('../01_Initialize_World/region/regionWorld.ts')
 const { streetGridOf } = await import('../01_Initialize_World/region/streets.ts')
-const { regionWorkplaceLots } = await import('../01_Initialize_World/region/workplaces.ts')
+const { regionPlacement } = await import('../01_Initialize_World/region/placement.ts')
 const { validatePack } = await import('../01_Initialize_World/region/pack.ts')
 const { CrowdView } = await import('../03_Spawn_Agents/crowd.ts')
 const { FleetView } = await import('./fleetView.ts')
@@ -307,10 +307,12 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
 function lakefront(renderer: WebGPURenderer) {
   const pack = buildLakefrontPack(SEED)
   const layout = layoutOf(pack)
-  const start = new RegionPlaces(pack, layout).spawn({ x: layout.offset.x, z: layout.offset.z })
+  const placed = regionPlacement(pack, layout, SEED)
+  assert.ok(placed, 'the metropolis has its places')
+  const start = regionStart(pack, layout, new RegionPlaces(pack, layout), placed)
   const streets = streetGridOf(pack, layout.offset, start)
   assert.ok(streets, 'the metropolis has a street window')
-  const hollow = hollowLots(pack, layout, regionWorkplaceLots(pack, layout, streets, start, SEED))
+  const hollow = hollowLots(pack, layout, placed.workplaces)
   return buildWorld(renderer, SEED, { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms })
 }
 

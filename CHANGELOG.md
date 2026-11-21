@@ -2380,6 +2380,47 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **Lakefront Metro's workplaces, shops and homes stand all over the map, and every visitor starts in the region they
+  chose.** The sixteen indoor workplaces, five shops and seven homes used to take the lots nearest the start inside the
+  one 640 m street window, so more than nine tenths of the 2.56 km map had none of them; the start itself was the midpoint of the
+  arterial run nearest the chosen region's centre (the metropolis's visitor stood 742 m from its centre, in North Ridge,
+  and North Ridge and The Grand Ravine shared one start), and the page's map worker ignored the chosen region
+  altogether. Now the pack carries the map's quarters, its five regions and its ground per block (`pack.ts` `Quarters`,
+  read by `region/quarters.ts`), the worker builds the pack for the region asked for, the whole map's street grid is
+  built from the pack (`streets.ts` `mapStreetGrid`, the window a crop of it), and `region/placement.ts` shares the 28 places out
+  by a programme: every region a shop, at least one home and at least two workplaces of the kinds that suit it; each
+  region's heart the middle of its tallest cluster, its shop within three lots of the heart and two more places near it
+  (within two lots wherever its region has a free one); the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
+  lake; the same lots whichever region the visitor starts in. The visitor stands on the sidewalk across the street from
+  their region's shop, five metres along it (`START_LEAD`, clear of the street's trees and lamps), facing along the
+  street toward its heart, always inside that region, even where the shop stands on its edge (`regionWorld.ts`
+  `regionStart`, `RegionPlaces.spawnAt`; the metropolis's visitor under 300 m from The Spire on the three tested
+  seeds), `?place=<slug>` chooses the region for one visit, ahead of the onboarding's answer on the visit it runs
+  (`onboarding/script.ts` `placeWanted`, `onboardingPackFor`), and the HUD's street line leads with the region you stand in
+  (`RegionPlaces.label`). The physics worker takes a place on any lot of the region, not only on the window's; the
+  crowd works only in the rooms on the window's lots (`interiors.ts` `packRooms` takes a presence rule and
+  `workplaces.ts` `packRoutes` gives a room off the window an empty table, both by `streets.ts` `lotInWindow`; no WGSL
+  text changed, so no device's crowd kernel memory resets). `region/shops.ts` and `region/homes.ts` are removed;
+  `workplaces.ts` keeps the lot rules the placement reads (`lotCandidates`, `lotTier`). New tests: `placement.test.ts`
+  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (11, three seeds by
+  five regions: the start in its own region, also on the five seeds a sweep of 2,550 starts found starting in the
+  next region before (their shop on a region's edge) and on a made-up map whose shop faces only the next region, on
+  a sidewalk's middle, a metre clear of every wall and out of the water,
+  every street pole a metre past the visitor's body, facing toward the heart, the five starts over 300 m apart, the
+  fallbacks and the HUD line) and `hollowPlaces.test.ts`
+  (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
+  (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
+  `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,665 bytes, from 12,353,777 to 12,365,442; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
+  people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
+  it stands on an empty street with nobody at work in it, and after dark a shop or home there is unlit inside (a
+  workplace's own ceiling lights still come on where the tier lights lamps); the painted light paints no floor on a
+  lot its edge runs through (`paintedLight.ts`, `paintedLight.test.ts`), so no room is lit to a straight line. On
+  the fifteen starts of the three tested seeds a start's window holds one to four workplaces, one or two shops and up
+  to two homes. Unverified on a real phone or GPU (the pictures are software
+  WebGPU).
+
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
   is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
@@ -2690,6 +2731,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **Lakefront Metro's ferry pier never opens with a guideway column inside it.** At the new waterfront start of
+  Lakefront Metropolis two columns of the elevated loop stood inside the pier's railings (columns every 8 m on the
+  quay's kerb, the pier 8 m wide). `region/transit.ts` `ferryDock` now passes over a shore point where a column of the
+  window's loop stands in the pier's mouth or its platform, grown by the column's radius and a metre; on seed 1337 the
+  pier opens at the foot of a cross street. `transit.test.ts` holds that no column stands in any pier on fifteen windows
+  of three seeds.
 
 - **Sloane's first-walk lines and her quiet watch's nudges waited for a slow frame.** The two hooks
   (`onboarding/useFirstWalk.ts`, `onboarding/useMentor.ts`) wrote their default clock inline, a new function on every
