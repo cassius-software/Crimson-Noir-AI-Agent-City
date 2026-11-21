@@ -176,7 +176,13 @@ code point, both halves of a surrogate pair together), or the selection instead,
 that has just emptied the line does not go on to end the input. A write of more than 16 KiB reaches the screen a piece
 at a time (`SCREEN_PIECE`), with a breath between pieces, so one line of megabytes cannot hold the page past its turn;
 each piece ends where a character does, so another writer in the breath, or a Ctrl+C that ends the writer, never meets
-half a character.
+half a character. In the city, a key that opens the console (`isToggleKey` in `commands.ts`: the key left of 1, or a
+typed `` ` `` or `~`) closes it only when it is the key left of 1 (or a lone `` ` ``), pressed alone (no Shift, Alt,
+Ctrl, Meta or AltGr, which Linux and ChromeOS report as AltGraph alone) on an empty line, and only where that key types
+`` ` ``, `^`, `²`, `§` or `½` or is a dead key (`closesOpenConsole`); anything else that key types is the layout's own
+character (Hungarian `0`, Russian `ё`, Italian `\`, Norwegian `|`), always typed. So the shell's `~` and the language's
+`~` and `^` can be typed on every board, and no layout loses a character it needs to begin a line. The repeats of a held
+key that opened the console type nothing in it. Esc closes the console from any line.
 
 ### Groups, jobs and Ctrl+C
 
@@ -385,8 +391,8 @@ short:
   Ctrl+C.
 
 What it does not do, as `man sh` says: no functions, no `case`, no `( )` subshells, no `set`, no arrays, no
-backquotes (that key opens and closes the console: use `$( )`), no pausing a job with a key to resume it, and no
-aliases. A script written for a larger shell may need changes.
+backquotes (use `$( )`), no pausing a job with a key to resume it, and no aliases. A script written for a larger shell
+may need changes.
 
 Its caps: a pattern expands to at most 16,384 names; one word to at most 67,108,864 characters (64 Mi), and all the
 words of one command to twice that; one command to at most 262,144 words; `$( )` and `source` nest 32 deep; lists
@@ -698,11 +704,14 @@ its read, its refusal to write over what it could not read, a fresh read for a c
 is set aside in (never one over another, eight at most), and the 4-second bound on the read, each save and each copy,
 with a late write keeping the generations in step (one still in line ahead of the next save too), and the save made as
 the page goes (one write committed at once, skipped when another page has said it saved a newer disk), over a stand-in
-for IndexedDB; `consoleWiring.test.ts` (8) pins from their source what Node cannot render in `Terminal.tsx` and
+for IndexedDB; `consoleWiring.test.ts` (9) pins from their source what Node cannot render in `Terminal.tsx` and
 `App.tsx`: what a closed console holds, Tab's row of at most 200 names, which results end a live view, the history's
 dots, Ctrl+D on a line with text, the save the page waits for (once) before it goes, the seal and timing of a save, the
-listener for the page starting to go, and an answer's turn given as a task of its own. That is 559 tests in the folder's
-20 test files, and 632 with the three around it. The browser's real IndexedDB is not exercised by these tests.
+listener for the page starting to go, an answer's turn given as a task of its own, and the toggle key closing the
+console only alone on an empty line, the repeats of the press that opened it typing nothing (`commands.test.ts` holds
+`closesOpenConsole` to the layouts, and the browser smoke test's desktop run types `~` and a `` ` `` in the console,
+closes it from an empty line and opens it again with `~` held down). That is 559 tests in the folder's 20 test files,
+and 633 with the three around it. The browser's real IndexedDB is not exercised by these tests.
 
 ## What it does not do yet
 

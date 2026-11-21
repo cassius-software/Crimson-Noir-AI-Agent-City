@@ -8,7 +8,8 @@
  * events a person makes, on each kind of device the page has to work on:
  * - desktop: the procedural city's sixteen indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
  *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
- *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
+ *   opened with the tilde key and answering, typing in it never moving the avatar, ~ and a ` after text typed in it
+ *   and the key alone on an empty line closing it, ghost view and rain mode toggled from
  *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
  *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule; nor is it a
  *   multisampling candidate: one sample a pixel everywhere (FXAA alone); its ambient occlusion built and drawn once at
@@ -1229,6 +1230,30 @@ const SCENARIOS = {
       await p.key('keyUp', 'KeyW', 'w', 87)
       const t1 = await p.snap()
       check(dist(t0, t1) < 0.05, 'desktop: typing W in the console does not walk the avatar', `${dist(t0, t1).toFixed(3)} m`)
+      // The key that opened it: Shift makes it ~ (the shell's home), which is typed; alone after text it types a `; alone
+      // on the emptied line it closes the console; and ~ held down opens it again with nothing typed by the key's repeats.
+      // (The W above typed a w on the line.)
+      const line = `document.querySelector('[aria-label="Ring-0 command line"]')?.value`
+      const shown = `!!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`
+      const start = String(await p.eval(line) ?? '')
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Backquote', key: '~', text: '~', modifiers: 8, windowsVirtualKeyCode: 192, nativeVirtualKeyCode: 192 })
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Backquote', key: '~', modifiers: 8, windowsVirtualKeyCode: 192, nativeVirtualKeyCode: 192 })
+      await p.tap('Backquote', '`', 192)
+      const typed = await p.waitFor(`${line} === ${JSON.stringify(`${start}~\``)} && ${shown}`, 10_000).then(() => true, () => false)
+      check(typed, 'desktop: Shift+` types ~ in the console, and ` after text types itself; neither closes it', `line ${JSON.stringify(await p.eval(line))} after ${JSON.stringify(start)}, open ${await p.eval(shown)}`)
+      for (let i = start.length + 2; i > 0; i--) await p.b.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', code: 'Backspace', key: 'Backspace', windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 }).then(() => p.key('keyUp', 'Backspace', 'Backspace', 8))
+      const emptied = await p.waitFor(`${line} === ''`, 10_000).then(() => true, () => false)
+      await p.tap('Backquote', '`', 192)
+      const shut = await p.waitFor(`!${shown}`, 10_000).then(() => true, () => false)
+      const tilde = { code: 'Backquote', key: '~', text: '~', modifiers: 8, windowsVirtualKeyCode: 192, nativeVirtualKeyCode: 192 }
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', ...tilde })
+      await p.waitFor(shown, 10_000).catch(() => {})
+      await p.frames(2)
+      for (let i = 0; i < 3; i++) await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', autoRepeat: true, ...tilde })
+      await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', ...tilde, text: undefined })
+      await p.frames(2)
+      const back = await p.waitFor(`${shown} && ${line} === ''`, 10_000).then(() => true, () => false)
+      check(emptied && shut && back, 'desktop: ` alone on an empty line closes the console, and ~ held down opens it again with nothing typed', `emptied ${emptied}, closed ${shut}, opened with ${JSON.stringify(await p.eval(line))}: ${back}`)
       await p.tap('Escape', 'Escape', 27)
 
       // A car: the nearest one is parked, the avatar stands beside it, E enters, W drives, E leaves.

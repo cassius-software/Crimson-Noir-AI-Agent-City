@@ -7,10 +7,11 @@
  * a bounded row; only a result that draws live or clears ends a live view; a secret is dotted in the history however
  * the shell was handed it; Ctrl+D on a line with text deletes forward, a whole character; the disk is saved, and
  * answered, before the page goes (a boot, a map, 'Back to the city', waiting once), waits longer for a large disk or one
- * slow to image, and is sealed by the browser's own digest unless it does not answer.
+ * slow to image, and is sealed by the browser's own digest unless it does not answer; the key that opens the windowed
+ * console closes it only alone on an empty line, so ~ and ^ can be typed in it.
  * Source-level, as the other wiring tests are; the layer's own side of each is held by terminal/oslayer.test.ts.
  * What breaks if it is removed? A job printing to a hidden console could slow the city again, a typed key could stay
- * in the history, or the last change before leaving the page could be lost without a word.
+ * in the history, the last change before leaving the page could be lost without a word, or `cd ~` could not be typed.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -141,4 +142,18 @@ test('an answer the layer waited for gets a turn of its own (a task), never one 
   // draw or read Ctrl+C.
   assert.match(follow, /os\.wake \?\?= \(\) => \{\s*if \(osTimer\.current !== null\) window\.clearTimeout\(osTimer\.current\)\s*osTimer\.current = window\.setTimeout\(\(\) => \{\s*osTimer\.current = null\s*if \(mounted\.current\) turn\(\)\s*\}, 0\)\s*\}/)
   assert.doesNotMatch(follow, /os\.wake \?\?= \(\) => \{ if \(mounted\.current\) turn\(\) \}/)
+})
+
+test('the toggle key opens the windowed console from the city, and closes it only as closesOpenConsole says (alone, on an empty line); otherwise it is typed, but not the repeats of the press that opened it', () => {
+  const keys = between(TERM, 'const onKey = (e: KeyboardEvent) => {', "window.addEventListener('keydown', onKey, true)")
+  const toggle = between(keys, 'if (isToggleKey(e)) {', "if (!openRef.current) return\n")
+  // Closed, it opens (as on main); open, it closes only when the line in the prompt is empty and the key was alone; a
+  // repeat on an empty line (the opening press, held: Shift+` for ~, a Russian ё) is swallowed, as main swallowed it.
+  assert.match(toggle, /const line = inputRef\.current\?\.value \?\? ''\n\s*if \(!openRef\.current \|\| \(e\.repeat && line === ''\) \|\| closesOpenConsole\(e, line\)\) \{\n\s*e\.preventDefault\(\)\n\s*e\.stopImmediatePropagation\(\)\n\s*if \(!e\.repeat\) setOpen\(\(o\) => !o\)\n\s*return\n\s*\}\n\s*\}/)
+  // Nothing else in it takes the key: a ~ or ^ left untaken goes on to the prompt's own handler, which types it.
+  assert.equal(toggle.match(/preventDefault\(\)/g)?.length, 1)
+  assert.equal(toggle.match(/setOpen\(/g)?.length, 1)
+  before(keys, 'if (isToggleKey(e)) {', 'if (inside) return // the prompt', 'the toggle is looked at before the prompt is left its key')
+  const prompt = between(TERM, 'const onKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {', '\n  }\n')
+  assert.doesNotMatch(prompt, /isToggleKey|Backquote|'~'|'\^'/, 'the prompt\'s own handler takes neither ~ nor ^')
 })

@@ -160,9 +160,9 @@ THE CITY'S COMMANDS
 
 WHAT IT DOES NOT DO
     There are no functions, no case, no ( ) subshells, no set, no
-    arrays, no backquotes (the key toggles the console; use $( )), no
-    stopping a job with a key and resuming it, and no aliases. A script
-    written for a larger shell may need changes.
+    arrays, no backquotes (use $( ) instead), no stopping a job with a
+    key and resuming it, and no aliases. A script written for a larger
+    shell may need changes.
 
 STATUS
     The status of the last command it ran; 2 for a line it could not

@@ -2036,9 +2036,14 @@ Measured in headless Brave:
 
 ## Ring-0 console
 
-Press `~` to open it. It is a drop-down TTY: black at 85 % opacity, monospace, an ash-style prompt, a
-React overlay at `z-index: 9999`. The simulation keeps running underneath, and game input is suspended
-while you type.
+Press `~` to open it (the key left of 1 opens it too, whatever it types). Esc closes it from any line. The key left of 1
+closes it as well, pressed alone on an empty line, where that key types `` ` `` (US, UK), `^` (German, or a dead key
+there and on US-International), `²` (French), `§` (Swiss, Swedish) or `½` (Danish); with Shift or AltGr held, or once
+the line holds text, it types its character like any other key, and so does `~` wherever it is typed (`cd ~`). Where
+that key types anything else (Hungarian `0`, Russian `ё`, Italian `\`), and on a keyboard without it (a Mac's Japanese
+board), it always types and Esc closes the console. It is a drop-down TTY: black at 85 % opacity, monospace, an
+ash-style prompt, a React overlay at `z-index: 9999`. The simulation keeps running underneath, and game input is
+suspended while you type.
 
 - `stats` is live: Rapier step latency, physics phase, substeps, bodies, colliders and CCD bodies;
   drawn agents (near, far, total); fps, frame time, p95, p99, CPU and GPU time; quality tier; kernel
@@ -2322,7 +2327,7 @@ console hands it. The design, every limit and what is not there yet are in `docs
   `ps -f` list a job's line as typed: a key or a token on a line sent to the background shows there, though the history
   keeps it as dots, as it does a key however it was typed (quoted, after `sh -c`, over two lines), and the reply to
   `read` stays out of the history. Not there: functions, `case`, `( )` subshells, `set`, arrays, aliases, and backquotes
-  (that key opens and closes the console: use `$( )`).
+  (use `$( )`).
 - **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
   forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
   what you type, and on a line with text deletes the character after the cursor (all of what shows as one: a flag or an

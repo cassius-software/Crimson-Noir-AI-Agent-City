@@ -33,7 +33,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, use
 import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { actEventLines, commonPrefix, completeLine, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type DiskStore, type Line, type LiveFrame, type OsSession, type ReplSession } from './commands.ts'
+import { actEventLines, closesOpenConsole, commonPrefix, completeLine, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type DiskStore, type Line, type LiveFrame, type OsSession, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -375,10 +375,16 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       if (isToggleKey(e)) {
         if (fullRef.current) return // the whole page: nothing to toggle, the key is an ordinary character
         if (!openRef.current && !inside && isEditable(e.target)) return // someone else's text field
-        e.preventDefault()
-        e.stopImmediatePropagation()
-        if (!e.repeat) setOpen((o) => !o)
-        return
+        // Open, only that key alone on an empty line closes it; otherwise it is a character for the line (~ with Shift
+        // on a US board, ^ on a German one, a ` after text) and goes on below like any other key. A repeat on an empty
+        // line is the press that opened the console, still held: it types nothing.
+        const line = inputRef.current?.value ?? ''
+        if (!openRef.current || (e.repeat && line === '') || closesOpenConsole(e, line)) {
+          e.preventDefault()
+          e.stopImmediatePropagation()
+          if (!e.repeat) setOpen((o) => !o)
+          return
+        }
       }
       if (!openRef.current) return
       const live = liveFrame.current !== null

@@ -137,7 +137,7 @@ const CORE = [
   { name: 'r0', usage: 'r0 <words...>|r0 reset|r0 words', summary: "the console's own stack machine (Turing-complete, sandboxed: it reaches nothing of the city)" },
   { name: 'noir', usage: 'noir <source>|noir reset|noir words|noir asm <source>', summary: "Crimson Noir Script, the console's typed, compiled language (a bounded bytecode VM with lane types; reads the city's columns as copies; its writes need the elite tier)" },
   { name: 'tutorial', usage: 'tutorial [status|program]', summary: "Sloane's first walk: the stage you are on (it ends when you reach the console on the last one), and the three-line Crimson Noir Script program that ends it from any stage" },
-  { name: 'exit', usage: 'exit', summary: 'close the console (also ` or Esc)' },
+  { name: 'exit', usage: 'exit', summary: 'close the console (also Esc, or the key left of 1 on an empty line)' },
 ] as const
 
 /** The operator tier; every one of these that changes anything is refused until `operator unlock`. */
@@ -3220,11 +3220,32 @@ export function commonPrefix(words: readonly string[]): string {
 
 /**
  * The console toggle: the key left of 1 (Backquote) or a typed ` or ~. Plain Ctrl and Meta chords are
- * left to the browser; Ctrl+Alt is AltGr on Windows layouts, where ~ often lives.
+ * left to the browser; Ctrl+Alt is AltGr on Windows layouts, where ~ often lives. It opens the console from anywhere
+ * but a text field of the page; once the console is open, `closesOpenConsole` says which of these close it.
  */
 export function isToggleKey(e: { code: string; key: string; ctrlKey: boolean; altKey: boolean; metaKey: boolean }): boolean {
   if (e.metaKey || (e.ctrlKey && !e.altKey)) return false
   return e.code === 'Backquote' || e.key === '`' || e.key === '~'
+}
+
+/**
+ * What the key left of 1 types, alone, on the boards where it closes the open console: ` (US, UK, Korean, Greek), ^
+ * (German, or a dead key there and on US-International), ² (French, Belgian), § (Swiss, Swedish, Finnish), ½ (Danish).
+ * None of them begins a command line. Where that key types anything else (Hungarian 0, Russian ё, Italian \, Spanish
+ * º, Norwegian |, a Japanese board's input-method key) it is always that layout's character.
+ */
+const CLOSES_FROM_THE_KEY = new Set(['`', '^', 'Dead', '²', '§', '½'])
+
+/**
+ * Whether a toggle key (`isToggleKey`) closes the open console rather than going into its line as a character. It
+ * closes it only from an empty line, pressed alone (no Shift, Alt, Ctrl, Meta or AltGr: Linux and ChromeOS report
+ * AltGr as AltGraph alone), and only as one of CLOSES_FROM_THE_KEY: Shift makes it ~ on a US board, AltGr makes ~ on
+ * many others, and once the line holds anything its ~, ^ or ` is the line's own, as in `cd ~` or `noir 6 ^ 3`. Esc
+ * closes the console from any line.
+ */
+export function closesOpenConsole(e: { code: string; key: string; shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; getModifierState?(key: string): boolean }, line: string): boolean {
+  if (line !== '' || e.shiftKey || e.altKey || e.ctrlKey || e.metaKey || e.getModifierState?.('AltGraph') === true) return false
+  return e.code === 'Backquote' ? CLOSES_FROM_THE_KEY.has(e.key) : e.key === '`'
 }
 
 /**
@@ -3251,7 +3272,7 @@ export function motd(brand: TerminalBridge['brand']): Line[] {
     sys(`${brand.name} ${brand.version} Ring-0 console`),
     ...(tty ? [sys("Track B: this console alone; no 3D engine was built (?boot=tty). Type 'boot gui' for the city.")] : []),
     sys(tty ? "Sloane can answer here too, through a model on this machine or in this app: type 'operator unlock', then ask and your words." : "Observe and tune; 'operator unlock' opens the scripted tier (the laws stay in force)."),
-    sys(tty ? "Type 'help' for commands; 'r0' is the console's own stack machine." : "Type 'help' for commands. ` or Esc closes."),
+    sys(tty ? "Type 'help' for commands; 'r0' is the console's own stack machine." : "Type 'help' for commands. Esc closes."),
     sys(''),
   ]
 }

@@ -62,12 +62,15 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   saved disk's seal checked before it is restored, with the browser's own SHA-256 where the page has it and it answers
   within 4 s. When files can no longer be kept, the console says so once. A shell line that holds `|`, `;`, `&`, `<` or
   `>`, or starts with a loop or `if`, earns a computers check when it is back at the prompt within 30 ms without an
-  error; the console commands inside it earn none of their own. The folder imports nothing from outside itself and names
-  no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 559 in 20 files under `terminal/os/` (a 21st,
-  `kit.test.ts`, is the system they boot and holds none), 49 in `terminal/oslayer.test.ts`, 16 in `consoleDisk.test.ts`,
-  which uses a stand-in for IndexedDB (the browser's real one is not exercised by them), and 8 in
-  `consoleWiring.test.ts`, which pins the terminal's and the page's side from their source. Not yet: attaching a folder
-  of the computer, full-screen programs and app windows, networking, programs written in Crimson Noir Script.
+  error; the console commands inside it earn none of their own. In the city, the key left of 1 closes the console only
+  when pressed alone on an empty line, and only where it types `` ` ``, `^`, `²`, `§` or `½` or is a dead key, so `~`, a
+  `^` or `` ` `` after text, and whatever else a layout puts on that key are typed like any other character (the repeats
+  of a held key that opened the console are not); Esc closes it from any line. The folder imports nothing from outside
+  itself and names no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 559 in 20 files under
+  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 49 in `terminal/oslayer.test.ts`, 16
+  in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one is not exercised by them), and 9
+  in `consoleWiring.test.ts`, which pins the terminal's and the page's side from their source. Not yet: attaching a
+  folder of the computer, full-screen programs and app windows, networking, programs written in Crimson Noir Script.
   `docs/console-operating-layer.md` is the design and `MANUAL.md`, "Files, programs and the shell", the use.
 - **The macOS app carries Sloane's model and runs it in its own process.** The build matrix's `macos-universal` job
   now builds both slices of the universal app with `--features native-runner` and the model overlay, and puts Qwen2.5

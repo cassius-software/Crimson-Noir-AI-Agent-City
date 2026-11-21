@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_INK_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_TATTOO_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
-  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type Line,
+  closesOpenConsole, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type Line,
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type HardwareReport, type LookBridge, type LookChange,
@@ -1931,6 +1931,52 @@ test('toggle key: backquote/tilde, but not plain Ctrl or Meta chords', () => {
   assert.ok(!k('Backquote', '`', { ctrlKey: true }))
   assert.ok(!k('Backquote', '`', { metaKey: true }))
   assert.ok(!k('Escape', 'Escape'))
+})
+
+test('toggle key, console open: only the key left of 1 alone on an empty line, where it types `, ^, ², § or ½, closes it; ~, ^ and a ` after text are the line\'s', () => {
+  type Mods = Partial<{ shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean; getModifierState: (key: string) => boolean }>
+  const press = (code: string, key: string, mods: Mods = {}) => ({ code, key, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false, ...mods })
+  const closes = (code: string, key: string, line: string, mods: Mods = {}) => {
+    const e = press(code, key, mods)
+    assert.ok(isToggleKey(e), `${code} ${key} is a toggle key`)
+    return closesOpenConsole(e, line)
+  }
+  // A US board: ` alone closes from an empty line; Shift+` is ~ and is typed, on an empty line too (`~/bin/x`).
+  assert.equal(closes('Backquote', '`', ''), true)
+  assert.equal(closes('Backquote', '~', '', { shiftKey: true }), false)
+  assert.equal(closes('Backquote', '~', 'cd ', { shiftKey: true }), false)
+  assert.equal(closes('Backquote', '`', 'echo '), false, 'a ` after text is typed')
+  assert.equal(closes('Backquote', '`', '\n'), false, 'a line of a longer entry is not empty')
+  // US-International and German: the key is a dead key (or ^ itself); it closes only from an empty line.
+  assert.equal(closes('Backquote', 'Dead', ''), true)
+  assert.equal(closes('Backquote', 'Dead', 'noir 6 '), false)
+  assert.equal(closes('Backquote', '^', ''), true)
+  assert.equal(closes('Backquote', '^', 'noir 6 '), false)
+  assert.equal(closes('Backquote', '°', '', { shiftKey: true }), false)
+  // A French board's ², a Swiss or Swedish §, a Danish ½: none begins a command line, so the key closes from an empty line.
+  for (const key of ['²', '§', '½']) assert.equal(closes('Backquote', key, ''), true, key)
+  // Anything else that key types is the layout's own character, always typed (Esc closes the console there): Hungarian
+  // 0, Russian ё (Ё with Shift), Arabic ذ, Spanish º, Italian \, Norwegian |, Turkish ", Czech ;, Bepo $, a Mac ISO
+  // board's < (its keys report Backquote there), a Japanese board's input-method key.
+  for (const key of ['0', 'ё', 'Ё', 'ذ', 'º', '\\', '|', '"', ';', '$', '<', 'Zenkaku', 'Process', 'Unidentified']) {
+    assert.equal(closes('Backquote', key, ''), false, key)
+  }
+  // AltGr (Ctrl+Alt on Windows; AltGraph alone on Linux and ChromeOS) and Option (Alt on a Mac) make characters: ~ on
+  // Spanish and Nordic boards, \ on the key left of 1 of a Spanish one under Linux, typed.
+  assert.equal(closes('Digit4', '~', '', { ctrlKey: true, altKey: true }), false)
+  assert.equal(closes('Backquote', '`', '', { altKey: true }), false)
+  assert.equal(closes('Backquote', '`', '', { ctrlKey: true, altKey: true }), false)
+  assert.equal(closesOpenConsole(press('Backquote', '\\', { getModifierState: (key) => key === 'AltGraph' }), ''), false)
+  assert.equal(closesOpenConsole(press('Backquote', '`', { getModifierState: (key) => key === 'AltGraph' }), ''), false)
+  assert.equal(closesOpenConsole(press('Backquote', '`', { getModifierState: (key) => key === 'CapsLock' }), ''), true, 'Caps Lock is no AltGr')
+  // A ` or ~ from another key (an on-screen board, another layout): ` alone on an empty line closes, ~ never does.
+  assert.equal(closes('', '`', ''), true)
+  assert.equal(closes('BracketLeft', '`', 'x'), false)
+  assert.equal(closes('', '~', ''), false)
+  assert.equal(closes('Quote', '~', ''), false)
+  // What the page's on-screen keys send for ` and ~ (textEntry.ts strokeFor): the first closes an empty line's console, the second types.
+  assert.equal(closesOpenConsole(press('Backquote', '`'), ''), true)
+  assert.equal(closesOpenConsole(press('Backquote', '~', { shiftKey: true }), ''), false)
 })
 
 test('hardware: the class, the profile and the range, the adapter and its limits, the lanes, the percentiles and the machine, in six ASCII rows under 80 columns', () => {
