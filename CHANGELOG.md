@@ -75,6 +75,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     sentences exactly. Talking to the people nearby and the agents' shared terminals, which the same document asks
     for, are not in this change.
 
+- **On-screen keys and a menu for the pad.** A keyboard the page draws (`04_Connect_Hardware/ScreenKeys.tsx`, with
+  `keysDesk.ts`, `keyboardSense.ts`, `keyLayout.ts`, `keysPad.ts` and `textEntry.ts`) types into the field with the
+  caret as a real key would, with the Esc, Tab, Ctrl and arrow keys a console needs. No browser says whether a
+  keyboard is plugged in, so it goes by the device last used: after a pad it is offered on any text field and opens on
+  the select button, the pad's menu (Keyboard, or Console) or its chip; on a phone or tablet it opens on a tap on the
+  console's prompt (a chat line keeps the phone's own keyboard, and its keyboard key hands that field back to it while
+  the field keeps the caret); a real keyboard's key puts it away, though on a phone or tablet a key typed into a field
+  the phone's own keyboard may be serving is not taken for one; switch scanning and the dwell click get it on every
+  field; `access keys auto|on|off` and `?keys=` choose. The panels, Sloane's card and the console stand above the keys
+  (and above their chip), and the field with the caret is scrolled into view. The pad's menu button (start; with one
+  hand, select with that shoulder held) opens a menu with the touch Menu's items, the on-screen keys and Sloane, so a
+  pad alone reaches the console, ghost view, the HUD and the text size; hints and the first walk name the pad's own
+  menu button where they named `~`. While either is open it has player 1's pads; a card that must be answered first,
+  the halted city's lock screen or a headset session folds the keys and closes the menu. Checked by unit suites and by the browser smoke
+  test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
+  a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU

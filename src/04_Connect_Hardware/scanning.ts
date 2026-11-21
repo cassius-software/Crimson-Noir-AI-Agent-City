@@ -229,7 +229,9 @@ export function browserScanEnv(doc: Document = document): ScanEnv {
     ) as unknown as ScanTarget[],
     active: () => doc.activeElement,
     onKey(fn) {
-      const h = fn as unknown as EventListener
+      // Only the player's own keys: a key a script sends into a field (the on-screen keys typing, ScreenKeys.tsx) is not
+      // the player typing there, and must not pull the round back to the field.
+      const h = ((e: Event) => { if (e.isTrusted) fn(e as unknown as ScanKey) }) as EventListener
       doc.addEventListener('keydown', h, { capture: true })
       return () => doc.removeEventListener('keydown', h, { capture: true })
     },

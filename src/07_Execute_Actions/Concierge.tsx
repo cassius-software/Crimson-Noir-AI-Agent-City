@@ -32,6 +32,7 @@ import { ORC_NOTICE } from '../02_Define_The_Rules/degrees.ts'
 import { NAME_MAX, saveProfile, sanitizeName, seedFromName, type Profile } from '../05_Observe_Environment/profile.ts'
 import { FiveWhys, GOAL_MAX, type Brief, type Control, type PlanStep, type WhyStep } from '../06_Make_Decisions/intent.ts'
 import { controlHints, isPadFamily, type GlyphFamily } from './glyphs.ts'
+import { pageHand } from './padNav.ts'
 import { GlyphKey } from './Hud.tsx'
 import type { SiteModelFrom, SiteModelHost, SiteModelLine, SiteModelProgress } from '../09_Cognition/siteModel.ts'
 import type { SiteJobState } from '../09_Cognition/siteJob.ts'
@@ -40,6 +41,8 @@ import type { LaneLine } from '../08_Swarm/team.ts'
 import { phaseLine, type Chat, type ChatTurn, type Voice } from './onboarding/voice.ts'
 import { CONCIERGE_NAME } from './onboarding/script.ts'
 import { heardGoal } from './onboarding/heard.ts'
+import { insideKeys } from '../04_Connect_Hardware/keyboardSense.ts'
+import { keysView } from '../04_Connect_Hardware/keysHost.ts'
 
 /** The Concierge's name (onboarding/script.ts), for any other surface that mentions them. */
 export { CONCIERGE_NAME }
@@ -138,6 +141,8 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  Text size (access.ts): the card and chip sit inside the overlay's zoom, which multiplies every length in them, so
  *  each length measured in the window's own pixels (the published edges above, the viewport's height) is divided by
  *  --ui-zoom first, or at 200 % the card would clear the buttons by twice their height and run off the screen.
+ *  The on-screen keys (04_Connect_Hardware/ScreenKeys.tsx) take their height (--keys-height, published only while they
+ *  stand) off the viewport's in every height here, so a card anchored at the top ends above them, not under them.
  *  Which placements apply follows the touch overlay being on screen (`overlay`), not the glyphs: a pad paired with a
  *  phone shows its glyphs while the buttons stay.
  *  Desktop: a column from just below the centre of view down to the HUD frame. The card stands at its foot
@@ -153,11 +158,11 @@ const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-
 const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
 const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
 const CARD_AT = {
-  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_calc(var(--touch-top,0.75rem)_/_var(--ui-zoom,1))_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
-  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_-_16rem)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  shortDriving: 'bottom-[calc(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_+_0.5rem)] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_max(0.75rem,env(safe-area-inset-right))_-_15.5rem)))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_-_0.5rem_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
-  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_4.5rem_-_max(0.75rem,env(safe-area-inset-top)))] w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2 overflow-y-auto overscroll-contain',
+  tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_calc(var(--touch-top,0.75rem)_/_var(--ui-zoom,1))_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
+  short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_-_16rem)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortDriving: 'bottom-[calc(calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_+_0.5rem)] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_max(0.75rem,env(safe-area-inset-right))_-_15.5rem)))] right-[max(0.75rem,env(safe-area-inset-right))] mx-auto max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_calc(var(--touch-top,10.5rem)_/_var(--ui-zoom,1))_-_0.5rem_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
+  shortRaised: 'bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+4.5rem)] left-1/2 max-h-[calc(calc(calc(100dvh_-_var(--keys-height,0px))_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_4.5rem_-_max(0.75rem,env(safe-area-inset-top)))] w-[min(28rem,calc(100%_-_26rem_-_env(safe-area-inset-left,0px)_-_env(safe-area-inset-right,0px)))] min-w-[18rem] -translate-x-1/2 overflow-y-auto overscroll-contain',
 } as const
 const CHIP_AT = {
   wide: 'bottom-[calc(max(1.25rem,env(safe-area-inset-bottom))+13.75rem)] left-[max(1.25rem,env(safe-area-inset-left))] max-w-[18rem]',
@@ -702,8 +707,10 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
   }
 
   // Greetings settle into the chip; so does the name question for a controller player, who may have no
-  // keyboard — unless they have started typing (typing into the field leaves the family unchanged).
-  const padAsk = view === 'ask' && isPadFamily(family) && draft === ''
+  // keyboard — unless they have started typing (typing into the field leaves the family unchanged), or have the
+  // on-screen keys open to type it (04_Connect_Hardware/ScreenKeys.tsx: the pad is theirs while they stand open).
+  const keys = useSyncExternalStore(keysView.subscribe, keysView.get, keysView.get)
+  const padAsk = view === 'ask' && isPadFamily(family) && draft === '' && keys.mode !== 'open'
   useEffect(() => {
     if (!visible || (view !== 'greet' && view !== 'nudge' && !padAsk)) return
     const id = window.setTimeout(() => setView('chip'), view === 'nudge' ? Math.max(settleMs, SLOANE.nudgeMs * (settleMs / SLOANE.settleMs)) : settleMs)
@@ -726,7 +733,8 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     }
   })
   const onWindowPointer = useEffectEvent((e: PointerEvent) => {
-    if (e.pointerType === 'mouse' || cardRef.current?.contains(e.target as Node)) return
+    // A press on the on-screen keys is typing in the card's field, not a step away from it.
+    if (e.pointerType === 'mouse' || cardRef.current?.contains(e.target as Node) || insideKeys(e.target)) return
     settle()
   })
   // Ground covered since the card opened (or came back into view) is movement whatever the input. A
@@ -870,7 +878,7 @@ export function Concierge({ visible, profile, onProfile, family, overlay = famil
     )
   }
 
-  const tips = view === 'greet' || view === 'help' ? controlHints(family, driving, view === 'help' ? 'all' : 'tips') : []
+  const tips = view === 'greet' || view === 'help' ? controlHints(family, driving, view === 'help' ? 'all' : 'tips', pageHand()) : []
   const { step, brief } = dialogue
   const phase = view !== 'goal' ? null : brief ? (brief.chat ? 'chat' : 'brief') : step ? 'why' : 'goal'
   const line: ReactNode =
