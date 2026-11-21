@@ -34,6 +34,8 @@
  * operator tier (gatedAsk), before a prompt reaches this router.
  * Under auto, given the GPUs' memory (ask vram, vram= in the address, or the Windows app's reading), it sizes
  * Ollama's model by what Ollama measured (modelFit.ts), and, for this visit, its context and answer cap too.
+ * Where auto's looks stand and when anything the brain readout shows changes (lookState, onChange) are read from
+ * memory here, so the readout (brainReadout.ts) never asks a provider anything.
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
 import { scriptedAction } from '../06_Make_Decisions/actions.ts'
@@ -49,6 +51,13 @@ export type Provider = 'auto' | 'claude' | 'ollama' | 'llamacpp' | 'openai' | 'n
 export const PROVIDERS: readonly Provider[] = Object.freeze(['auto', 'claude', 'ollama', 'llamacpp', 'openai', 'native', 'inpage', 'scripted'])
 /** A provider auto may answer with: one that asks a model (a server, the app's own, or the model file kept in this page). */
 export type Found = Exclude<Provider, 'auto' | 'scripted'>
+/**
+ * Where auto's looks stand, as the router has it in memory (MindRouter lookState): whether a look has settled this
+ * visit and still stands (one stopped part way does not count: like `ask model auto` after one found Ollama, it leaves
+ * none standing, so the next ask looks again), whether one runs now, and the provider the last found answering (null:
+ * none stands, one is looking, or none answered).
+ */
+export interface RouterLook { readonly looked: boolean; readonly looking: boolean; readonly found: Found | null }
 /**
  * The order auto looks in: the model servers on this machine (Ollama, llama.cpp, LM Studio's port), then the model the
  * app runs itself, then the model file kept in this page, then the Claude gateway.
@@ -187,6 +196,14 @@ export interface MindRouter extends Mind {
    */
   connect(provider: string, url?: string, key?: string): string
   readonly provider: Provider
+  /** Where auto's looks stand (RouterLook), read from memory: it asks nothing and starts no look. */
+  lookState(): RouterLook
+  /**
+   * Calls `listener` after something the brain readout shows may have changed (09_Cognition/brainReadout.ts): the
+   * provider, a look beginning or settling, a provider's server, model or wire format, or an answer ending (the app's
+   * own model may say how it stands then). Returns the unsubscribe. A listener's own failure is not the router's.
+   */
+  onChange(listener: () => void): () => void
   /**
    * The cloud provider on its own (the Claude API through the gateway on this machine), whichever provider is chosen:
    * the cloud fallback throttle (cloudFallback.ts) hands complex prompts to it while the frames are slow.
@@ -336,6 +353,21 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
   })
   // auto: the provider found answering at the last look, for this visit (null until an ask has looked, or after it stopped answering).
   let found: Found | null = null
+  // Whether a look has settled this visit and still stands (a look beginning sets it aside), and how many run now (an
+  // ask's and `ask` alone's may overlap).
+  let looked = false
+  let looking = 0
+  // Who hears that the provider, a look, a server, a model or an answer changed (onChange): the brain readout.
+  const listeners = new Set<() => void>()
+  const changed = (): void => {
+    for (const l of [...listeners]) {
+      try {
+        l()
+      } catch {
+        // a listener's own failure is not the router's
+      }
+    }
+  }
   /** Why the last look found nothing usable, beyond nothing answering (a running server with no model). */
   let lookNote = ''
   /** One model on one server, as aside, coldOnce and wide hold it. */
@@ -393,7 +425,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     if (next !== mine) { ollama.setModel(next); kept.picked = next; dirty = true }
     if (next !== usual) { if (kept.fit?.usual !== usual) { kept.fit = { ...(kept.fit ?? { vram: null, seen: [] }), usual }; dirty = true } }
     else if (kept.fit?.usual !== undefined) { delete kept.fit.usual; dirty = true }
-    if (dirty) keep()
+    if (dirty) { keep(); changed() }
   }
   /**
    * A provider's models for a look: Ollama's without the ones it runs on its own cloud, as its list marks them. In the
@@ -477,9 +509,11 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when
    * a file is kept, and the app's only when it cannot start.
    */
-  const look = async (signal?: AbortSignal): Promise<Mind> => {
+  const seek = async (signal?: AbortSignal): Promise<Mind> => {
     await settled(signal)
     found = null
+    looked = false // set aside with what it found: a look stopped part way leaves none standing (lookState)
+    changed()
     // The second round's addresses, fixed as the look begins (another look may move a provider meanwhile).
     const second = secondRound()
     const also = new Map<Found, string[]>()
@@ -590,6 +624,21 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     lookNote = notes.map((n) => `; ${n}`).join('')
     const where = AUTO_ORDER.filter((p) => (p !== 'inpage' || pageNamed) && (p !== 'native' || appNamed)).map((p) => placeOf(p, also.get(p))).join(', ')
     throw new CognitionError('offline', `no model is answering on this machine (looked for ${where})${lookNote}: start one, or choose one with ask provider <name>`)
+  }
+  /** A look (seek), counted while it runs and noted once it settles (one stopped part way is not), each change heard. */
+  const look = async (signal?: AbortSignal): Promise<Mind> => {
+    looking++
+    try {
+      const m = await seek(signal)
+      looked = true
+      return m
+    } catch (e) {
+      if (!signal?.aborted) looked = true
+      throw e
+    } finally {
+      looking--
+      changed()
+    }
   }
   /** The measurement under way, awaited before a look or an answer; a stop (the signal aborting) ends the wait at once. */
   const settled = async (signal?: AbortSignal): Promise<void> => {
@@ -861,6 +910,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       return `auto: auto chooses the Ollama model again (${ollamaModel()} now)`
     }
     found = null // so the next ask really looks, and chooses from what Ollama lists then
+    looked = false // and the look that found Ollama no longer stands: none answered is not what it found
     return 'auto: auto chooses the Ollama model again at its next look'
   }
 
@@ -877,14 +927,24 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       const fit = fitNow()
       return { ...s, ...own, ...(line !== null && { cache: line }), ...(kept.provider === 'auto' && { auto: autoLine(), ...(found !== null && { found }), ...(fit !== undefined && { fit }) }) }
     },
+    lookState: (): RouterLook => Object.freeze({ looked, looking: looking > 0, found }),
+    onChange: (listener: () => void) => {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
     setServer: (url: string) => {
       const set = settable().setServer(url)
       generation++
+      changed()
       return set
     },
     setModel: (name: string) => {
       const n = typeof name === 'string' ? name.trim() : ''
-      if (n === 'auto' && (kept.provider === 'ollama' || (kept.provider === 'auto' && (found === null || found === 'ollama')))) return handBack()
+      if (n === 'auto' && (kept.provider === 'ollama' || (kept.provider === 'auto' && (found === null || found === 'ollama')))) {
+        const line = handBack()
+        changed()
+        return line
+      }
       const m = settable()
       const set = m.setModel(name)
       generation++
@@ -895,6 +955,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         choice = null
         keep()
       }
+      changed()
       return set
     },
     setThink: (on: boolean): boolean => {
@@ -907,6 +968,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       if (!m.setApi) throw new Error(`the ${answering() ?? kept.provider} provider speaks one wire format only`)
       const set = m.setApi(format)
       generation++
+      changed()
       return set
     },
     setProvider: (name: string): Provider => {
@@ -915,6 +977,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       generation++
       kept.provider = n
       keep()
+      changed()
       return n
     },
     setKey: (key: string): string | null => {
@@ -941,6 +1004,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       // The model auto had moved to goes back to the usual one, while it is still auto's own.
       if (fit.usual !== undefined && unchosen()) { ollama.setModel(fit.usual); kept.picked = fit.usual }
       delete fit.usual; kept.fit = fit; keep()
+      changed()
       const under = kept.provider !== 'auto' ? '; it applies under ask provider auto' : ''
       if (v === 'auto') {
         const f = figure()
@@ -976,17 +1040,23 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         set.push(`key ${maskKey(k)}`)
       }
       keep()
+      changed()
       return set.length ? `${PROVIDER_TEXT[n]}; ${set.join(', ')}` : PROVIDER_TEXT[n]
     },
     // `ask` alone under auto looks again (a server started since the last look is found) and lists what that one has.
     installed: async (signal?: AbortSignal) => (kept.provider === 'auto' ? (await look(signal)).installed(signal) : active().installed(signal)),
     answer: async (req, onPiece) => {
-      // A conversation's prompt is its own page, apart from the guide's (nobody bound) that the rewording uses.
-      await cache.page(req.talk === true ? 'talk' : agentKey(req.tethers), systemFor(req))
-      if (kept.provider === 'auto') return autoAnswer(req, onPiece)
-      // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
-      const m = active()
-      return flown(m === ollama ? unmeasured() : null, m, req, onPiece)
+      try {
+        // A conversation's prompt is its own page, apart from the guide's (nobody bound) that the rewording uses.
+        await cache.page(req.talk === true ? 'talk' : agentKey(req.tethers), systemFor(req))
+        if (kept.provider === 'auto') return await autoAnswer(req, onPiece)
+        // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
+        const m = active()
+        return await flown(m === ollama ? unmeasured() : null, m, req, onPiece)
+      } finally {
+        // The app's own model may say how it stands at an answer (loaded, or failed for good): the readout hears it.
+        changed()
+      }
     },
   }
   return Object.freeze(router)

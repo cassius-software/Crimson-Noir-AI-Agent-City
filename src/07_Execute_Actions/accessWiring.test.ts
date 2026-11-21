@@ -28,6 +28,7 @@ const HOME = read('./HomeCard.tsx')
 const ONBOARDING = read('./onboarding/Onboarding.tsx')
 const FIRST_WALK = read('./onboarding/FirstWalk.tsx')
 const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
+const MENU_ITEMS = read('../04_Connect_Hardware/menuItems.ts')
 const CSS = read('../index.css')
 const POSTFX = read('./postfx.ts')
 const ENGINE = read('./engine.ts')
@@ -56,8 +57,8 @@ test('the shell: the filter reaches the engine as it changes, the bridge reads t
   assert.match(APP, /useEffect\(\(\) => \{ accessRef\.current = access; prefersRef\.current = prefersMore \}, \[access, prefersMore\]\)/, 'the refs follow the state, since the bridge is built once')
   assert.match(APP, /<Hud s=\{hud\}[^\n]* highContrast=\{high\} captionPx=\{CAPTION_PX\[access\.captions\]\} mic=\{mic\} onMic=\{onMic\}[^\n]*\/>/)
   assert.match(APP, /contrast: high,\n\s+onContrast: \(\) => onAccess\(toggleContrast\(access, prefersMore\)\),\n\s+textScale: access\.scale,\n\s+onTextScale: \(\) => onAccess\(cycleScale\(access\)\),/)
-  assert.match(TOUCH, /\{ label: 'High contrast', on: host\.contrast === true, run: host\.onContrast \}/)
-  assert.match(TOUCH, /\{ label: `Text size \$\{host\.textScale \?\? 100\} %`, id: 'text-size', run: host\.onTextScale, keep: true \}/, 'the sheet stays open while the size cycles')
+  assert.match(MENU_ITEMS, /\{ label: 'High contrast', on: host\.contrast === true, run: host\.onContrast \}/)
+  assert.match(MENU_ITEMS, /\{ label: `Text size \$\{host\.textScale \?\? 100\} %`, id: 'text-size', run: host\.onTextScale, keep: true \}/, 'the sheet stays open while the size cycles')
   assert.match(TOUCH, /key=\{it\.id \?\? it\.label\}/, 'the same button through every size: its focus and the scan\'s place hold')
   assert.match(ENGINE, /^\s+setVision\(mode: Vision\): string \{\n\s+this\.visionMode = mode\n\s+this\.vision\.value\.set\(\.\.\.visionMatrix\(mode\)\)\n\s+if \(!this\.disposed\) this\.applyTier\(\)\n\s+const blocked = mode === 'none' \? null : this\.visionBlocked\(\)\n\s+return blocked \?\? visionWord\(mode\)\n\s+\}/m)
   assert.match(ENGINE, /if \(\(this\.ghost\.on \|\| this\.visionMode !== 'none'\) && this\.options\.post\) k\.post = true/, 'a chosen filter keeps the post chain on at every tier, as ghost view does')
@@ -219,7 +220,8 @@ test('inside the text zoom, every length measured in the window\'s pixels is div
   }
   const dvh = layout.match(/100dvh/g)?.length ?? 0
   assert.ok(dvh > 0)
-  assert.equal(layout.match(/calc\(100dvh(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
+  // (Sloane's cards take the on-screen keys' height off the viewport's first, both window pixels: ScreenKeys.tsx)
+  assert.equal(layout.match(/calc\((?:100dvh|calc\(100dvh_-_var\(--keys-height,0px\)\))(?:_\/_| \/ )var\(--ui-zoom, ?1\)\)/g)?.length, dvh, 'and so is the viewport\'s height')
   // The first walk's card: the touch buttons' edges and the stick's zone with and without its gaps (the unzoomed touch
   // layer's), the top of the HUD's chips at the foot (window pixels, Hud.tsx), the window's height and the console's share.
   // (the HUD's foot latched at its highest, with the live foot as its fallback, is divided once for both)

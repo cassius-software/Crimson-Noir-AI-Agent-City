@@ -25,7 +25,7 @@ const shown = (src: string) => src.replace(/^import .*$/gm, '').replace(/\/\*[\s
 test('the hook\'s readers: the device\'s words from the glyphs, a bearing, the nearest workplace', () => {
   assert.deepEqual(wordsOf('keyboard'), { move: 'W A S D', look: 'Mouse', interact: 'E', console: '~' })
   assert.deepEqual(wordsOf('touch'), { move: 'Stick', look: 'Drag', interact: 'Enter car', console: 'Menu' })
-  assert.deepEqual(wordsOf('abxy'), { move: 'L', look: 'R', interact: 'A', console: '~' })
+  assert.deepEqual(wordsOf('abxy'), { move: 'L', look: 'R', interact: 'A', console: 'Menu' }, 'a pad opens the console from its own menu (PadMenu.tsx)')
   assert.equal(wordsOf('bayx').interact, 'B')
   assert.equal(bearingOf(0, 0, 10, 1), 'east')
   assert.equal(bearingOf(0, 0, -10, 1), 'west')

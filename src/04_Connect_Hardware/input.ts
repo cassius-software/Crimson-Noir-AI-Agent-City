@@ -138,6 +138,8 @@ export class Input {
   private readonly disposers: (() => void)[] = []
   private readonly canvas: HTMLCanvasElement
   private readonly mapper = new PadMapper()
+  /** What the pads asked of the page and nobody has taken yet (takeUi). */
+  private ui = 0
   private readonly padLook = new PadLook()
   private readonly lookStep = { yaw: 0, pitch: 0 }
   private readonly pad: Analog = createAnalog()
@@ -469,6 +471,42 @@ export class Input {
   }
 
   /**
+   * The on-screen keys or the pad's menu borrow player 1's pads (gamepad.ts PadMapper.lend): they read `padViews`
+   * themselves, and until they hand the pads back, and every button has been let go, the game gets stillness from
+   * them and no press but the microphone's mute. The keyboard, the mouse, the touch controls, the headset's
+   * controllers and a split screen's other seats are untouched.
+   */
+  lend(on: boolean): void {
+    this.mapper.lend(on)
+    if (on) this.padLook.reset()
+  }
+
+  /** Player 1's pads as the last poll read them, each in the standard shape (PadMapper.views). */
+  get padViews(): readonly GamepadLike[] {
+    return this.mapper.views
+  }
+
+  /** A button went down on one of player 1's pads during the last poll. */
+  get padPressed(): boolean {
+    return this.mapper.pressed
+  }
+
+  /** When the pads were last polled, on performance.now()'s clock (-1 before the first poll): `padViews` is as old as this. */
+  get polledAt(): number {
+    return this.lastPollAt
+  }
+
+  /**
+   * What player 1's pads have asked of the page since the last call (gamepad.ts PAD_UI: the pad's menu, the on-screen
+   * keys), once. Nothing while a card waits for the operator's OK: its buttons have the pad.
+   */
+  takeUi(): number {
+    const ui = this.shielded ? 0 : this.ui
+    this.ui = 0
+    return ui
+  }
+
+  /**
    * Seats in play (local split screen): with more than one, the pads are dealt to seats (seats.ts SeatTable: the
    * lowest free seat among 1..n−1 first, then seat 0) and player 1 reads only the pad in seat 0; with one, every pad
    * merges into player 1 as before. Pads in seats that no longer exist stand up at once.
@@ -555,8 +593,12 @@ export class Input {
     if (edges & PAD_EDGE.mute) this.queued.add('mute')
     if (edges & PAD_EDGE.talk) this.queued.add('talk')
     if (this.mapper.active) this.lastSource = 'gamepad'
+    this.ui |= this.mapper.ui
 
     const xr = this.xr
+    // A pad held inside a headset walks where the headset looks, as the controllers' sticks do (never at the wheel);
+    // turned before the merge, since the controllers' own moves are turned already.
+    if (xr && xr.live) xr.toHead(this.pad)
     const a = this.analog, p = xr ? mergeAnalog(this.padXr, this.pad, xr.analog) : this.pad, sx = this.stick.x, sy = this.stick.y
     if (sx * sx + sy * sy > p.moveX * p.moveX + p.moveY * p.moveY) {
       a.moveX = sx; a.moveY = sy; a.steer = -sx
@@ -569,6 +611,14 @@ export class Input {
     a.lookY = p.lookY
     a.run = p.run || this.held.run
     a.handbrake = p.handbrake || this.held.handbrake
+    // A pad held inside a headset: its right stick snap-turns the body as the controllers do, never smoothly, and never
+    // tilts (the headset owns the pitch).
+    if (xr && xr.live) {
+      const step = xr.padSnap(a.lookX)
+      if (step !== 0) this.yaw -= step
+      a.lookX = 0
+      a.lookY = 0
+    }
 
     const turn = this.lookStep
     this.padLook.step(a.lookX, a.lookY, dt, turn)

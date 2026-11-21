@@ -26,7 +26,7 @@ import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, test } from 'node:test'
 import { HalBus } from './hal.ts'
 import { Input, isEditableTarget, LOOK, PITCH_LIMIT } from './input.ts'
-import { PAD } from './gamepad.ts'
+import { PAD, PAD_UI } from './gamepad.ts'
 import { KEYBOARD_SEAT } from './seats.ts'
 import { XR_TURN, XrMapper } from './xrInput.ts'
 import type { GamepadLike } from './web-hardware.d.ts'
@@ -845,6 +845,74 @@ test('the shield is not the console\'s suspend: it leaves the keyboard alone, an
   pads.push(pad({ pressed: [PAD.r1] }))
   input.poll(1 / 60)
   assert.equal(input.take('ping'), false, 'the right shoulder\'s ping is dropped like the rest of the pad\'s edges')
+})
+
+test('lend: the on-screen keys borrow the pad: the game gets stillness and no press from it, the keyboard and the touch stick stay the player\'s, and the press that closed the keys opens no door', () => {
+  pads.push(pad())
+  input.poll(1 / 60)
+  input.lend(true)
+  pads[0] = pad({ pressed: [PAD.south, PAD.r1, PAD.east], axes: [0, -1, 1, 0] })
+  const yaw = input.yaw
+  input.poll(1 / 60)
+  assert.equal(input.take('interact'), false, 'south typed a letter, it did not open a car door')
+  assert.equal(input.take('ping'), false)
+  assert.equal(input.analog.moveY, 0, 'the stick moved the highlight, not the avatar')
+  assert.equal(input.analog.handbrake, false)
+  assert.equal(input.yaw, yaw, 'the right stick did not turn the head')
+  assert.equal(input.device, 'gamepad')
+  assert.equal(input.padPressed, true)
+  assert.equal(input.padViews.length, 1, 'the keys read the same pad')
+  assert.equal(input.padViews[0].buttons[PAD.south].pressed, true)
+  // The keyboard and the touch stick are not the pad.
+  doc.dispatchEvent(ev('keydown', { code: 'KeyE' }))
+  assert.equal(input.take('interact'), true)
+  input.setTouchStick(0, 1)
+  input.poll(1 / 60)
+  assert.ok(input.analog.moveY > 0.99)
+  input.setTouchStick(0, 0)
+  // Handed back with east (the button that closed the keys) still down: nothing until it is let go.
+  input.lend(false)
+  pads[0] = pad({ pressed: [PAD.east, PAD.south] })
+  input.poll(1 / 60)
+  assert.equal(input.take('interact'), false)
+  assert.equal(input.analog.handbrake, false)
+  pads[0] = pad()
+  input.poll(1 / 60)
+  pads[0] = pad({ pressed: [PAD.south] })
+  input.poll(1 / 60)
+  assert.equal(input.take('interact'), true, 'let go and pressed again: the game\'s once more')
+})
+
+test('takeUi: start and select ask for the page\'s menu and keys once, never while a card waits for the OK, and only from player 1\'s pad', () => {
+  pads.push(pad())
+  input.poll(1 / 60)
+  assert.equal(input.takeUi(), 0)
+  assert.ok(input.polledAt >= 0, 'the views are as old as the last poll')
+  pads[0] = pad({ pressed: [PAD.start] })
+  input.poll(1 / 60)
+  input.poll(1 / 60)
+  assert.equal(input.takeUi(), PAD_UI.menu, 'kept across polls until taken')
+  assert.equal(input.takeUi(), 0, 'once')
+  assert.equal(input.take('ping'), false, 'and nothing for the game')
+  pads[0] = pad()
+  input.poll(1 / 60)
+  // Under the shield the card's buttons have the pad.
+  input.shield(true)
+  pads[0] = pad({ pressed: [PAD.select] })
+  input.poll(1 / 60)
+  assert.equal(input.takeUi(), 0)
+  input.shield(false)
+  assert.equal(input.takeUi(), 0, 'and what was asked under it is not owed afterwards')
+  // Split screen: a pad in another seat asks the page for nothing.
+  pads[0] = pad()
+  input.poll(1 / 60)
+  input.setPlayers(2)
+  input.poll(1 / 60)
+  assert.notEqual(input.seats.seatOf(0), KEYBOARD_SEAT, 'with two players the one pad is player 2')
+  pads[0] = pad({ pressed: [PAD.start, PAD.select] })
+  input.poll(1 / 60)
+  assert.equal(input.takeUi(), 0)
+  assert.equal(input.padViews.length, 0, 'the keys are player 1\'s: they read none of player 2\'s pad')
 })
 
 test('the seating plan reaches the HAL: a seat changing hands and setPlayers tell the bus (its player LEDs), a quiet frame does not', () => {

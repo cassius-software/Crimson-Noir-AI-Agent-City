@@ -46,6 +46,7 @@ import { createModelStore, roomRefusal, workerCopy, type KeptModel } from './09_
 import { APP_MODEL, SITE_MANIFEST, SITE_MODEL, fetchSiteModel, launcherServes, parseManifest, siteUrl, type SiteFetch, type SiteModelFrom, type SiteModelHost, type SiteModelLine, type SiteModelOffer, type SiteModelPin, type SiteModelProgress } from './09_Cognition/siteModel.ts'
 import { createAutoRecord, createSiteAuto, readLink, type AutoFacts, type AutoLocks, type AutoStore } from './09_Cognition/siteAuto.ts'
 import { createSiteJob, SiteJobHeld, type SiteJobHow } from './09_Cognition/siteJob.ts'
+import { bindBrain, createBrainReadout, readBrain, subscribeBrain, type SiteFacts } from './09_Cognition/brainReadout.ts'
 import CopyWorker from './09_Cognition/modelStore.worker.ts?worker&inline'
 import SpeechWorker from './09_Cognition/speech.worker.ts?worker&inline'
 import { SpeechEngine, speechNote, type Heard, type SpeechWorkerLike } from './09_Cognition/speechEngine.ts'
@@ -58,7 +59,11 @@ import { createNetClient } from './10_Network/netClient.ts'
 import { admissibleChat, admissibleName } from './10_Network/replication.ts'
 import type { NetControls } from './07_Execute_Actions/engine.ts'
 import { GATE_CHECK_NAMES, type GateHandle, type GateLease, type Mind, type SkillGate } from './07_Execute_Actions/operator.ts'
-import { TouchControls } from './04_Connect_Hardware/TouchControls.tsx'
+import { TouchControls, type TouchMenuHost } from './04_Connect_Hardware/TouchControls.tsx'
+import { menuItems, type MenuItem } from './04_Connect_Hardware/menuItems.ts'
+import { expectKeys, keysBlocked, keysHost, summonKeys } from './04_Connect_Hardware/keysHost.ts'
+import { PAD_UI } from './04_Connect_Hardware/gamepad.ts'
+import { PadMenu } from './07_Execute_Actions/PadMenu.tsx'
 import { isEditableTarget } from './04_Connect_Hardware/input.ts'
 import type { SipocSnapshot } from './05_Observe_Environment/telemetry.ts'
 import { BootVeil } from './07_Execute_Actions/BootVeil.tsx'
@@ -100,7 +105,7 @@ import { zoneOf } from './01_Initialize_World/lakefrontPack.ts'
 import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
-import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
+import { CONCIERGE_NAME, loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
 import { personChat, SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
@@ -617,7 +622,19 @@ function ttyBridge(vram: string | null): TerminalBridge {
       runner: shellRunner(),
       gpuMemory: shellGpuMemory,
       vram,
-    })).then(({ router, inPage }) => ({ router, inPage })),
+    })).then(({ router, inPage, native }) => {
+      // The brain readout (09_Cognition/brainReadout.ts) over the console's router: `ask` prints its brain row. A
+      // forget (ask file forget) is told to it, as the city's console tells its own.
+      const brain = createBrainReadout({ router, native, page: inPage })
+      bindBrain(brain)
+      const file = {
+        load: () => inPage.load(),
+        unload: () => inPage.unload(),
+        forget: (name?: string) => inPage.forget(name).finally(() => brain.refresh()),
+        log: () => inPage.log(),
+      }
+      return { router, inPage: file }
+    }),
   })
 }
 
@@ -945,6 +962,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const termRef = useRef<TerminalHandle>(null)
   const [engine, setEngine] = useState<Engine | null>(null)
   const [bridge, setBridge] = useState<TerminalBridge | null>(null)
+  // The pad's own menu (PadMenu.tsx), opened and closed by the pad's menu button (the engine's onPadUi).
+  const [padMenu, setPadMenu] = useState(false)
+  const closePadMenu = useCallback(() => setPadMenu(false), [])
   const [termOpen, setTermOpen] = useState(false)
   const [hud, setHud] = useState<SipocSnapshot | null>(null)
   const [hudVisible, setHudVisible] = useState(true)
@@ -1027,6 +1047,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const [siteModel, setSiteModel] = useState<SiteModelHost | null>(null)
   /** Gets the site's model by itself (09_Cognition/siteAuto.ts), once the city is on screen: set with siteModel, run once a city. */
   const siteAutoRef = useRef<(() => Promise<string>) | null>(null)
+  /** Hands the line that start ended with to the city's brain readout (09_Cognition/brainReadout.ts): set with siteAutoRef. */
+  const siteLineRef = useRef<(why: string) => void>(noop)
   /** Why the model the app runs itself couldn't start (09_Cognition/nativeMind.ts), said on Sloane's card; null elsewhere. */
   const [appModel, setAppModel] = useState<AppModelLine | null>(null)
   const onHear = useCallback((voice: string, line: string) => { void speaker.preview(line, voice) }, [speaker])
@@ -1081,7 +1103,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   // standing (never under the boot veil or over a halted city). Why it did or did not is one line in the browser's console.
   useEffect(() => {
     if (!veilDone || locked !== null || siteModel === null) return
-    void siteAutoRef.current?.().then((why) => console.info(`Sloane's model: ${why}`), (err: unknown) => console.info(`Sloane's model: ${plain(err)}`))
+    void siteAutoRef.current?.().then((why) => {
+      siteLineRef.current(why)
+      console.info(`Sloane's model: ${why}`)
+    }, (err: unknown) => {
+      siteLineRef.current(plain(err))
+      console.info(`Sloane's model: ${plain(err)}`)
+    })
   }, [veilDone, locked, siteModel])
   // A city action an agent proposed, waiting for the operator's OK (07_Execute_Actions/acts.ts; the bridge's acts.follow
   // feeds it): the card, the input shield and the HUD line all derive from this one state, and actRef is the frame
@@ -1586,6 +1614,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // runtime and store: it plans by the engine's profile of this device, holds the city's tier down while it loads
         // or answers (inPagePlan.ts holdTier), and says what it is doing on the HUD's activity line. The onboarding's
         // router has none: a model is never loaded while the city is still being built.
+        // Tells the brain readout (made below, once the site's model's job exists) that something it shows changed.
+        let brainHeard = noop
         const device = (): PageDevice => ({
           mobile: e.profile.mobile, lite: e.profile.lite, gpuClass: e.profile.gpuClass,
           cores: navigator.hardwareConcurrency || 4, memoryGb: deviceMemory(), isolated: canShareMemory(), f16: e.gpuF16,
@@ -1613,10 +1643,21 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             blamed: () => local.provider === 'auto' || local.provider === 'native',
           }),
         })
+        // While the app checks its file (it hashes it on first launch), it is asked again, from memory, about once a
+        // second until the check is done, and again after each change the router announces (an answer stopped after the
+        // check), so the brain readout (below) follows the check to its end.
+        let checkTimer: ReturnType<typeof setTimeout> | undefined
+        const followCheck = (): void => {
+          clearTimeout(checkTimer)
+          if (cancelled || appMind.status()?.status.state !== 'preparing') return
+          checkTimer = setTimeout(() => { void appMind.installed().catch(() => []).then(followCheck) }, 1000)
+        }
         inPageMind = inPage
         // Whether the app runs a model and how it stands, asked once as the router is built (it answers from memory; a
-        // shell without the runner's commands says so at once): the rewording below waits while that model is cold.
-        void appMind.installed().catch(() => [])
+        // shell without the runner's commands says so at once): the rewording below waits while that model is cold, and
+        // the brain readout (below) shows what it said; while the app checks its file, followCheck (above) asks again.
+        void appMind.installed().catch(() => []).then(() => { brainHeard(); followCheck() })
+        const offCheck = local.onChange(followCheck)
         const mind: Mind = {
           ...local,
           answer: (req, onPiece) => {
@@ -1893,9 +1934,19 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         const siteEnd = new AbortController()
         const pin = source.pin
         let offered: Promise<SiteModelOffer | null> | null = null
+        // What the page knows of the site's model for the brain readout (below), as it last read or heard it: whether
+        // the source offers it (null: not asked yet), whether it is kept in this page, and the line the page's own start
+        // ended with. Each is noted where the page reads it anyway; the readout itself reads nothing but these.
+        let siteOffered: boolean | null = null
+        let siteKept = false
+        let siteDecided: string | null = null
         // A copy kept for this visit only (the storage refused it) is as good as a lasting one until the page closes.
-        const keptSite = async (): Promise<KeptModel | null> =>
-          (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+        const keptSite = async (): Promise<KeptModel | null> => {
+          const had = (await PAGE_MODELS().list()).find((m) => m.name === pin.file && m.bytes === pin.bytes) ?? null
+          siteKept = had !== null
+          brainHeard()
+          return had
+        }
         /** Why this device or its storage cannot take the model now, or null (the same checks a tap meets). */
         const siteRefusal = async (): Promise<string | null> => {
           const env: PlanEnv = { ...device(), gpuMode: 'auto', gpuFailed: false }
@@ -1910,6 +1961,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           const kept = await PAGE_MODELS().list().catch(() => [])
           const chosen = inPage.settings().model
           const caps = PAGE_RUNTIME().caps()
+          // As read now, for the brain readout too.
+          siteKept = kept.some((m) => m.name === pin.file && m.bytes === pin.bytes)
+          brainHeard()
           return {
             cannot: PAGE_MODEL_REFUSAL(),
             provider: local.settings().provider ?? 'auto',
@@ -1943,6 +1997,25 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             release()
           }
         })
+        // The brain readout (09_Cognition/brainReadout.ts): which brain Sloane is using and how the site's model stands,
+        // read from memory (the router, the app's model as last heard, this job, the facts noted above), never asking
+        // anything; bound for the page's readers (the first walk, the console's ask, ?debug's __SIM__.brain) until this
+        // city ends.
+        const brain = createBrainReadout({
+          router: local,
+          native: appMind,
+          page: inPage,
+          site: {
+            facts: (): SiteFacts => ({
+              from: source.from, file: pin.file, title: pin.title, bytes: pin.bytes,
+              served: source.served(), refusal: PAGE_MODEL_REFUSAL(), offered: siteOffered,
+              kept: siteKept || inPage.settings().model === pin.file, decided: siteDecided,
+            }),
+            job: siteJob,
+          },
+        })
+        const unbindBrain = bindBrain(brain)
+        brainHeard = () => brain.refresh()
         /** The job's work (siteJob above): the checks, the download, the hand-off to keepPicked. */
         const siteWork = async (how: SiteJobHow, onProgress: (p: SiteModelProgress) => void, signal: AbortSignal): Promise<string> => {
           if (keeping || fetching) throw new Error('a model file is being kept in this page already: wait for it to finish')
@@ -1989,7 +2062,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           // Handed to the copy from here, in the same turn as the checks above, so no Stop lands between them: the
           // card drops its Stop now (step 'keep'), not at the copy's first progress after the header check.
           onProgress({ step: 'keep', done: 0, total: file.size })
-          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap')
+          return keepPicked([file], (done, total) => onProgress({ step: 'keep', done, total }), how === 'tap').then((line) => {
+            // Kept, as the brain readout knows before the job says done (a forget reads it again: modelBridge below).
+            siteKept = true
+            return line
+          })
         }
         const siteHost = Object.freeze<SiteModelHost>({
           offer: async (): Promise<SiteModelLine | null> => {
@@ -1997,6 +2074,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
             // Asked once a visit, unless the source could not say just now (webSource.offer).
             offered ??= source.offer(siteEnd.signal).catch(() => { offered = null; return null })
             const offer = await offered
+            // Heard for the brain readout, unless the source could not say just now (asked again then).
+            if (offered !== null && siteOffered !== (offer !== null)) {
+              siteOffered = offer !== null
+              brainHeard()
+            }
             if (!offer) return null
             return { title: pin.title, size: sizeText(offer.bytes), kept: (await keptSite().catch(() => null)) !== null }
           },
@@ -2042,6 +2124,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           now: Date.now,
         }, pin, 'Sloane', source.from)
         siteAutoRef.current = siteAuto
+        // The line it ends with (GuiShell's effect below hears it) is the brain readout's too: the first one, since a
+        // second call only says it has looked.
+        siteLineRef.current = (why) => {
+          siteDecided ??= why
+          brain.refresh()
+        }
         stopSite = () => {
           siteJob.stop('page')
           siteEnd.abort()
@@ -2081,6 +2169,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           siteAutoRef.current = null
           siteJob.stop('page')
           siteEnd.abort()
+          siteLineRef.current = noop
+          clearTimeout(checkTimer)
+          offCheck()
+          unbindBrain()
+          brain.dispose()
           picker?.dispose()
           main?.removeEventListener('dragover', onDragOver)
           main?.removeEventListener('drop', onDrop)
@@ -2090,7 +2183,11 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // The console's `ask file` and `ask gpu` (terminal/bridge.ts ModelBridge).
         const modelBridge: ModelBridge = Object.freeze({
           pick: () => pickFiles().then((files) => (files ? keepPicked(files) : 'no model file was chosen')),
-          forget: (name?: string) => inPage.forget(name),
+          // The brain readout hears a forget at once, and again once whether the site's model is still kept is read.
+          forget: (name?: string) => inPage.forget(name).finally(() => {
+            brainHeard()
+            void keptSite().catch(() => null)
+          }),
           load: () => inPage.load(),
           unload: () => inPage.unload(),
           gpu: (mode: GpuMode) => gpuLine(inPage.setGpu(mode)),
@@ -2101,6 +2198,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // its doorstep card (the chip calls openHome itself).
         e.onBrowse = openStore
         e.onHome = openHome
+        // The pad's menu button opens or closes its menu; its select button asks for the on-screen keys
+        // (04_Connect_Hardware/ScreenKeys.tsx), on the field that has the caret, else the console's prompt.
+        e.onPadUi = (ui) => {
+          if (ui & PAD_UI.menu) setPadMenu((o) => !o)
+          if (ui & PAD_UI.keys) summonKeys()
+        }
         setEngine(e)
         const engineBridge = e.terminalBridge(gate, mind, voice, memory.diary(), voiceOf, pageStore(ELITE_KEY))
         // The team runner over what the page already has: the bridge's one reader of the city's columns, the air gap's
@@ -2258,6 +2361,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           Object.assign(window, {
             __SIM__: {
               snapshot: () => e.snapshot(),
+              // The brain readout (09_Cognition/brainReadout.ts), as the walk reads it: read from memory, never a request.
+              brain: () => readBrain(),
+              onBrain: (listener: () => void) => subscribeBrain(listener),
               errors: () => e.errors,
               setHour: (h: number) => e.debugSetHour(h),
               teleport: (x: number, z: number, yaw = 0) => e.debugTeleport(x, z, yaw),
@@ -2337,6 +2443,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       link.source = null
       link.sound = () => true
       setEngine(null)
+      setPadMenu(false)
       setBridge(null)
       setSloane(null)
       setSloaneTalk(null)
@@ -2364,6 +2471,74 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const env = useMemo(() => pageEnv(), [])
   const failure = error !== null ? classify(error.cause, env) : locked !== null && haltClass(locked) !== 'audit' ? explainHalt(locked, env) : null
 
+  // The one-key actions for a pad's menu and a phone's touch Menu alike (TouchControls.tsx menuItems).
+  const menuHost: TouchMenuHost | null = engine && hud ? {
+    onConsole: () => termRef.current?.open(),
+    // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
+    onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
+    onHud: () => setHudVisible((v) => !v),
+    hudVisible,
+    ghost: hud.output.ghost === true,
+    rain: hud.output.matrix === true,
+    // The headset item only where a session can be asked for; the tap itself is the user activation.
+    onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
+    headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
+    mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
+    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
+    contrast: high,
+    onContrast: () => onAccess(toggleContrast(access, prefersMore)),
+    textScale: access.scale,
+    onTextScale: () => onAccess(cycleScale(access)),
+  } : null
+  // A card that must be answered first (the action card, the way-out card, the halted city's lock screen) has the pad
+  // and the screen, and a headset shows no page at all: the pad's menu closes and the on-screen keys fold to their chip
+  // (keysHost.ts keysBlocked), taking no pad, until it is gone.
+  const inHeadset = hud !== null && (hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar')
+  const blocked = (act !== null && veilDone && locked === null && bridge !== null) || failure !== null || locked !== null || inHeadset
+  useEffect(() => {
+    keysBlocked.set(blocked)
+    if (blocked) setPadMenu(false)
+  }, [blocked])
+  useEffect(() => () => keysBlocked.set(false), [])
+  // What the on-screen keys need of the running city: player 1's pads as the game reads them, the lending of them (to
+  // the keys and the pad's menu, each its own lender: the game has them back once both have given them), the console.
+  useEffect(() => {
+    if (!engine) return
+    const lenders = new Set<string>()
+    keysHost.set({
+      pads: () => engine.input.padViews,
+      polledAt: () => engine.input.polledAt,
+      lend: (owner, on) => {
+        if (on) lenders.add(owner)
+        else lenders.delete(owner)
+        engine.input.lend(lenders.size > 0)
+      },
+      openConsole: () => termRef.current?.open(),
+    })
+    return () => {
+      keysHost.set(null)
+      engine.input.lend(false)
+    }
+  }, [engine])
+  // Sloane's card is opened from the pad's menu as her chip's own press opens it, and the goal field it focuses gets the
+  // on-screen keys open; where her card is open already, the keys go to its field.
+  const sloaneShown = hud !== null && veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && locked === null
+  const padItems: MenuItem[] = menuHost && engine ? [
+    // With the keys set off (access keys off: never on screen) the menu offers none.
+    ...(access.keys === 'off' ? [] : [{ label: 'Keyboard', run: () => { summonKeys() } }]),
+    ...(sloaneShown ? [{
+      label: CONCIERGE_NAME,
+      run: () => {
+        const chip = document.querySelector<HTMLElement>('[data-concierge="chip"]')
+        if (!chip) { summonKeys(); return }
+        expectKeys()
+        chip.click()
+      },
+    }] : []),
+    // Its Console opens the console with the keys up on the prompt (the touch Menu's, a finger's, opens them on a tap).
+    ...menuItems({ ...menuHost, onConsole: () => { expectKeys(); menuHost.onConsole() } }, engine.input),
+  ] : []
+
   return (
     <main ref={mainRef} className="relative h-full w-full overflow-hidden bg-slate-900">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
@@ -2379,24 +2554,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           input={engine.input}
           driving={hud.input.mode === 'vehicle'}
           nearVehicle={hud.input.nearVehicle}
-          menu={{
-            onConsole: () => termRef.current?.open(),
-            // No Model file where this page cannot run the model (PAGE_MODEL_REFUSAL).
-            onModelFile: PAGE_MODEL_REFUSAL() === null ? onModelFile : undefined,
-            onHud: () => setHudVisible((v) => !v),
-            hudVisible,
-            ghost: hud.output.ghost === true,
-            rain: hud.output.matrix === true,
-            // The headset item only where a session can be asked for; the tap itself is the user activation.
-            onHeadset: hud.supplier.xr.state === 'unsupported' ? undefined : () => engine.toggleXr(),
-            headset: hud.supplier.xr.state === 'vr' || hud.supplier.xr.state === 'ar',
-            mic: hud.supplier.voice ? micIsOpen(hud.supplier.voice.phase) : false,
-            // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
-            contrast: high,
-            onContrast: () => onAccess(toggleContrast(access, prefersMore)),
-            textScale: access.scale,
-            onTextScale: () => onAccess(cycleScale(access)),
-          }}
+          menu={menuHost ?? undefined}
         />
       )}
       {/* Never over a halted city: the way-out card (RecoveryCard.tsx) holds focus on Restart, and Sloane's name field,
@@ -2511,6 +2669,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           dark={hud.customer.daylight < 0.35}
         />
       )}
+      {/* The pad's own menu: over the console (a pad player may open it there), under a card that must be answered first,
+          which closes it. */}
+      <PadMenu open={padMenu && !blocked} items={padItems} onClose={closePadMenu} />
       <Terminal ref={termRef} bridge={bridge} onOpenChange={onTermOpen} onBoot={reboot} onMap={remap} onLine={fw.line} />
       {/* A city action waiting for the operator's OK (ActCard.tsx): over the console, under the recovery card; never
           while the city is halted, never before the veil lifts. The console beneath stays usable (y, n, act ok, act no). */}

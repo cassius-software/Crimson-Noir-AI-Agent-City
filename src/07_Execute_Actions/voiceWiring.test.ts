@@ -24,7 +24,7 @@ const CONCIERGE = read('./Concierge.tsx')
 const ENGINE = read('./engine.ts')
 const INPUT = read('../04_Connect_Hardware/input.ts')
 const PAD = read('../04_Connect_Hardware/gamepad.ts')
-const TOUCH = read('../04_Connect_Hardware/TouchControls.tsx')
+const MENU_ITEMS = read('../04_Connect_Hardware/menuItems.ts')
 const MIC = read('../04_Connect_Hardware/microphone.ts')
 const COMMANDS = read('./terminal/commands.ts')
 
@@ -54,7 +54,7 @@ test('V and the right stick\'s click are the mute (M is rain mode, L3 the run la
   assert.match(ENGINE, /if \(mute\) this\.onMute\?\.\(\)/)
   assert.doesNotMatch(ENGINE, /from '\.\.\/04_Connect_Hardware\/microphone\.ts'|new Microphone\(/, 'the engine never holds the microphone')
   assert.match(APP, /e\.onMute = onMic/)
-  assert.match(TOUCH, /\{ label: 'Microphone', on: host\.mic === true, run: \(\) => input\.press\('mute'\) \}/, 'the touch Menu\'s item is the same press')
+  assert.match(MENU_ITEMS, /\{ label: 'Microphone', on: host\.mic === true, run: \(\) => input\.press\('mute'\) \}/, 'the touch Menu\'s item is the same press')
   assert.match(APP, /mic: hud\.supplier\.voice \? micIsOpen\(hud\.supplier\.voice\.phase\) : false,/)
 })
 

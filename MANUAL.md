@@ -79,11 +79,13 @@ at all, where Sloane still answers through a model on this machine or in the app
 | Ping (mark a spot or a person where you look) | Q, or the middle mouse button | right shoulder button | Ping |
 | Talk to the person near you (on foot) | T (Enter sends, Esc in an empty field finishes) | west face button; d-pad up held left-handed | tap the Talk chip |
 | Clock −1 h / +1 h | `[` `]` | D-pad left / right | Menu: Clock −1 h / +1 h |
-| Ghost view | G | | Menu: Ghost view |
-| Rain mode | M | | Menu: Rain mode |
+| Ghost view | G | menu button, then Ghost view | Menu: Ghost view |
+| Rain mode | M | menu button, then Rain mode | Menu: Rain mode |
 | Microphone on · mute (the HUD's pill does the same) | V | right-stick click | Menu: Microphone |
-| Hide HUD | H | | Menu: Hide HUD |
-| Ring-0 console | `~` (Backquote) | | Menu: Console (Close shuts it) |
+| Hide HUD | H | menu button, then Hide HUD | Menu: Hide HUD |
+| Ring-0 console | `~` (Backquote) | menu button, then Console | Menu: Console (Close shuts it) |
+| The pad's menu | | menu button (start) | |
+| On-screen keys (see below) | not shown | select button, or the pad's menu: Keyboard | a tap on the console's prompt; the keys' chip |
 | A model file for the model in this page | `ask file` in the console, or drop the file on the city | | Menu: Model file |
 | Allow / refuse a city action an agent proposed | Y / N with the console closed; act ok / act no, or y / n, in it | d-pad and the south face button on the card | tap Allow / Refuse |
 
@@ -96,8 +98,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   Like them it answers the touch itself, so it opens with the other thumb on the stick. It opens a sheet with the
   keyboard's one-key actions, upward and to the button's left (above the button where there is no room to its left),
   never past the edge of the screen (a sheet taller than the room scrolls); turning the phone or getting in or out of
-  a car closes it. The console opens from the tap itself, so the on-screen keyboard comes up, and shows a Close button
-  on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
+  a car closes it. The console opens from the tap itself, its prompt served by the page's own keys (see On-screen keys
+  below), and shows a Close button on a touch screen. Every text field reads at 16 px on a touch screen, so Safari does not zoom the page when one
   takes focus. Held upright while driving, Ping, Reset and Exit car stand in a column, clear of the stick (on a phone
   under 376 px across, Reset and Exit car share a row above the brakes, which stand one over the other). On a short
   screen (under 500 px tall) the Brake and Handbrake buttons are a size smaller. Sloane's card stands clear of the
@@ -174,6 +176,55 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   when centred), and then the order is dropped for good. Two real triggers held still at half pull together for half
   a second drop it too, until the pad reconnects. It is still a guess: a lever parked at its middle when the pad
   wakes, or a pair of triggers on a four-axis pad, is read as a stick and can turn or spin the view.
+- **The pad's menu** (`07_Execute_Actions/PadMenu.tsx`). The menu button (start; on a pad read by position with no
+  centre buttons, the left shoulder; with a one-handed layout, select with that hand's shoulder held) opens a menu that
+  holds the touch Menu's items (Console, Model file, Clock, Ghost view, Rain mode, Microphone, Headset, High contrast,
+  Text size, Hide HUD; one list, `04_Connect_Hardware/menuItems.ts`, so the two never drift apart), with Keyboard (the
+  on-screen keys; not offered with `access keys off`) and Sloane (her card, while her chip shows) first. The d-pad or
+  the stick moves the highlight. With both hands south chooses, and east, west, start or the left shoulder closes it
+  (the left shoulder being what opens it on a pad read by position); with the left hand the left trigger chooses and
+  start or the left shoulder closes it; with the right hand south or the right trigger chooses and east, west or start
+  closes it. A pad read by position with no centre buttons has the menu only with both hands. Its Console opens the
+  console with the on-screen keys up. While it is open it has player 1's pads, so the game stands still and no card
+  acts on the same press. Model file and Headset need a person's own press (the browser opens a file picker or a
+  headset session only inside a key, a click or a tap, and a pad's button is none), so the menu says to press them
+  again that way. The controls' hints and the first walk name the pad's own menu button (Menu, +, Start; with one
+  hand, select with that shoulder held) where they named `~` before.
+- **On-screen keys** (`04_Connect_Hardware/ScreenKeys.tsx`, `keysDesk.ts`, `keyboardSense.ts`). A keyboard the page
+  draws, with the keys a console needs (Esc, Tab, Ctrl, the arrows, a numbers board and a symbols board, an accent key
+  that turns the letter before the caret into its next accented form, Shift and caps lock), which types into the field
+  with the caret as a real key would (the key down, the edit, the field's input event, the key up after the page has
+  had its turn), so the console's history, Tab completion and Ctrl+C work from it. No browser says whether a keyboard
+  is plugged in, so the page goes by the device last used instead. After a pad's button the keys are offered on any
+  text field as a chip at the foot of the screen (the panels and the console's prompt stand above it), and open when
+  asked for: the select button, the pad's menu's Keyboard or Console, a pad press that opened the console, or the chip.
+  On a phone or tablet (a coarse main pointer and a touch screen) they open on a tap on the console's prompt (a tap, not
+  a swipe across it), keeping the phone's own keyboard down, since a phone's keyboard has no Esc, Tab, Ctrl or arrows; a
+  chat line or a name keeps the phone's own keyboard, which has the languages and the dictation the page's keys lack.
+  A key pressed on a real keyboard (a key down the browser made, with a board key's code, not a key in the middle of
+  composing) puts them away; on a phone or tablet a key typed into a field the phone's own keyboard may be serving is
+  not counted (a phone's keyboard can send the same codes), and after a counted key they stay away for ten minutes,
+  until a pad's button offers them again. With switch scanning or the dwell click on, they serve every text field.
+  `access keys on` serves every field and `access keys off` never shows them (`?keys=`, kept with the other settings).
+  With a pad the legend above the keys names its own buttons: the d-pad or the left stick moves, south types, west
+  deletes, north is a space, the shoulders move the caret, the left trigger is Shift, the right trigger or the menu
+  button is Enter, select changes the board, east puts the keys down to the chip (the caret stays); a held south button
+  repeats a letter; a stick that drifts off centre is still at rest. A tap or a click types on release, on the key it
+  ends on, and two thumbs can type at once; Backspace and the arrows act on press and repeat while held. On a phone the
+  keyboard key hands the field to the phone's own keyboard until the field loses the caret (a pad's select takes it
+  back). In the console shell with the caret at the prompt, a pad's south button presses nothing, so a letter is never
+  taken for Back to the city: the d-pad reaches the shell's buttons first. While the keys are open they have player 1's
+  pads, Sloane's card and the console stand above them and the field with the caret is scrolled into view above them,
+  and a card that must be answered first (the action card, the way-out card, the halted city's lock screen) or a
+  headset session folds them to the chip and closes the pad's menu. A finger on a key never counts as a press outside
+  Sloane's card or the first walk's. With the system's forced colours (a Windows contrast theme) the lit keys and the
+  highlight are drawn in its colours. Checked in CI and emulation only: unit suites for each part, and the browser
+  smoke test (headless Chrome with a simulated standard pad on the console alone, and the console on an emulated
+  Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or with a screen reader.
+  Headset controllers are not counted as a device for the keys: the page's own panels are not shown inside a headset
+  session, where the keys fold to their chip.
+  Firefox for Android has been reported to expose no gamepads to pages; there a pad's d-pad reaches the field as arrow
+  keys and `access keys on` brings the keys.
 
 ## URL options
 
@@ -898,7 +949,8 @@ not been seen. Where the browser offers no immersive session the whole path is i
   (xr vr)`), or the session's mode and what it holds (`vr: 2 controllers`); `xr vr` or `xr ar` asks for the session
   and `xr off` leaves it; on a touch screen the menu's **Headset** item does the same, VR where it is offered, else
   AR. A browser grants a session only inside the tap or the key press, so both ask synchronously; the page asks for
-  the `webgpu` feature and, optionally, a floor-level reference space and hand tracking. Split screen and a headset
+  the `webgpu` feature and, optionally, a floor-level reference space (a plain local one where it is withheld) and hand
+  tracking. Split screen and a headset
   do not mix (`no headset while the screen is split`). A passthrough or see-through session shows `(passthrough)`.
 - **The picture.** While presenting, the headset's own loop drives the frame (the page's animation frames are let
   go), every frame is shown (the cinema pacer's 24 a second is suspended), the post-processing chain and the ghost
@@ -911,15 +963,64 @@ not been seen. Where the browser offers no immersive session the whole path is i
   turned the body's way; the headset's pose is composed onto it, so a seated or a standing player's eyes land where
   the mouse's would. The pose read back is the headset's: yaw, pitch unclamped, roll on the camera. The stick's
   forward is where the headset looks, not where the body stands.
-- **Controllers** (`04_Connect_Hardware/xrInput.ts`, the `xr-standard` mapping): the left thumbstick walks and
-  steers, its press latches a run, the left squeeze is the handbrake; the right thumbstick snap-turns the body by
-  30° per flick (re-armed when it comes back), the right trigger accelerates, the right squeeze brakes, A (button 4)
-  pings and B (button 5) enters or leaves a car. A controller of no hand takes both duties. Their edges join the
-  pad's, under the same shield (a card waiting for your OK keeps the buttons), and no stick turns the head: the
-  headset does.
-- **Gaze and pinch, hands.** A source with no usable gamepad (a transient pointer, an articulated hand) is read by
-  the session's select events: a pinch enters or leaves a car when one is at hand, otherwise it pings where the head
-  looks. A gaze-and-pinch headset's pointers exist only during the pinch and may report no hand.
+- **Controllers** (`04_Connect_Hardware/xrInput.ts`). A controller is a tracked pointer with the `xr-standard`
+  mapping and at least one pair of axes. The 46 profiles of the WebXR input profiles registry come down to three kinds:
+  a thumbstick with up to two face buttons (some with a touchpad as well), a touchpad with no thumbstick (a pair of
+  wands), and a single pointing controller with a touchpad. Each kind works as a pair and alone, in either hand.
+  - **A pair.** The left stick, or the left touchpad while a thumb is on it, walks and steers; its click latches a run,
+    and a thumb at the touchpad's rim runs. The left squeeze is the handbrake, the left trigger pings, and the upper
+    left face button rights the car at the wheel. The right stick snap-turns the body 30° per flick on foot (re-armed
+    when it comes back); a right touchpad on a controller with no thumbstick turns with a click to either side. The
+    right trigger accelerates, the right squeeze brakes, the lower face button pings, the upper one enters or leaves a
+    car, and the right stick's click is the microphone's mute. On a right controller with no upper face button, its
+    touchpad's click enters or leaves a car, and on foot its trigger does what is at hand.
+  - **Alone** (any hand, or none). Its stick or touchpad walks forward and back. A stick pushed sideways snap-turns (a
+    push in between is one or the other, never a strafe); a touchpad with no thumbstick turns only with a click to
+    either side, so a thumb resting at the edge is never a second turn, and its centre click does what is at hand. A
+    touchpad beside a thumbstick, on a controller with no upper face button, is the door instead (what is at hand, on
+    foot); on one with that button the button is the door. At the wheel it steers and drives,
+    the trigger accelerates and the squeeze brakes; the stick's click is the handbrake on a controller with an upper
+    face button (that button is its door), and on one without it the stick's click held for a second is its door. On
+    foot the trigger does what is at hand: a car's door in reach, else a ping where the head looks. Two controllers of
+    one hand (or of none) split by order: the first walks, the second turns.
+  - **Out of a car.** The upper face button, a touchpad's click, a pinch, and the held click (the left hand's stick or
+    touchpad click, or the stick's click of a lone controller with no upper face button, held for a second while the
+    car stays stopped) step out. Each is refused while the car is faster than 1.5 m/s: the controller that asked
+    gives a short buzz where its browser can, and the monitor shows a toast (`Stop the car to step out`); a held click
+    is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
+    a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
+    still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
+    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop
+    (a squeeze of up to half a second), and from then on it drives only once pulled past a point 0.15 of its travel
+    above the lowest it has eased back to (so a jolt that dips a finger resting on it, even off it for a moment, does
+    not count). Let go for a tenth of a second, it counts from nothing again. From a resting finger or a worn trigger
+    a full pull is still full throttle; from a press eased only a little, a wobble near the stop gives little. That
+    point is taken afresh at each car and each takeover. So the car neither lurches on the way in nor creeps on a
+    resting finger or a worn trigger that rests a little above nothing.
+  - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
+    or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
+    lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
+    snap-turns instead of turning smoothly (it never tilts: the headset owns the pitch). Their edges join the pad's,
+    under the same shield (a card waiting for your OK keeps the buttons).
+- **Hands, gaze and pinch, styluses, screens.** Anything that is not a controller (an articulated hand and its pinch,
+  a gaze-and-pinch headset's transient pointer, a controller with no axes, a stylus, a phone's screen, a gaze button)
+  is read through the session's select events. A quick, still pinch (under 0.4 s and 2.5 cm) is a tap: a car's door
+  in reach, else a ping where the head looks, and out of a car only once it has slowed as above. Holding a pinch and
+  drawing the hand away walks the way the hand moved: half speed from 6 cm, full from about 11.5 cm, a run past 21 cm.
+  The draw is measured from the neck (the eyes less their offset from it, turned with the head), so a lean, a nod or
+  a look around does not walk, and it is judged against the way the head faced when the drag began, so a glance aside
+  mid-drag changes nothing: within 50° of that forward or back it walks, further round and past 8 cm sideways it
+  snap-turns once. At the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and
+  when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
+  still: back within a quarter of a second it resumes where it was, at the same speed and with no second snap, unless
+  the hand comes back on the far side of the way it was heading, which counts as a pass through the middle (it stands,
+  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A
+  pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is dropped,
+  with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller has no
+  mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head; hand
+  microgestures are not read.
+- **The floor.** A session not granted a floor-level space runs in a plain local one, whose origin is where the head
+  began, and the rig lifts its floor by the body's eye height so the eyes stay at standing height.
 - **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
   pinch`, `Tracked hand (right)`), each resolved by the device resolver's headset stage; they cannot be paired, the
   session brings them. The HUD's hardware lines and the namespace's `Hardware/Cell/Bus/xr` topic carry the state
@@ -1101,7 +1202,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   (`access pad left|right`, `?pad=`; `gamepad.ts` `PadHand`): that hand's stick moves and steers, and looks while its
   shoulder (L1 or R1) is held; the left hand's throttle is the d-pad's up and L2 its brake, the right hand's throttle R2
   and the west face button its brake; select is the run latch (it holds until the stick has walked and come home; a
-  glance with the shoulder leaves it) and start a ping for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock, up talks to the person near you on foot) and has no reset or
+  glance with the shoulder leaves it), select with the shoulder held opens the pad's menu instead, and start is a ping
+  for either hand, and that stick's click is the mute; the left hand keeps the d-pad (down enters a car, left and right move the clock, up talks to the person near you on foot) and has no reset or
   handbrake, the right hand keeps the face buttons (south enters, north resets, east is the handbrake, west talks on
   foot) and has no clock keys; a split screen's other seats keep both hands. On a pad without the standard mapping that is read by
   position with four axes or one stick, or not placed yet (only the sticks it is sure of and the first six buttons are
@@ -1114,7 +1216,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   them off; `07_Execute_Actions/announcer.ts`): a live region on the HUD tells of the district walked into (once it
   has been held four seconds), a vehicle beside you and what enters it, a seat taken or left, and every toast, oldest
   first, one line at a time and at most one every 2.5 s; the captions, the microphone pill and Sloane's lines have live regions of their
-  own. Sticky keys are the operating system's own feature. How the filter and the zoom look on a real display, and the
+  own. The **on-screen keys** (`access keys auto|on|off`, `?keys=`) are under Controls. Sticky keys are the operating
+  system's own feature. How the filter and the zoom look on a real display, and the
   dwell and the scan with a real head mouse or switch interface, are unverified.
 - **Glyphs:** every control hint follows the input in use. When a pad is picked up it switches silently to
   that pad's layout: the two letter layouts (A or B at the south button), numbered shoulders and stick clicks,
@@ -1263,8 +1366,8 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
      deed (the Micro-Loft's costs nothing to claim; the others need a level and credits), and put the card away
      (**Done**, ×, Escape, B or the console). Sloane names the homes only where there are some, and the walk's card
      steps aside while a doorstep card is open.
-  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button
-     on a pad). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
+  6. **The console**: open it (the ~ key, the left of 1 under Esc; the Menu's **Console** on touch; the card's button,
+     or the pad's menu and its Console, on a pad, which also raises the on-screen keys). The moment it opens on this stage the walk is passed: Sloane says the city is yours, the console
      prints her line and where to go from here (Esc closes it, or its **Close** button on touch; `help` lists every
      command), the card goes and the pass is kept. Arriving at this stage with the console already open counts as
      reaching it. Opening the console on an earlier stage passes nothing; the walk goes on where it was. (On the look
@@ -2104,7 +2207,8 @@ cinema camera, the HUD. Track B is this console on its own.
   file kept and chosen in this page, then the Claude gateway; The model providers, below). One function builds that
   router for both, `09_Cognition/pageMind.ts` `createPageMind`, so the two cannot drift. The console prints
   `ask: asking Sloane`, her reply streams in whole words, and the answer ends with its time; `ask stop` stops it and
-  keeps the words shown; one answer comes at a time. `ask` alone shows the provider and what `auto` found, and `ask
+  keeps the words shown; one answer comes at a time. `ask` alone shows the provider, what `auto` found and the brain
+  row (The model providers, below), and `ask
   provider`, `ask connect`, `ask model`, `ask server`, `ask key`, `ask effort`, `ask think`, `ask api` and `ask vram`
   change the same kept settings the city's console does. The gate is the city's: `ask` needs `operator unlock` in
   the city's console too (The operator tier, below), and the same Zeroth Law check (the page contained, the model on
@@ -2797,6 +2901,33 @@ the OS media carry none. The city works exactly the same without any of them.
   figure and what was measured are its `fit` key, read back checked; the store's own version is 3 since the `openai`
   provider joined it, read back from the earlier shape without loss; the in-page provider's file chosen, `think` and
   `gpu` are one more slice of it, and its model files are kept elsewhere, below).
+- **The brain row: which brain Sloane is using.** `ask` alone, in the city's console and in the console alone, also
+  prints a `brain` row right after the provider (and `found`) rows: one plain line saying which brain answers Sloane
+  (a model server on this machine, with its address and model; the gateway to the Claude API, which answers from off
+  this machine and is never called local; the model the app carries; the model file kept in this page; or the
+  scripted planner, when nothing answered at the last look and nothing kept since will answer the next, when
+  `ask provider scripted` chose it, or when the model chosen cannot run here, which the row says with why: the app's
+  runner failed, this page is not in an app that runs one, it cannot run a model, or it keeps no model file). Under
+  `auto` it may say instead that her next answer looks for a model: before a look stands (also after
+  `ask model auto` or a look stopped part way), once the page has kept its default model since a look found nothing,
+  or when the model found cannot run here now. After it comes how the model this build gets by default stands:
+  downloading or being kept in this page with its percentage, being checked by the app, kept, not decided yet, or
+  waiting and why (a Stop, a failed try, data saver, another provider chosen, or forgotten with `ask file forget`
+  since it was got); a page served no default model says nothing of one. The row is read from what the page already
+  holds; the look `ask` alone makes is its own, made before the row is read, and reading the row starts no look and
+  no download.
+  For contributors: `src/09_Cognition/brainReadout.ts` (it imports types only) exports `readBrain()`, which returns
+  one frozen object, `{ provider, settled, brain: 'server' | 'app' | 'page' | 'scripted' | null, local, gateway,
+  server, model, where, downloading: { done, total } | null, default: { from, file, title, bytes, state, step, done,
+  total, why } | null }` (`where` is the brain row's line; the default's `state` is `kept`, `getting`, `checking`,
+  `held`, `waiting` or `none`), the same object until something in it changes, and `subscribeBrain(listener)`, which
+  returns the unsubscribe. App.tsx binds the store (`createBrainReadout` over the router, the app's model, the
+  in-page mind and the site model's job; `bindBrain`) as the city or the console alone builds its router; before
+  that `readBrain()` returns `BRAIN_UNKNOWN`. The router, the job and the app's model (`nativeMind.ts` `onStatus`)
+  tell it of their changes, and the console's `ask file forget` does too; while the app checks its file, the city
+  asks the app again, from memory, about once a second until the check is done. `buildBrain(facts)` is the pure rule
+  the tests drive. With `?debug`, `window.__SIM__.brain()` and `window.__SIM__.onBrain(listener)` read and follow it
+  from the browser.
 - **The key: keep it in the gateway.** The recommended setup holds no key in the page at all: the gateway on this
   machine adds the key to every request it forwards, `ask key none` leaves the page with none, and with none the
   page sends no `x-api-key` header. A key typed to `ask key <key>` is kept in the same local-storage record, in
@@ -3294,12 +3425,11 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   2.39, and the `.deb` installed with apt and asked for one answer through `nativeE2e.mjs --packaged` (15 of 15
   checks; with the model moved away, 15 checks naming `native_model`'s null answer); with the console's ask added, a
   tiny-model `.deb` passed 24 of 24 (the tiny model ends before any word streams, so `ask stop` was forced once, typed
-  after the answer had ended: 24 of 24; a stop during an answer is not verified). The console alone's ask through the
-  app's own runner is also run in the tiny-model debug app under
-  WebKitGTK (`native-e2e.yml`). Run by CI, and not counted as verified above: the real model in the packages, the
-  Ubuntu 22.04 builds and their glibc floor, and the installed x86-64 app answering with the real model, in its
-  console too. Not verified: the app on a real Linux desktop, how fast it answers there, and how fast it answers on
-  Arm.
+  after the answer had ended). The console alone's ask through the app's own runner is also run in the tiny-model
+  debug app under WebKitGTK (`native-e2e.yml`). CI has run the rest on its Ubuntu 22.04 runners: the packages carry the
+  real model and need GLIBC_2.34 at most, and the installed x86-64 app answered with the real model, in its console
+  too, where `ask stop` typed after the first words stopped the answer (24 of 24 checks). Not verified: the app on a
+  real Linux desktop, how fast it answers there, and how fast it answers on Arm.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same

@@ -1187,9 +1187,21 @@ test('check chime: a success arpeggio and a critical chord, silent at both ends,
   const w = at(0.02, 0.14)
   const absent = Math.max(power(critical.out, SYNTH_RATE, e5, ...w), power(critical.out, SYNTH_RATE, g5, ...w))
   for (const f of chord) assert.ok(power(critical.out, SYNTH_RATE, f, ...w) > 20 * absent, `${f} Hz is in the chord`)
+  // The refusal (a headset's step out of a moving car): two short low notes falling a fourth, under the cue, heard.
+  const n = chimeLength('refused', SYNTH_RATE)
+  assert.ok(n > 0.2 * SYNTH_RATE && n < 0.4 * SYNTH_RATE, `refused: ${n} samples, short`)
+  const refused = new Float32Array(n).fill(9)
+  renderChime('refused', SYNTH_RATE, refused)
+  assert.ok(Math.abs(refused[0]) < 1e-3 && Math.abs(refused[n - 1]) < 1e-3, 'refused: no click at either end')
+  const rPeak = refused.reduce((m, v) => Math.max(m, Math.abs(v)), 0)
+  assert.ok(rPeak * CHIME.level < heard && rPeak * CHIME.level > 0.04, `refused: ${rPeak * CHIME.level} at the ear`)
+  const [hi, lo] = CHIME.refused.notes.map((note) => note[2])
+  assert.ok(hi > lo && lo < c5, 'falling, and below the success')
+  assert.ok(power(refused, SYNTH_RATE, hi, ...at(0.01, 0.07)) > 20 * power(refused, SYNTH_RATE, lo, ...at(0.01, 0.07)), 'the first note on its pitch')
+  assert.ok(power(refused, SYNTH_RATE, lo, ...at(0.12, 0.23)) > 20 * power(refused, SYNTH_RATE, hi, ...at(0.12, 0.23)), 'the second on its own')
 })
 
-interface ChimeView { gain: FakeGain; success: FakeBuffer; critical: FakeBuffer; playing: FakeBufferSource[] }
+interface ChimeView { gain: FakeGain; success: FakeBuffer; critical: FakeBuffer; refused: FakeBuffer; playing: FakeBufferSource[] }
 const chimeOf = (s: Soundscape) => (graphOf(s) as unknown as { chime: ChimeView }).chime
 
 test('check chime: head-locked into the master, one fresh source per play, only while the soundscape runs, stopped with everything else', withFakes((doc) => {
@@ -1200,8 +1212,8 @@ test('check chime: head-locked into the master, one fresh source per play, only 
   s.unlock()
   const ctx = ctxOf()
   const ch = chimeOf(s)
-  // Both buffers are rendered with the graph at the synthesis rate; nothing plays until a check does.
-  for (const kind of ['success', 'critical'] as const) {
+  // Every buffer is rendered with the graph at the synthesis rate; nothing plays until a check (or a refusal) does.
+  for (const kind of ['success', 'critical', 'refused'] as const) {
     const expected = new Float32Array(chimeLength(kind, SYNTH_RATE))
     renderChime(kind, SYNTH_RATE, expected)
     assert.equal(ch[kind].sampleRate, SYNTH_RATE)
@@ -2022,4 +2034,19 @@ test('a shared context survives a soundscape that fails or is left locked; pool 
   b.dispose()
   assert.equal(ctx.state, 'closed')
   assert.equal(FakeContext.instances.length, 1)
+}))
+
+test('the refusal chime plays its own buffer on the chime\'s gain, captioned as refused', withFakes(() => {
+  const s = new Soundscape()
+  s.unlock()
+  const ctx = ctxOf()
+  const ch = chimeOf(s)
+  const heard: { detail?: string; label?: string }[] = []
+  s.onSound = (e) => { if (e.kind === 'chime' && e.phase === 'start') heard.push({ detail: e.detail, label: e.label }) }
+  ctx.currentTime = 1
+  assert.equal(s.chime('refused', 'step out'), true)
+  const src = ctx.of(FakeBufferSource).at(-1)!
+  assert.equal(src.buffer, ch.refused)
+  assert.equal(src.outputs[0], ch.gain)
+  assert.deepEqual(heard, [{ detail: 'refused', label: 'step out' }])
 }))
