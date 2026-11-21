@@ -2,9 +2,10 @@ Qwen2.5 1.5B Instruct (Q4_K_M GGUF): the model the desktop apps carry
 =====================================================================
 
 This directory records the one model the desktop apps of Crimson Noir: Agent City carry beside the app, so a person
-who installs one can talk to Sloane from the first launch with no model of their own. Three carry it: the Windows
-installer (and its .msi), the Linux packages (the .deb, the .rpm and the AppImage) and the NixOS package. The
-model's weights are NOT in this repository, NOT in the page file (dist/index.html) and NOT in the bare .exe.
+who installs one can talk to Sloane from the first launch with no model of their own. Four carry it: the Windows
+installer (and its .msi), the Linux packages (the .deb, the .rpm and the AppImage), the macOS app (the universal .app,
+in its .dmg and its zip) and the NixOS package. The model's weights are NOT in this repository, NOT in the page file
+(dist/index.html) and NOT in the bare .exe.
 
 The Windows installer: the Windows workflow (.github/workflows/windows-app.yml, through tools/web/siteModel.mjs)
 fetches the file below from Hugging Face at the pinned revision whenever its cache (keyed by the pin) does not hold
@@ -19,6 +20,12 @@ the same file the same way and the same overlay puts it in each package, install
 its image), with this NOTICE and LICENSE beside it. The Linux app does not hand the file to its page: its own process
 runs it (the native model runner, src-tauri/src/runner.rs over native/llm, with llama.cpp compiled in; see
 third_party/llama.cpp/), after checking the same size and SHA-256 once.
+
+The macOS app: the build matrix's macOS job (the same workflow) fetches and checks the same file the same way and the
+same overlay puts it in the universal .app, as Contents/Resources/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf, with this
+NOTICE and LICENSE beside it; the .dmg and the zipped .app on the release each hold that .app. Like the Linux app,
+the macOS app runs the file in its own process (on Apple silicon through Metal, on an Intel Mac on the processor
+alone), after checking the same size and SHA-256 once.
 
 The NixOS package (the flake's `nix run` and its NixOS module) carries the same file: tools/nix/model.nix fetches it
 from the same address with Nix's fetchurl, which refuses any bytes but these, and puts it in a folder of the Nix store

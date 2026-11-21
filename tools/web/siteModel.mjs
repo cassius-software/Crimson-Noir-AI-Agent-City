@@ -6,9 +6,10 @@
  * Why does this file exist? It puts the site's model beside the web copy (dist-web/models/), the one model the page
  * gets by itself once the city is on screen (src/09_Cognition/siteAuto.ts) or a visitor gets in a tap on Sloane's card,
  * and the app's model into the desktop apps' packages (src-tauri/models/, which src-tauri/tauri.model.conf.json
- * bundles): the Windows installer and its .msi, and the Linux packages (the .deb, the .rpm and the AppImage, whose app
- * runs it in its own process); and never anywhere else: the page file (dist/), the bare .exe and the other release
- * builds carry no model. Each pin is the
+ * bundles): the Windows installer and its .msi, the Linux packages (the .deb, the .rpm and the AppImage, whose app
+ * runs it in its own process) and the macOS app (the universal .app, in its .dmg and its zip, which runs it the same
+ * way); and never anywhere else: the page file (dist/), the bare .exe and the other release builds carry no model. Each
+ * pin is the
  * page's own (src/09_Cognition/siteModel.ts SITE_MODEL and APP_MODEL: the file's name, size and SHA-256, and the
  * Hugging Face repository and revision it comes from), so the page and the folder can never disagree about which model
  * is served or carried.
@@ -26,11 +27,12 @@
  * The web workflow (.github/workflows/web.yml) runs pin, fetches the file whenever its cache (keyed by the whole pin)
  * does not hold it, and runs place after `npm run build:web`, on every publish (a cached file is checked again); the
  * Windows workflow (windows-app.yml) does the same with `--pin app` and app before it builds the installer, and the
- * build matrix's Linux jobs (build-matrix.yml) before they build the Linux packages; the site-model workflow runs both
+ * build matrix's Linux and macOS jobs (build-matrix.yml) before they build the Linux packages and the macOS app; the
+ * site-model workflow runs both
  * checks on a pull request that changes a pin. Nothing is written unless every byte
  * matches: the copy goes to a .part file, renamed into place only once its hash is right.
  * What breaks if it is removed? The web copy serves no model, and Sloane's card offers none (it only offers what the
- * manifest names exactly); the Windows installer and the Linux packages carry none.
+ * manifest names exactly); the Windows installer, the Linux packages and the macOS app carry none.
  */
 import { createHash } from 'node:crypto'
 import { copyFileSync, createReadStream, createWriteStream, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
