@@ -988,9 +988,10 @@ not been seen. Where the browser offers no immersive session the whole path is i
     gives a short buzz where its browser can, and the monitor shows a toast (`Stop the car to step out`); a held click
     is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
     a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
-    still held from opening the door, or held as a lone controller takes on the throttle (however lightly), gives no
-    throttle until it is let go, so the car does not lurch or creep (a worn trigger that rests a little above nothing
-    counts as let go at its own rest).
+    still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
+    the throttle (however lightly), gives no throttle where it is: it drives only once pulled past the lowest point it
+    has eased back to since (a full pull is still full throttle), and counts from nothing again once let go. So the car
+    neither lurches on the way in nor creeps on a resting finger or a worn trigger that rests a little above nothing.
   - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
     or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
     lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick

@@ -376,7 +376,7 @@ test('out of a car: the hold counts only while stopped, a lone controller with a
   assert.equal(u.m.takeRefused(), true)
 })
 
-test('the trigger that opened the door gives no throttle until it is let go; one held as a controller wakes at the wheel neither', () => {
+test('the trigger that opened the door gives no throttle where it is held; one held as a controller wakes at the wheel neither', () => {
   for (const [hands, b, a] of [[['none'], 6, 4], [['left', 'right'], 4, 4], [['none'], 3, 2]] as const) {
     const cs = hands.map((h) => ctl(h, b, a))
     const r = rig(cs)
@@ -403,7 +403,7 @@ test('the trigger that opened the door gives no throttle until it is let go; one
   down(c, XR_BUTTON.trigger)
   r.m.sources = [c]
   r.m.read()
-  assert.equal(r.m.analog.throttle, 0, 'woke at the wheel with the trigger held: nothing until let go')
+  assert.equal(r.m.analog.throttle, 0, 'woke at the wheel with the trigger held: nothing')
 })
 
 test('touchpads walk only while touched, past their own dead zone, snap only on an edge click, and run at the rim', () => {
@@ -856,7 +856,7 @@ test('the step-out hold at speed is refused like any door, once per hold, then w
   assert.equal(r.m.read(), PAD_EDGE.interact, 'held on through the stop: a second stopped, out')
 })
 
-test('a trigger held as it takes on the throttle (its partner left) gives none until let go', () => {
+test('a trigger held as it takes on the throttle (its partner left) gives none where it is held', () => {
   const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
   const r = rig([left, right])
   r.m.driving = true
@@ -907,7 +907,7 @@ test('a blink while a draw is held out to the side is no second snap, and a blin
   assert.ok(close(o2.moveY, 1, 1e-6), `after the blink: still full (${o2.moveY})`)
 })
 
-test('a light pull on a trigger as it takes on the throttle is held at nothing too', () => {
+test('a light pull on a trigger as it takes on the throttle gives nothing where it is too', () => {
   for (const value of [0.2, 0.3, 0.45]) {
     const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
     const r = rig([left, right])
@@ -988,39 +988,68 @@ test('a light pull below a twentieth as a controller takes the throttle is held 
     r.m.read()
     assert.equal(r.m.analog.throttle, 0, `${value} raw as it took the wheel: no throttle`)
   }
-  // Held at a light pull, a tremor that dips it to a lighter one (still a pull) keeps it held; let go fully, it drives.
+  // Held at a light pull, a finger's tremor around it (under the dead zone's width) gives nothing; a real pull past it
+  // drives, a full one fully; let go, it counts from nothing again.
   const lone = ctl('right', 6, 4)
   const r = rig([lone])
   r.m.read()
   lone.buttons[XR_BUTTON.trigger].value = 0.095
   r.m.driving = true
   r.m.read()
-  for (const value of [0.095, 0.086, 0.05, 0.095, 0.2]) {
+  for (const value of [0.095, 0.086, 0.07, 0.095, 0.105, 0.08, 0.1]) {
     lone.buttons[XR_BUTTON.trigger].value = value
     r.m.read()
-    assert.equal(r.m.analog.throttle, 0, `a tremor to ${value}: still held at nothing`)
+    assert.equal(r.m.analog.throttle, 0, `a tremor to ${value}: still nothing`)
   }
+  lone.buttons[XR_BUTTON.trigger].value = 0.6
+  r.m.read()
+  assert.ok(r.m.analog.throttle > 0.4 && r.m.analog.throttle < 0.6, `pulled on past it: some throttle (${r.m.analog.throttle})`)
+  lone.buttons[XR_BUTTON.trigger].value = 1
+  r.m.read()
+  assert.ok(close(r.m.analog.throttle, 1), 'a full pull: full throttle')
   lone.buttons[XR_BUTTON.trigger].value = 0.03
   r.m.read()
   assert.equal(r.m.analog.throttle, 0)
   lone.buttons[XR_BUTTON.trigger].value = 0.3
   r.m.read()
-  assert.ok(r.m.analog.throttle > 0, 'back inside the dead zone, then pulled: it drives')
+  assert.ok(close(r.m.analog.throttle, (0.3 - 0.04) / 0.96, 1e-9), 'let go, then pulled: the plain throttle')
 })
 
-test('a worn trigger resting above the dead zone is let go at its own rest, so it still drives', () => {
-  const lone = ctl('right', 6, 4)
-  lone.buttons[XR_BUTTON.trigger].value = 0.06
-  const r = rig([lone])
-  for (let k = 0; k < 3; k++) r.m.read() // on foot: it rests at 0.06, never lower
-  r.m.driving = true
-  r.m.read()
-  assert.equal(r.m.analog.throttle, 0, 'into the wheel resting at 0.06: held at nothing')
-  r.m.read()
-  lone.buttons[XR_BUTTON.trigger].value = 1
-  r.m.read()
-  assert.ok(close(r.m.analog.throttle, 1), `back at its rest, then pulled: full throttle (${r.m.analog.throttle})`)
-  // A finger that has lain half way down a trigger since it woke on foot is no worn rest: held until it lets go.
+test('a worn trigger resting above the dead zone never creeps and still drives; nor does a finger lying on one', () => {
+  for (const rest of [0.06, 0.08, 0.15]) {
+    const lone = ctl('right', 6, 4)
+    lone.buttons[XR_BUTTON.trigger].value = rest
+    const r = rig([lone])
+    for (let k = 0; k < 3; k++) r.m.read() // on foot, resting (or a finger lying on it) at `rest`
+    r.m.driving = true
+    for (let k = 0; k < 90; k++) {
+      r.m.read()
+      assert.equal(r.m.analog.throttle, 0, `into the wheel resting at ${rest}, frame ${k}: nothing`)
+    }
+    lone.buttons[XR_BUTTON.trigger].value = 1
+    r.m.read()
+    assert.ok(close(r.m.analog.throttle, 1), `then pulled: full throttle (${r.m.analog.throttle})`)
+    lone.buttons[XR_BUTTON.trigger].value = rest
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `back at its rest: nothing (${rest})`)
+  }
+  // The door opened with a full press, then the trigger springs back to a worn rest: nothing there, and it drives.
+  const worn = ctl('right', 6, 4)
+  worn.buttons[XR_BUTTON.trigger].value = 0.06
+  const w = rig([worn])
+  w.m.read()
+  worn.buttons[XR_BUTTON.trigger].value = 1
+  w.m.driving = true
+  w.m.read()
+  for (let k = 0; k < 30; k++) {
+    worn.buttons[XR_BUTTON.trigger].value = k === 0 ? 0.5 : 0.06 + (k % 2) * 0.01
+    w.m.read()
+    assert.equal(w.m.analog.throttle, 0, `sprung back from the press, frame ${k}: nothing`)
+  }
+  worn.buttons[XR_BUTTON.trigger].value = 1
+  w.m.read()
+  assert.ok(close(w.m.analog.throttle, 1), 'pulled again: full throttle')
+  // A finger that has lain half way down a trigger since it woke on foot, taking the wheel there: nothing where it is.
   const half = ctl('right', 6, 4)
   half.buttons[XR_BUTTON.trigger].value = 0.3
   const h = rig([half])
@@ -1030,12 +1059,61 @@ test('a worn trigger resting above the dead zone is let go at its own rest, so i
     h.m.read()
     assert.equal(h.m.analog.throttle, 0, `woke on foot at 0.3 and took the wheel there, frame ${k}: nothing`)
   }
-  // A controller that wakes at the wheel with a finger resting lightly on its trigger knows no rest yet: held.
+  // A controller that wakes at the wheel with a finger resting lightly on its trigger: nothing where it is either.
   const woke = ctl('right', 6, 4)
   woke.buttons[XR_BUTTON.trigger].value = 0.085
-  r.m.sources = [woke]
+  w.m.sources = [woke]
   for (let k = 0; k < 4; k++) {
-    r.m.read()
-    assert.equal(r.m.analog.throttle, 0, `woke at the wheel with a light pull, frame ${k}: nothing`)
+    w.m.read()
+    assert.equal(w.m.analog.throttle, 0, `woke at the wheel with a light pull, frame ${k}: nothing`)
   }
+})
+
+test('a hand sweeping round on one side through a blink keeps its speed (no crossing read from the lagging heading)', () => {
+  const id = {}
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  let t = 10
+  const at = (deg: number, r: number) => P(r * Math.sin((deg * Math.PI) / 180), -0.3 - r * Math.cos((deg * Math.PI) / 180))
+  d.sample(id, (t += 11), at(0, 0.07), HEAD)
+  for (let k = 0; k < 20; k++) d.sample(id, (t += 11), at(0, 0.055), HEAD)
+  // Round the right side at 5.5 cm, 0 to 155 degrees over 22 frames, frames 17 to 21 unseen.
+  for (let k = 1; k <= 22; k++) d.sample(id, (t += 11), k >= 17 && k <= 21 ? null : at((155 * k) / 22, 0.055), HEAD)
+  let walking = 0
+  for (let k = 0; k < 90; k++) {
+    d.sample(id, (t += 11), at(155, 0.055), HEAD)
+    const o = createAnalog()
+    if (d.read(o, false)) { walking++; assert.ok(close(Math.hypot(o.moveX, o.moveY), 0.5, 1e-6), `half speed kept (${o.moveX}, ${o.moveY})`) }
+  }
+  assert.ok(walking > 60, `walks on at half speed as when seen (${walking}/90)`)
+})
+
+test('a hand that crosses from one snap side to the other unseen snaps back the other way, as when seen', () => {
+  const id = {}
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  let t = 10, turns = ''
+  const frame = (hand: XrPoint | null) => { d.sample(id, (t += 11), hand, HEAD); d.read(createAnalog(), false); const n = d.takeTurn(); if (n) turns += n > 0 ? 'R' : 'L' }
+  for (let x = 0.02; x <= 0.1001; x += 0.02) frame(P(x, -0.3))
+  for (let k = 0; k < 10; k++) frame(P(0.1, -0.3))
+  for (let k = 0; k < 12; k++) frame(null)
+  for (let k = 0; k < 10; k++) frame(P(-0.1, -0.3))
+  assert.equal(turns, 'RL')
+})
+
+test('back from a blink a hand last seen in the dead zone takes the way it lies now outright', () => {
+  const id = {}
+  const d = new PinchDrag()
+  d.start(id, 'grip', false, 0, P(0, -0.3))
+  d.sample(id, 10, P(0, -0.3), HEAD)
+  let t = 10
+  d.sample(id, (t += 11), P(0.04, -0.3), HEAD) // engages, in the dead zone, heading right
+  for (let k = 0; k < 10; k++) d.sample(id, (t += 11), P(0.02, -0.3), HEAD)
+  for (let k = 0; k < 5; k++) d.sample(id, (t += 11), null, HEAD)
+  d.sample(id, (t += 11), P(0, -0.45), HEAD) // straight ahead
+  const o = createAnalog()
+  assert.ok(d.read(o, false))
+  assert.ok(Math.abs(o.moveX) < 1e-6 && close(o.moveY, 1, 1e-6), `straight ahead at once (${o.moveX}, ${o.moveY})`)
 })

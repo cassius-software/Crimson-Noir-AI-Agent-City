@@ -30,7 +30,7 @@
  * out too. That second counts only while the car stays stopped, and every door (a button, a click, a pinch) is refused
  * while the car is faster than XR_STEP_OUT_SPEED: said (`takeRefused`, the engine's toast for the monitor) and buzzed
  * on the controller that asked, where its browser has an actuator. A trigger held into the wheel (the press that
- * opened the door) gives no throttle until it is let go.
+ * opened the door, a resting finger, a worn trigger) gives no throttle where it is, only past where it eases back to.
  * Walking is head-relative on foot: the stick's forward is where the headset looks (headOffset), while the body turns
  * only in snaps, so the view never swings under a thumb. A pinch's drag moves the body the way the hand moved, measured
  * from the neck (a lean, a nod or a look around does not walk) and judged, walk or snap, against the way the head faced
@@ -39,7 +39,7 @@
  * What breaks if it is removed? A headset's controllers move nothing; the hands pinch at a city that cannot hear.
  */
 
-import { createAnalog, PAD_EDGE, radialDeadzone, triggerValue, zeroAnalog, type Analog } from './gamepad.ts'
+import { createAnalog, PAD_EDGE, PAD_TUNING, radialDeadzone, triggerValue, zeroAnalog, type Analog } from './gamepad.ts'
 import type { XrInputSourceLike } from './web-hardware.d.ts'
 
 /** The xr-standard mapping's button indices (4 and 5 are device-specific face buttons, in decreasing importance). */
@@ -63,12 +63,6 @@ export const XR_SECTOR = Object.freeze({ snap: (35 * Math.PI) / 180, walk: (55 *
 export const XR_HOLD_OUT_MS = 1000
 /** A car slower than this, m/s, has stopped enough to step out of, by any door (engine.ts tells the mapper). */
 export const XR_STEP_OUT_SPEED = 1.5
-/**
- * A trigger held at nothing is let go within XR_TRIGGER_REST_SLACK (raw) of the lowest it has rested at, when that rest
- * is no higher than XR_TRIGGER_REST_MAX: a worn trigger's. A higher one is a finger that has lain on it since it woke.
- */
-export const XR_TRIGGER_REST_SLACK = 0.01
-export const XR_TRIGGER_REST_MAX = 0.15
 
 /** Which duties a controller takes: the walking hand's, the turning and driving hand's, or both (a controller alone). */
 export type XrRole = 'left' | 'right' | 'both'
@@ -239,6 +233,8 @@ export class PinchDrag {
   /** Snap steps the drag has asked for and the mapper has not yet taken (rad, + to the right). */
   turn = 0
   private turnArmed = true
+  /** The side of the snap that disarmed it (1 right, -1 left, 0 none): a hand seen on the other side has passed the middle. */
+  private turnSide = 0
   /** The head's facing (yaw less the body's) when this drag first read: it is judged against that, so a glance does not snap. */
   private facing: number | null = null
   /** The walker's hand or the head is untracked this frame: the drag gives nothing, and its speed and snap are kept as they were. */
@@ -289,10 +285,13 @@ export class PinchDrag {
     }
     if (this.walker !== id) return
     const back = this.blindNow
+    // Back from a blink on the far side of where the hand was last seen (more than a right angle round): it crossed
+    // the middle unseen.
+    const crossed = back && dx * this.dx + dz * this.dz < 0
     this.blindNow = false
     this.dx = dx
     this.dz = dz
-    this.step(t, back)
+    this.step(t, back, crossed)
   }
 
   /** The pinch was let go (its select): 'tap' when it was one, else 'none'. Forgets it. */
@@ -358,7 +357,7 @@ export class PinchDrag {
   }
 
   private halt(): void {
-    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true; this.facing = null; this.blindNow = false
+    this.dx = 0; this.dz = 0; this.ux = 0; this.uz = 0; this.level = 0; this.lastT = -1; this.turnArmed = true; this.turnSide = 0; this.facing = null; this.blindNow = false
   }
 
   /**
@@ -372,15 +371,15 @@ export class PinchDrag {
   }
 
   /**
-   * The speed step and the smoothed direction from this frame's draw. `back`: the first frame after a blink. A hand
-   * that comes back on the far side of where it was heading (more than a right angle round) crossed the middle
-   * unseen, so it is taken as a pass through the dead zone would be: the speed steps up afresh from nothing and the
-   * direction is the one it lies in now, never the old way walked on at speed.
+   * The speed step and the smoothed direction from this frame's draw. `back`: the first frame after a blink;
+   * `crossed`: the hand came back on the far side of where it was last seen, so it is taken as a pass through the dead
+   * zone would be: the speed steps up afresh from nothing and the direction is the one it lies in now, never the old
+   * way walked on at speed. A hand last seen in the dead zone has no heading to smooth from either.
    */
-  private step(t: number, back = false): void {
+  private step(t: number, back = false, crossed = false): void {
     const d = Math.hypot(this.dx, this.dz)
-    const crossed = back && d > 1e-6 && this.dx * this.ux + this.dz * this.uz < 0
     if (crossed) this.level = 0
+    const fresh = crossed || (back && this.level === 0)
     // The speed in steps, with hysteresis, so a hand's small wobble never changes it continuously.
     const r = Math.min(1, Math.max(0, (d - PINCH.deadM) / (PINCH.fullM - PINCH.deadM)))
     // A quick reach can cross both steps in one frame (no frame of half speed first), and a quick return both back.
@@ -391,7 +390,7 @@ export class PinchDrag {
     // The direction, smoothed over about a tenth of a second.
     if (d > 1e-6) {
       const nx = this.dx / d, nz = this.dz / d
-      const k = crossed || this.lastT < 0 || this.level === 0 ? 1 : 1 - Math.exp(-Math.max(0, t - this.lastT) / PINCH.smoothMs)
+      const k = fresh || this.lastT < 0 || this.level === 0 ? 1 : 1 - Math.exp(-Math.max(0, t - this.lastT) / PINCH.smoothMs)
       this.ux += (nx - this.ux) * k
       this.uz += (nz - this.uz) * k
       const m = Math.hypot(this.ux, this.uz)
@@ -426,8 +425,11 @@ export class PinchDrag {
     const hx = dx * c - dz * sn, hy = -dz * c - dx * sn
     const ux = this.ux * c - this.uz * sn, uy = -this.uz * c - this.ux * sn
     const side = Math.abs(hx)
-    if (this.turnArmed && side > PINCH.turnM && Math.atan2(side, Math.abs(hy)) > PINCH.walkSector) { this.turn += hx > 0 ? XR_TURN.step : -XR_TURN.step; this.turnArmed = false }
-    else if (!this.turnArmed && side < PINCH.turnOffM) this.turnArmed = true
+    if (this.turnArmed && side > PINCH.turnM && Math.atan2(side, Math.abs(hy)) > PINCH.walkSector) {
+      this.turn += hx > 0 ? XR_TURN.step : -XR_TURN.step
+      this.turnArmed = false
+      this.turnSide = hx > 0 ? 1 : -1
+    } else if (!this.turnArmed && (side < PINCH.turnOffM || hx * this.turnSide < 0)) this.turnArmed = true
     if (this.level === 0 || Math.atan2(Math.abs(ux), Math.abs(uy)) > PINCH.walkSector) return false
     out.moveX = this.ux * this.level
     out.moveY = -this.uz * this.level || 0
@@ -474,15 +476,13 @@ export class XrMapper {
   private readonly bits = new WeakMap<object, number>()
   /** The walking hand's click held at the wheel: since when, since when the car has stood, and whether it was refused. */
   private readonly hold = new WeakMap<object, { at: number; still: number; refused: boolean }>()
-  /**
-   * Each trigger's rest: the lowest raw value it has read while free (not held at nothing, not pressed). A worn trigger
-   * that rests a little above the dead zone is let go when it is back there, so a hold never outlasts it.
-   */
-  private readonly triggerRest = new WeakMap<object, number>()
   /** Each source's duty last frame, for a trigger that takes on the throttle while held. */
   private readonly lastRole = new WeakMap<object, XrRole>()
-  /** Sources whose trigger was held into the wheel (the press that opened the door): no throttle until let go. */
-  private readonly triggerHeld = new WeakSet<object>()
+  /**
+   * Sources whose trigger was held into the wheel (the press that opened the door, a light finger, a worn trigger's
+   * rest): the lowest raw value it has eased back to since, which its throttle counts from. Gone once it is let go.
+   */
+  private readonly triggerBase = new WeakMap<object, number>()
   private wasDriving = false
   private readonly stick = { x: 0, y: 0 }
   private readonly pinchOut: Analog = createAnalog()
@@ -569,22 +569,24 @@ export class XrMapper {
       const rising = known ? bits & ~prev : 0
       const press = (b: number) => (rising & (1 << b)) !== 0
       const holding = (b: number) => (bits & (1 << b)) !== 0
-      // A trigger held into the wheel (the press that opened the door, or held as the controller woke there) gives no
-      // throttle until it has been let go: the car never lurches on the way in.
+      // A trigger held into the wheel (the press that opened the door, held as the controller woke there or as it takes
+      // on the throttle; a light finger as much as a press, a worn trigger's rest too) gives no throttle where it is:
+      // it counts only what it is pulled past the lowest it has eased back to since (that plus the dead zone, rescaled
+      // so a full pull is full throttle), so the car never lurches on the way in nor creeps on a resting finger or a
+      // worn trigger. Let go (back inside the dead zone) it counts from nothing again.
       const was = this.lastRole.get(s)
       const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
       this.lastRole.set(s, role)
-      // Any pull that would give throttle counts, a light one as much as a press, and it lasts until the trigger gives
-      // none at all (back inside its dead zone, or at its own rest if it is worn and rests above it), so a finger's
-      // tremor around a light pull never lets the car creep.
       const tb = g.buttons[XR_BUTTON.trigger]
       const pull = triggerValue(tb)
       const raw = tb ? (tb.value > 0 ? tb.value : tb.pressed ? 1 : 0) : 0
-      const rest = this.triggerRest.get(s)
-      if (this.driving && (holding(XR_BUTTON.trigger) || pull > 0) && (!this.wasDriving || !known || takesThrottle)) this.triggerHeld.add(s)
-      else if (!holding(XR_BUTTON.trigger) && (pull === 0 || (rest !== undefined && rest <= XR_TRIGGER_REST_MAX && raw <= rest + XR_TRIGGER_REST_SLACK))) this.triggerHeld.delete(s)
-      if (!this.triggerHeld.has(s) && !holding(XR_BUTTON.trigger) && (rest === undefined || raw < rest)) this.triggerRest.set(s, raw)
-      const throttle = this.triggerHeld.has(s) ? 0 : pull
+      let base = this.triggerBase.get(s)
+      if (pull === 0) base = undefined
+      else if (this.driving && (!this.wasDriving || !known || takesThrottle)) base = Math.min(base ?? raw, raw)
+      else if (base !== undefined) base = Math.min(base, raw)
+      if (base === undefined) this.triggerBase.delete(s)
+      else this.triggerBase.set(s, base)
+      const throttle = base === undefined ? pull : triggerValue(tb, base + PAD_TUNING.triggerDeadzone)
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
       const d = this.stick
       let sx = 0, sy = 0, rim = false
