@@ -5,8 +5,9 @@
  * Why does this file exist? It is where the console's disk (terminal/os/, the files under / and the home directory)
  * is kept between visits: one image in the page's own IndexedDB, written whole. Three things could lose a person's
  * files, and each is closed here. Two tabs of the site: every image is stored with a generation number, and a save
- * is one transaction that reads the stored generation first and writes only if it is the one this page loaded or
- * last saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk. A store that could
+ * is one transaction that reads the stored generation and is undone unless it is the one this page loaded or last
+ * saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk (its write is asked for at
+ * once all the same, so a save made as the page goes is sent before it has gone). A store that could
  * not be read (the browser refused it, the read failed, it never answered): the load is refused, so the console can
  * say at once that its files are not kept, and saving is refused for the visit, because an image that may still be
  * there must not be replaced by an empty disk. An image that fails the system's own checks: it is copied under
@@ -136,26 +137,38 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
 
   /**
    * One save's transaction: it reads the stored generation and writes the image only over the one this page loaded or
-   * last saved. The page's generation moves when the write has landed, even after the save was given up on, so it stays
-   * the stored one and the page's next save is not told 'stale' over its own late write.
+   * last saved. The read and the write are asked for together, now, in the caller's own moment: a page being closed or
+   * reloaded runs nothing after its pagehide, so a write asked for only once the read had answered would never be sent.
+   * The read answers first, and a newer generation there undoes the whole transaction, the write with it. The page's
+   * generation moves when the write has landed, even after the save was given up on, so it stays the stored one and the
+   * page's next save is not told 'stale' over its own late write.
    */
-  const write = async (into: IDBDatabase, image: Uint8Array): Promise<'kept' | 'stale'> => {
+  const write = (into: IDBDatabase, image: Uint8Array): Promise<'kept' | 'stale'> => {
     const t = into.transaction(STORE, 'readwrite')
     const done = finished(t)
-    // A read that fails aborts the transaction while nothing waits on it yet: the refusal is answered below, not left unhandled.
-    done.catch(() => {})
     const store = t.objectStore(STORE)
-    const stored = rowOf(await request(store.get(IMAGE)))
-    // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.
-    if ((stored?.gen ?? 0) !== gen) {
-      await done.catch(() => {})
-      return 'stale'
-    }
     const row: Row = { gen: gen + 1, bytes: image }
+    const mine = gen
+    let stale = false
+    const reading = store.get(IMAGE)
+    reading.onsuccess = () => {
+      // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.
+      if ((rowOf(reading.result)?.gen ?? 0) === mine) return
+      stale = true
+      try {
+        t.abort()
+      } catch {
+        // Already over (it failed meanwhile): what it answers below says so.
+      }
+    }
     store.put(row, IMAGE)
-    await done
-    gen = row.gen
-    return 'kept'
+    return done.then(() => {
+      gen = row.gen
+      return 'kept' as const
+    }, (e: unknown) => {
+      if (stale) return 'stale' as const
+      throw e instanceof Error ? e : new Error(String(e))
+    })
   }
 
   /**

@@ -140,7 +140,8 @@ COMMANDS OF THE SHELL ITSELF
     fg [job]   bring one back to the terminal
     stop job   end one (stop %1, or stop with a task's number)
     exit typed at the console closes it, and the rest of the line (and
-    of a file read with source) is given up.
+    of a file read with source) is given up, with what was typed with
+    it or ahead of it, as Ctrl+C gives it up.
 
 THE CITY'S COMMANDS
     The console's own commands (help lists them) can be used in a pipe,
@@ -214,7 +215,9 @@ PERMISSIONS
 
 LIMITS
     A name is at most 255 characters and a path 4096 (a character past
-    U+FFFF counts as two). There are no links. Times are in UTC. A file
+    U+FFFF counts as two). The disk holds at most 4096 files and
+    directories (each save writes all of it). There are no links.
+    Times are in UTC. A file
     under /proc or /sys is made afresh each time it is read, so its size
     always shows as 0.
 

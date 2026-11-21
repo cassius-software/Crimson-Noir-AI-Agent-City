@@ -41,12 +41,14 @@ interface FakeIdb {
   /** Lets every transaction held so far complete. */
   release(): void
   opens: number
+  /** The writes asked for, by key, in the order they were asked (whether or not they landed). */
+  puts: string[]
 }
 
 function fakeIdb(): FakeIdb {
   const held: (() => void)[] = []
   const idb: FakeIdb = {
-    factory: null as unknown as IDBFactory, rows: new Map(), opening: 'ok', full: false, unreadable: false, silentReads: false, holding: false, opens: 0,
+    factory: null as unknown as IDBFactory, rows: new Map(), opening: 'ok', full: false, unreadable: false, silentReads: false, holding: false, opens: 0, puts: [],
     release: () => { for (const commit of held.splice(0)) commit() },
   }
   const later = (fn: () => void): void => queueMicrotask(fn)
@@ -101,6 +103,14 @@ function fakeIdb(): FakeIdb {
           set onerror(fn: (() => void) | null) { tx.onerror = fn },
           set onabort(fn: (() => void) | null) { tx.onabort = fn },
           get error() { return tx.error },
+          // As the browser's: nothing staged lands, and the transaction ends refused (a request still to answer never does).
+          abort: () => {
+            if (over) throw new Error('the transaction has finished')
+            over = true
+            staged.clear()
+            tx.error = null
+            tx.onabort?.()
+          },
           objectStore: () => ({
             get: (key: string) => {
               if (idb.silentReads) {
@@ -114,10 +124,15 @@ function fakeIdb(): FakeIdb {
               })
             },
             getAllKeys: () => ask(() => [...new Set([...rows.keys(), ...staged.keys()])]),
-            put: (value: unknown, key: string) => ask(() => {
-              if (idb.full) throw new Error('quota exceeded')
-              staged.set(key, structuredClone(value))
-            }),
+            put: (value: unknown, key: string) => {
+              idb.puts.push(key)
+              // The browser copies the value as it is asked for, not when the write is carried out.
+              const copy = structuredClone(value)
+              return ask(() => {
+                if (idb.full) throw new Error('quota exceeded')
+                staged.set(key, copy)
+              })
+            },
           }),
         }
       },
@@ -189,6 +204,25 @@ test('two pages: the one that fell behind is told stale and writes nothing over 
   await d.load()
   assert.equal(await c.save(bytes(4)), 'kept')
   assert.equal(await d.save(bytes(5)), 'stale')
+})
+
+test('a save asks for its write in the same moment as its read, so a page that is going still sends it; a stale page\'s write is undone', async () => {
+  const idb = fakeIdb()
+  const t = timers()
+  const a = consoleDisk(idb.factory, t.wait)
+  const b = consoleDisk(idb.factory, t.wait)
+  await a.load()
+  await b.load()
+  // A page being closed runs no more of its code once its pagehide is over: the write must be asked for by then.
+  const going = a.save(bytes(7))
+  assert.deepEqual(idb.puts, ['image'], 'asked before anything was awaited')
+  assert.equal(await going, 'kept')
+  // The page that fell behind asks too, and the transaction that would have written over the newer disk is undone.
+  const behind = b.save(bytes(8))
+  assert.deepEqual(idb.puts, ['image', 'image'])
+  assert.equal(await behind, 'stale')
+  const c = consoleDisk(idb.factory, t.wait)
+  assert.deepEqual([...(await c.load() ?? [])], [7])
 })
 
 test('a store that cannot be read is never written over: refused, thrown, silent, or a read that fails', async () => {

@@ -34,6 +34,12 @@ export const HOME = '/home/operator'
 export const PATH = `${HOME}/bin:/bin:/usr/apps`
 /** Bytes the disk holds unless the host says otherwise. */
 export const DISK_BYTES = 8 << 20
+/**
+ * The most files and directories the disk holds, as a real file system of its size has a fixed count of them. Every
+ * save writes the whole disk on the page's own thread, and restoring it is the first thing a visit does; at this count
+ * both stay within a frame even on a phone.
+ */
+export const DISK_NODES = 4096
 /** Bytes /tmp holds unless the host says otherwise. */
 export const TMP_BYTES = 4 << 20
 
@@ -60,6 +66,8 @@ export interface SystemOptions {
   /** The manual, by page name: each page becomes a file in /usr/share/man. */
   readonly manual?: Readonly<Record<string, string>>
   readonly diskBytes?: number
+  /** The most files and directories the disk holds, DISK_NODES unless the host (a test) says otherwise. */
+  readonly diskNodes?: number
   readonly tmpBytes?: number
 }
 
@@ -136,7 +144,7 @@ export class System {
   constructor(opts: SystemOptions) {
     const clock = opts.clock
     const wall = opts.wall ?? clock
-    const disk = new MemFs({ type: 'diskfs', capacity: opts.diskBytes ?? DISK_BYTES, maxFile: opts.diskBytes ?? DISK_BYTES, maxNodes: 65536, clock: wall })
+    const disk = new MemFs({ type: 'diskfs', capacity: opts.diskBytes ?? DISK_BYTES, maxFile: opts.diskBytes ?? DISK_BYTES, maxNodes: opts.diskNodes ?? DISK_NODES, clock: wall })
     this.disk = disk
     const vfs = new Vfs(disk, 'disk')
 
@@ -260,6 +268,18 @@ export class System {
   /** Ctrl+D on an empty line: an end of input for whoever reads. */
   end(): void { this.kernel.tty.end() }
 
+  /** The task whose turn it is (0 between turns): a host that owes a task an answer notes it, to ask `givesUp` later. */
+  get running(): number { return this.kernel.current?.pid ?? 0 }
+
+  /**
+   * Whether the task `pid` no longer waits for what it was owed: it has ended or is ending, or a Ctrl+C waits to be
+   * noticed by its group (the console's shell's), whose waits it gives up. A host drops what it owes such a task.
+   */
+  givesUp(pid: number): boolean {
+    const proc = this.kernel.proc(pid)
+    return proc === undefined || proc.state === 'ended' || proc.ending !== null || this.kernel.interruptPending(proc)
+  }
+
   /** Ctrl+C. True when a job was ended. */
   interrupt(): boolean { return this.kernel.interrupt() }
 
@@ -291,10 +311,11 @@ export class System {
   }
 
   /**
-   * Whether the next typed line is a program's input (`cat > notes`, `read name`), not a command nor the rest of one
-   * the shell is reading. The console keeps such a line as typed and out of its history.
+   * Whether the next typed line is a program's input (`cat > notes`) or the reply the shell's own `read name` waits for,
+   * not a command nor the rest of one the shell is reading. The console keeps such a line as typed and out of its
+   * history.
    */
-  get feeding(): boolean { return this.capturing && !(this.shellReads && this.kernel.tty.readers.size === 1) }
+  get feeding(): boolean { return this.capturing && (this.kernel.tty.reply || !(this.shellReads && this.kernel.tty.readers.size === 1)) }
 
   /** What the console shows before the next typed line: the shell's prompt, a continuation mark, or nothing while a job runs. */
   get prompt(): string { return this.kernel.tty.readers.size > 0 ? this.kernel.tty.prompt : '' }

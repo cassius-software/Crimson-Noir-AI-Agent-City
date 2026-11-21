@@ -55,6 +55,8 @@ export class Tty {
   prompt = ''
   /** Whether that reader is in the middle of a command it needs more lines for (so the next line is its, whatever it says). */
   continuing = false
+  /** Whether the next line is the reply the shell's own `read` waits for, not a command: the console keeps it out of its history. */
+  reply = false
 
   /** A program's bytes on the way to the screen. */
   write(stream: Stream, bytes: Uint8Array): void {

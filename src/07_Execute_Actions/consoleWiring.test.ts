@@ -5,8 +5,9 @@
  * Why does this file exist? It pins how the terminal (terminal/Terminal.tsx) and the page (App.tsx) carry the console's
  * operating layer, which Node cannot render: a closed console holds what is printed instead of rendering it; Tab lists
  * a bounded row; only a result that draws live or clears ends a live view; a secret is dotted in the history however
- * the shell was handed it; Ctrl+D on a line with text deletes forward; the disk is saved, and answered, before the page
- * goes (a boot, a map, 'Back to the city'), waits longer for a large disk, and is sealed by the browser's own digest.
+ * the shell was handed it; Ctrl+D on a line with text deletes forward, a whole character; the disk is saved, and
+ * answered, before the page goes (a boot, a map, 'Back to the city', waiting once), waits longer for a large disk or one
+ * slow to image, and is sealed by the browser's own digest unless it does not answer.
  * Source-level, as the other wiring tests are; the layer's own side of each is held by terminal/oslayer.test.ts.
  * What breaks if it is removed? A job printing to a hidden console could slow the city again, a typed key could stay
  * in the history, or the last change before leaving the page could be lost without a word.
@@ -69,11 +70,12 @@ test('the history dots a secret however the shell was handed it, and a line the 
   before(follow, 'applyRef.current(r)', 'scrubHistory()', 'after what the layer ran since')
 })
 
-test('Ctrl+D with the layer: the end of input on an empty line, the character after the caret (or the selection) on a line with text', () => {
+test('Ctrl+D with the layer: the end of input on an empty line (not by a held key), the character after the caret (a whole emoji) or the selection on a line with text', () => {
   const ctrlD = between(TERM, "} else if (chord && (key === 'd' || key === 'D')) {", "} else if (chord && (key === 'l' || key === 'L')) {")
-  assert.match(ctrlD, /if \(session\.current\?\.os\) \{\s*e\.preventDefault\(\)\s*if \(el\.value === ''\) endInput\(\)\s*else \{/)
+  assert.match(ctrlD, /if \(session\.current\?\.os\) \{\s*e\.preventDefault\(\)[\s\S]*?if \(el\.value === ''\) \{ if \(!e\.repeat\) endInput\(\) \}\s*else \{/)
   assert.match(ctrlD, /const a = el\.selectionStart \?\? 0, b = el\.selectionEnd \?\? a/)
-  assert.match(ctrlD, /setLine\(el\.value\.slice\(0, a\) \+ el\.value\.slice\(b > a \? b : a \+ 1\), a\)/)
+  assert.match(ctrlD, /const pair = \/\^\[\\uD800-\\uDBFF\]\[\\uDC00-\\uDFFF\]\/\.test\(el\.value\.slice\(a, a \+ 2\)\)/)
+  assert.match(ctrlD, /setLine\(el\.value\.slice\(0, a\) \+ el\.value\.slice\(b > a \? b : a \+ \(pair \? 2 : 1\)\), a\)/)
 })
 
 test('the disk is saved and answered before the page goes: a boot, a map, the handle\'s flush and every reload the page starts wait for it, LEAVE_MS at most', () => {
@@ -82,8 +84,12 @@ test('the disk is saved and answered before the page goes: a boot, a map, the ha
   assert.equal(Number(leaveMs[1]), OPEN_MS, 'as long as the store itself waits on the browser (consoleDisk.ts OPEN_MS)')
   const leave = between(TERM, 'const leave = (): Promise<void> => {', '\n  }\n')
   assert.match(leave, /if \(saveTimer\.current !== null\) window\.clearTimeout\(saveTimer\.current\)\s*saveTimer\.current = null/)
-  assert.match(leave, /const gone = window\.setTimeout\(resolve, LEAVE_MS\)/)
-  assert.match(leave, /os\.save\(\{ now: true \}\)\.then\(done, done\)/)
+  assert.match(leave, /const saving = os\.save\(\{ now: true \}\)/)
+  assert.match(leave, /const gone = window\.setTimeout\(\(\) => \{\s*unanswered\.current = saving\s*resolve\(\)\s*\}, LEAVE_MS\)/)
+  assert.match(leave, /saving\.then\(done, done\)/)
+  // A boot waits once: its own reload (reboot, Terminal.flushAll) goes at once while the save it gave up on is unanswered.
+  before(leave, 'if (unanswered.current !== null) return Promise.resolve()', 'return new Promise<void>((resolve) => {', 'checked before a second wait')
+  assert.match(leave, /if \(unanswered\.current === saving\) unanswered\.current = null/)
   const apply = between(TERM, 'const apply = (', 'const submit = (')
   assert.match(apply, /if \(r\.boot \|\| r\.map\) \{[\s\S]*?void leave\(\)\.then\(\(\) => \{\s*if \(r\.boot\) onBoot\?\.\(r\.boot\)\s*if \(r\.map\) onMap\?\.\(r\.map\)\s*\}\)/)
   assert.doesNotMatch(apply, /^\s*if \(r\.map\) onMap\?\.\(r\.map\)\n\s*\}\n$/m, 'no navigation outside the wait')
@@ -103,12 +109,21 @@ test('a save asked for as the page is hidden or goes is sealed at once; a timed 
   const save = between(TERM, 'const saveDisk = (os: OsSession, soon: boolean) => {', 'const follow = () => {')
   before(save, 'if (!soon) { void os.save({ now: true }); return }', 'if (!os.unsavedChanges) return', 'a save waiting for its seal is taken over even with nothing new')
   assert.match(save, /const mib = os\.system\.diskUsed \/ MIB/)
-  assert.match(save, /\}, mib < 1 \? SAVE_MS : Math\.min\(SAVE_MAX_MS, SAVE_MS \* mib\)\)/)
+  assert.match(save, /const bySize = mib < 1 \? SAVE_MS : Math\.min\(SAVE_MAX_MS, SAVE_MS \* mib\)/)
+  // A disk of many small files: spaced by what its last image took to make, so saving takes a fiftieth of the page's time.
+  assert.match(save, /\}, Math\.max\(bySize, Math\.min\(SAVE_MAX_MS, os\.saveCost \* SAVE_SPACING\)\)\)/)
   assert.match(TERM, /const SAVE_MS = 1500\n/)
   assert.match(TERM, /const SAVE_MAX_MS = 10_000\n/)
+  assert.match(TERM, /const SAVE_SPACING = 50\n/)
   assert.match(TERM, /const MIB = 1024 \* 1024\n/)
   assert.match(TERM, /const flush = \(\) => \{\s*const os = session\.current\?\.os\s*if \(os\) saveDisk\(os, false\)\s*\}/)
   assert.match(TERM, /const SUBTLE: SubtleCrypto \| undefined = globalThis\.crypto\?\.subtle/)
   const host = between(TERM, 'const sessionOf = (): ReplSession => (session.current ??= replSession({', '}))')
-  assert.match(host, /\.\.\.\(SUBTLE \? \{ digest: \(bytes: Uint8Array\) => SUBTLE\.digest\('SHA-256', bytes as Uint8Array<ArrayBuffer>\)\.then\(\(d\) => new Uint8Array\(d\)\) \} : \{\}\),/)
+  assert.match(host, /\.\.\.\(SUBTLE \? \{ digest: \(bytes: Uint8Array\) => bounded\(SUBTLE\.digest\('SHA-256', bytes as Uint8Array<ArrayBuffer>\)\.then\(\(d\) => new Uint8Array\(d\)\), SEAL_MS\) \} : \{\}\),/)
+  // A digest that never answers is given up on, and the layer seals the image itself.
+  assert.match(TERM, /const SEAL_MS = (\d+)\n/)
+  assert.equal(Number(/const SEAL_MS = (\d+)\n/.exec(TERM)?.[1]), OPEN_MS)
+  const bound = between(TERM, 'function bounded<T>(p: Promise<T>, ms: number): Promise<T> {', '\n}\n')
+  assert.match(bound, /const late = window\.setTimeout\(\(\) => reject\(new Error\('the browser did not answer'\)\), ms\)/)
+  assert.match(bound, /p\.then\(\(value\) => \{ window\.clearTimeout\(late\); resolve\(value\) \}, \(e: unknown\) => \{ window\.clearTimeout\(late\); reject\(e\) \}\)/)
 })

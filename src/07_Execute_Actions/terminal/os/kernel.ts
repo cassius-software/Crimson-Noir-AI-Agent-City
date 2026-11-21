@@ -126,6 +126,9 @@ class PipeEnd implements Channel {
   }
 }
 
+/** The most bytes one turn hands the screen in a write; a longer write goes on in the next turn. */
+const SCREEN_PIECE = 16 << 10
+
 class TtyEnd implements Channel {
   refs = 0
   readonly tty = true
@@ -160,7 +163,12 @@ class TtyEnd implements Channel {
   }
   *write(data: Uint8Array): Task<number> {
     if (this.way === 'in') refuse('EBADF')
-    this.term.write(this.way === 'err' ? 'err' : 'out', data)
+    // A long write reaches the screen a piece at a time, with a breath between pieces, so one line of megabytes cannot
+    // hold the page past its turn. The screen's decoder keeps a character split between pieces whole.
+    for (let at = 0; at < data.length; at += SCREEN_PIECE) {
+      if (at > 0) yield BREATH
+      this.term.write(this.way === 'err' ? 'err' : 'out', data.subarray(at, at + SCREEN_PIECE))
+    }
     return data.length
   }
   *seek(): Task<number> { return refuse('ESPIPE') }
@@ -1055,13 +1063,22 @@ export class Sys {
   foreground(pgid: number): void { this.k.tty.foreground = pgid }
   /** The group that has the terminal's input. */
   get terminalGroup(): number { return this.k.tty.foreground }
-  /** Sets what the console shows before the next typed line; `continuing` says that line finishes a command already begun. */
-  prompt(text: string, continuing = false): void {
+  /**
+   * Sets what the console shows before the next typed line; `continuing` says that line finishes a command already
+   * begun, or, as 'input', that it is input the shell itself reads (its `read`), not a command at all.
+   */
+  prompt(text: string, continuing: boolean | 'input' = false): void {
     this.k.tty.prompt = text
-    this.k.tty.continuing = continuing
+    this.k.tty.continuing = continuing !== false
+    this.k.tty.reply = continuing === 'input'
   }
   /** Ends a line written without a line end, so it shows now. */
   flushTerminal(): void { this.k.tty.flush() }
+  /**
+   * Forgets the typed lines nobody has read yet, as Ctrl+C does: the console's own shell does this when `exit` gives up
+   * its line, so a line typed with it (a second line of the same entry) or ahead of it never runs after it.
+   */
+  forgetTyped(): void { this.k.tty.forget() }
   /** Hands the host something of its own, in order with the lines written around it. */
   post(payload: unknown): void { this.k.tty.post(payload) }
 

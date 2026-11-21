@@ -53,6 +53,13 @@ const OS_TURN_FULL_MS = 12
 const SAVE_MS = 1500
 /** A disk past a MiB waits SAVE_MS for each MiB in use (its image takes that much longer to make), this at most. */
 const SAVE_MAX_MS = 10_000
+/**
+ * A timed save also waits this many times as long as the last image took to make (OsSession.saveCost), SAVE_MAX_MS at
+ * most, so a disk of many small files is saved no more often than lets it take a fiftieth of the page's time.
+ */
+const SAVE_SPACING = 50
+/** The longest a save waits for the browser's digest before the layer seals the image itself. */
+const SEAL_MS = 4000
 const MIB = 1024 * 1024
 /**
  * The longest the page waits for the disk to be saved before it goes anyway: as long as the store itself waits on the
@@ -68,6 +75,13 @@ const ENTROPY_CHUNK = 65536
  * (an insecure origin), and the layer then seals with its own.
  */
 const SUBTLE: SubtleCrypto | undefined = globalThis.crypto?.subtle
+/** `p`, or a refusal once `ms` have passed: a digest the browser never answers must not hold every later save behind it. */
+function bounded<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const late = window.setTimeout(() => reject(new Error('the browser did not answer')), ms)
+    p.then((value) => { window.clearTimeout(late); resolve(value) }, (e: unknown) => { window.clearTimeout(late); reject(e) })
+  })
+}
 /** Each mounted console's save before the page goes (its `leave`), for Terminal.flushAll. */
 const leaving = new Set<() => Promise<void>>()
 
@@ -235,6 +249,8 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   /** The operating layer's next turn, and its next save. */
   const osTimer = useRef<number | null>(null)
   const saveTimer = useRef<number | null>(null)
+  /** A save the page gave up waiting for as it went (leave), while it has still not answered. */
+  const unanswered = useRef<Promise<void> | null>(null)
   /**
    * What was printed while the windowed console was closed, newest MAX_ROWS: shown when it opens, so a job printing to
    * a hidden console costs the page no rendering.
@@ -444,13 +460,14 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       for (let at = 0; at < bytes.length; at += ENTROPY_CHUNK) crypto.getRandomValues(bytes.subarray(at, Math.min(bytes.length, at + ENTROPY_CHUNK)) as Uint8Array<ArrayBuffer>)
     },
     disk: diskRef.current,
-    ...(SUBTLE ? { digest: (bytes: Uint8Array) => SUBTLE.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>).then((d) => new Uint8Array(d)) } : {}),
+    ...(SUBTLE ? { digest: (bytes: Uint8Array) => bounded(SUBTLE.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>).then((d) => new Uint8Array(d)), SEAL_MS) } : {}),
   }))
 
   /**
    * Saves the layer's disk. With `soon`, if it changed, after a moment for more changes: SAVE_MS, or for a disk past a
-   * MiB, SAVE_MS for each MiB in use, SAVE_MAX_MS at most. Without (the page hidden or going), now and sealed at once,
-   * and a save still waiting for its seal is taken over (OsSession.save), so it is asked even when nothing is new.
+   * MiB, SAVE_MS for each MiB in use, and at least SAVE_SPACING times what the last image took to make, SAVE_MAX_MS at
+   * most. Without (the page hidden or going), now and sealed at once, and a save still waiting for its seal is taken
+   * over (OsSession.save), so it is asked even when nothing is new.
    */
   const saveDisk = (os: OsSession, soon: boolean) => {
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
@@ -458,30 +475,38 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     if (!soon) { void os.save({ now: true }); return }
     if (!os.unsavedChanges) return
     const mib = os.system.diskUsed / MIB
+    const bySize = mib < 1 ? SAVE_MS : Math.min(SAVE_MAX_MS, SAVE_MS * mib)
     saveTimer.current = window.setTimeout(() => {
       saveTimer.current = null
       void os.save()
-    }, mib < 1 ? SAVE_MS : Math.min(SAVE_MAX_MS, SAVE_MS * mib))
+    }, Math.max(bySize, Math.min(SAVE_MAX_MS, os.saveCost * SAVE_SPACING)))
   }
 
   /**
    * Saves the disk before the page goes (a boot, a map, the host's own way out). A save the page's going cuts short is
    * lost, so the save timer is dropped, the disk is saved now and sealed at once (a save already on its way is waited
    * for), and this resolves when the store has answered, or after LEAVE_MS, so a store that never answers cannot keep
-   * the page from going.
+   * the page from going. While a save the page gave up waiting for has still not answered, the next way out (a boot's
+   * own reload after its wait, say) goes at once: the store will not answer that one sooner.
    */
   const leave = (): Promise<void> => {
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
     saveTimer.current = null
     const os = session.current?.os
     if (!os) return Promise.resolve()
+    if (unanswered.current !== null) return Promise.resolve()
     return new Promise<void>((resolve) => {
-      const gone = window.setTimeout(resolve, LEAVE_MS)
+      const saving = os.save({ now: true })
+      const gone = window.setTimeout(() => {
+        unanswered.current = saving
+        resolve()
+      }, LEAVE_MS)
       const done = () => {
         window.clearTimeout(gone)
+        if (unanswered.current === saving) unanswered.current = null
         resolve()
       }
-      os.save({ now: true }).then(done, done)
+      saving.then(done, done)
     })
   }
 
@@ -666,10 +691,13 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       // console.
       if (session.current?.os) {
         e.preventDefault()
-        if (el.value === '') endInput()
+        // A held key that has just emptied the line does not go on to end the input, as readline's does not.
+        if (el.value === '') { if (!e.repeat) endInput() }
         else {
           const a = el.selectionStart ?? 0, b = el.selectionEnd ?? a
-          setLine(el.value.slice(0, a) + el.value.slice(b > a ? b : a + 1), a)
+          // One whole character: both halves of a character outside the basic plane (an emoji) go together.
+          const pair = /^[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(el.value.slice(a, a + 2))
+          setLine(el.value.slice(0, a) + el.value.slice(b > a ? b : a + (pair ? 2 : 1)), a)
         }
       }
     } else if (chord && (key === 'l' || key === 'L')) {

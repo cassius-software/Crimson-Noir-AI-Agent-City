@@ -27,7 +27,7 @@ import type { Kit } from './kit.test.ts'
 import { MemFs } from './memfs.ts'
 import { sha256 } from './sha.ts'
 import { dir, knob, text } from './synth.ts'
-import { DISK_BYTES, HOME, PATH, TMP_BYTES } from './system.ts'
+import { DISK_BYTES, DISK_NODES, HOME, PATH, TMP_BYTES } from './system.ts'
 import { Later, now } from './task.ts'
 import { O_READ } from './vfs.ts'
 
@@ -165,6 +165,34 @@ test('system: the bytes in use on the disk are the ones df counts, and only the 
   assert.equal(used(), Math.ceil(s.diskUsed / 1024))
   k.write('/tmp/scratch', new Uint8Array(50000))
   assert.equal(s.diskUsed, before + 100000 + 64 + 'big'.length)
+})
+
+test('system: the disk holds at most DISK_NODES files and directories, so a save and the next visit\'s restore stay short', () => {
+  assert.equal(DISK_NODES, 4096)
+  const k = boot(FILE_PROGRAMS)
+  const s = k.system
+  // As many empty files as one line could make: the disk refuses the one past its count, and /tmp has its own.
+  k.sh('mkdir ~/many')
+  let made = 0
+  let refused = ''
+  for (let i = 0; i < DISK_NODES; i++) {
+    try {
+      k.write(`${HOME}/many/f${i}`, '')
+      made++
+    } catch (e) {
+      refused = String(e)
+      break
+    }
+  }
+  assert.ok(made > DISK_NODES - 64 && made < DISK_NODES, `${made} files made`)
+  assert.match(refused, /no room for another file/)
+  assert.deepEqual(k.sh('touch /tmp/more; echo $?'), ['0'])
+  // A full disk still makes its image and comes back whole.
+  const image = s.snapshot()
+  assert.ok(image !== null)
+  const back = new MemFs({ capacity: DISK_BYTES, maxFile: DISK_BYTES, maxNodes: DISK_NODES, clock: () => 0 })
+  restore(image, back)
+  assert.equal(back.usage().nodes, s.disk.usage().nodes)
 })
 
 test('system: before the host says whether there is a saved disk, nothing is laid out, nothing is saved, and typed lines wait', () => {

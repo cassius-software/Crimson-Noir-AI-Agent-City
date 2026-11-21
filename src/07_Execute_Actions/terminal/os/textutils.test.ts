@@ -879,6 +879,22 @@ test('rev: a long line is turned round a slice at a time, with a call to the ker
   assert.ok(turns >= Math.floor(line.length / 4096 / LOOK), `${turns} turns`)
 })
 
+test('a line of megabytes written to the screen in one go reaches it in pieces, a turn\'s breath between them, every character whole', () => {
+  const k = fresh()
+  const line = `${'ab'.repeat(300000)}\u{1f600}z`
+  k.write('/tmp/long', `${line}\n`)
+  // rev writes its whole reversed line at once: the screen takes it a piece at a time, each turn ended at once.
+  k.system.type('rev long\n')
+  let turns = 0
+  let shown = ''
+  while (!k.system.idle) {
+    for (const e of k.system.run(1_000_000, Number.NEGATIVE_INFINITY)) if (e.kind !== 'post') shown += e.text
+    turns++
+  }
+  assert.ok(turns >= Math.floor(line.length / (16 << 10)), `${turns} turns`)
+  assert.equal(shown, Array.from(line).reverse().join(''), 'every character whole, the emoji where a piece ends near it')
+})
+
 // nl
 
 test('nl: numbers in front, empty lines left alone unless asked, the count carried from file to file', () => {

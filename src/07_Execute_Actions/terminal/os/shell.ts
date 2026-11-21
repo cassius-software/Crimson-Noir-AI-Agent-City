@@ -999,15 +999,21 @@ class Shell {
 
   /**
    * Waits for what a city command answers later. Ctrl+C at the console's own shell gives the wait up (the command
-   * itself goes on in the city: the shell only stops waiting for it). A refusal is the command's own error line.
+   * itself goes on in the city: the shell only stops waiting for it). A refusal is the command's own error line. A wait
+   * given up (Ctrl+C, or the task ended while it waited) settles the Later as interrupted, so a host that has not started
+   * the command yet (one owed to a later turn) can drop it instead of running it for nobody.
    */
   private *answered(name: string, later: Later<readonly CityLine[]>): Task<readonly CityLine[]> {
     const sys = this.sys
     // Only the console's own shell takes a Ctrl+C, so only it may end the wait on one.
     const mine = this.st.session
-    while (!later.done) {
-      yield { why: 'city', ready: () => later.done || (mine && sys.interruptPending()) }
-      this.interruptCheck()
+    try {
+      while (!later.done) {
+        yield { why: 'city', ready: () => later.done || (mine && sys.interruptPending()) }
+        this.interruptCheck()
+      }
+    } finally {
+      if (!later.done) later.reject(new OsError('EINTR'))
     }
     if (later.error !== null) return [{ err: true, text: `${name}: ${later.error.message}` }]
     return later.value ?? []
@@ -1208,6 +1214,9 @@ class Shell {
           continue
         }
         if (e instanceof ExitLine) {
+          // What was typed with the line or ahead of it goes too, as with Ctrl+C: `cd dir || exit` and `rm -r *` sent
+          // as two lines of one entry must not run the second in the wrong place.
+          sys.forgetTyped()
           this.st.status = e.status
           continue
         }
@@ -1427,7 +1436,7 @@ class Shell {
     let ended = true
     const whole = sys.isatty(0)
     // At the terminal the next typed line is this command's, whatever it says: the console must not take it for a new one.
-    if (whole) sys.prompt('', true)
+    if (whole) sys.prompt('', 'input')
     try {
       for (;;) {
         const chunk = yield* sys.read(0, whole ? 65536 : 1)

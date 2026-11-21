@@ -23,39 +23,44 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `time 18:30 && time`). The shell reads quotes, variables and their `${}` forms, `$( )`, whole-number `$(( ))`,
   file-name patterns, pipes, redirections, here-documents, `;`, `&&`, `||`, `&`, `if`, `while`, `until` and `for`, runs
   scripts (a runnable file in `~/bin` runs by its name), reads `/etc/profile` and `~/.profile` when it starts, and has
-  24 commands of its own, among them `exit`, which closes the console and gives up the rest of the line and of a sourced
-  file (`cd /nowhere || exit; rm -r *` removes nothing); `man sh` says what it lacks (functions, `case`, subshells,
-  `set`, arrays, backquotes, aliases). `/bin` holds 67 programs (the file, text and system tools, `diff`, `cmp`, `comm`,
-  `grep`, `sed` and `sh`) and the manual 70 pages in one checked shape, the pages saying under NOTES what a program does
-  not do. Under them: a kernel of generator tasks run in turns of at most 256 calls, inside a budget of calls and a
-  deadline the page hands it (30 ms for a typed line, then 4 ms every 16 ms while it has work, the clock read every 8
-  calls), so a program that never waits still hands the page back at the deadline; descriptors, 64 KiB pipes, a
-  terminal, a group per job, and Ctrl+C for the foreground job alone; a file system of drivers with an 8 MiB disk at
-  `/`, read-only `/bin` and `/usr`, a 4 MiB `/tmp` and generated `/proc`, `/sys` and `/dev`, a write past a cap refused
-  by name with nothing changed; and a regular-expression engine of its own that keeps every path alive at once, so a
-  search costs at most 2 x instructions x (characters + 1) steps (`(a+)+$` on thirty `a`s and a `b` gives up within
-  5,000 steps), can pause mid-search for the other tasks and for Ctrl+C, and refuses back-references. The city reads as
-  files (`terminal/cityfs.ts`): `/proc/city` holds what `stats`, `laws`, `kernel` and the rest print, the crowd and the
-  cars as rows of numbers, and the namespace as a tree; a write under `/sys/city` (`echo 18:30 > /sys/city/time`) runs
-  the same command with the same checks and tier locks, and neither earns a command's check. A console command the shell
-  runs, or a file read or written, never answers a proposal (only `act ok`, `act no`, `y` or `n` typed alone do), and at
-  most 32 of them run in one turn of the layer, the rest waiting for the next, so a loop cannot flood the engine's queue
-  of commands. A key, a token or a passphrase handed to a console command through the shell is kept as dots in the
-  history in whatever form it was typed (`sh -c '...'` among them); `jobs` still lists a job's line as typed. The disk
-  is kept between visits in the page's own IndexedDB (`consoleDisk.ts`), one store for both consoles: an image sealed
-  with SHA-256 and refused whole when any check fails, stored with a generation so a tab that fell behind writes nothing
-  over a newer disk, never written over when it could not be read, and copied to a row of its own, never over an earlier
-  copy and eight at most, before anything replaces an image that failed its check; a file left where one of the system's
-  file systems is mounted is moved aside to a free name instead of costing the whole disk, and `umount` leaves `/bin`,
-  `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted. Every wait on the store is bounded at 4 s, and a save the store
-  does not answer counts as failed. The disk is saved 1.5 s after a change (longer past 1 MiB), when the page is hidden,
-  and before `boot`, `map` or **Back to the city** reloads the page, which waits up to 4 s for it; a timed save is
-  sealed with the browser's own SHA-256 where the page has it. When files can no longer be kept, the console says so
-  once. A shell line that holds `|`, `;`, `&`, `<` or `>`, or starts with a loop or `if`, earns a computers check when
-  it is back at the prompt within 30 ms without an error; the console commands inside it earn none of their own. The
-  folder imports nothing from outside itself and names no host clock, timer, storage or network (`os/airgap.test.ts`).
-  Tests: 552 in 20 files under `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 34 in
-  `terminal/oslayer.test.ts`, 13 in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one
+  24 commands of its own, among them `exit`, which closes the console and gives up the rest of the line, of a sourced
+  file and of what was typed with it (`cd /nowhere || exit; rm -r *` removes nothing, on one line or two); `man sh` says
+  what it lacks (functions, `case`, subshells, `set`, arrays, backquotes, aliases). `/bin` holds 67 programs (the file,
+  text and system tools, `diff`, `cmp`, `comm`, `grep`, `sed` and `sh`) and the manual 70 pages in one checked shape,
+  the pages saying under NOTES what a program does not do. Under them: a kernel of generator tasks run in turns of at
+  most 256 calls, inside a budget of calls and a deadline the page hands it (30 ms for a typed line, then 4 ms every 16
+  ms while it has work, the clock read every 8 calls), so a program that never waits still hands the page back at the
+  deadline; descriptors, 64 KiB pipes, a terminal, a group per job, and Ctrl+C for the foreground job alone; a file
+  system of drivers with an 8 MiB disk at `/`, read-only `/bin` and `/usr`, a 4 MiB `/tmp` and generated `/proc`, `/sys`
+  and `/dev`, a write past a cap refused by name with nothing changed; and a regular-expression engine of its own that
+  keeps every path alive at once, so a search costs at most 2 x instructions x (characters + 1) steps (`(a+)+$` on
+  thirty `a`s and a `b` gives up within 5,000 steps), can pause mid-search for the other tasks and for Ctrl+C, and
+  refuses back-references. The city reads as files (`terminal/cityfs.ts`): `/proc/city` holds what `stats`, `laws`,
+  `kernel` and the rest print, the crowd and the cars as rows of numbers, and the namespace as a tree; a write under
+  `/sys/city` (`echo 18:30 > /sys/city/time`) runs the same command with the same checks and tier locks, and neither
+  earns a command's check. A console command the shell runs, or a file read or written, never answers a proposal (only
+  `act ok`, `act no`, `y` or `n` typed alone do), and at most 32 of them run in one turn of the layer, the rest waiting
+  for the next (a turn given because an answer arrived keeps the share it has, and Ctrl+C drops a command still
+  waiting), so a loop cannot flood the engine's queue of commands. A key, a token or a passphrase handed to a console
+  command through the shell is kept as dots in the history, and in what `history` lists, in whatever form it was typed
+  (`sh -c '...'`, quoted, with extra blanks); the reply to `read` stays out of the history; `jobs` and `ps -f` still
+  list a job's line as typed. The disk is kept between visits in the page's own IndexedDB (`consoleDisk.ts`), one store
+  for both consoles: an image sealed with SHA-256 and refused whole when any check fails, stored with a generation so a
+  tab that fell behind writes nothing over a newer disk, never written over when it could not be read, and copied to a
+  row of its own, never over an earlier copy and eight at most, before anything replaces an image that failed its check;
+  a file left where one of the system's file systems is mounted is moved aside to a free name instead of costing the
+  whole disk, and `umount` leaves `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted. Every wait on the store is
+  bounded at 4 s, and a save the store does not answer counts as failed. The disk holds at most 4,096 files and
+  directories, so making its image takes about 2 ms on a laptop. It is saved 1.5 s after a change (longer past 1 MiB,
+  and at least 50 times as long as its last image took to make), when the page is hidden, reloaded or closed (each save
+  asks for its write with its read, so a page that is going still sends it), and before `boot`, `map` or **Back to the
+  city** reloads the page, which waits up to 4 s for it, once; a timed save is sealed with the browser's own SHA-256
+  where the page has it and it answers within 4 s. When files can no longer be kept, the console says so once. A shell
+  line that holds `|`, `;`, `&`, `<` or `>`, or starts with a loop or `if`, earns a computers check when it is back at
+  the prompt within 30 ms without an error; the console commands inside it earn none of their own. The folder imports
+  nothing from outside itself and names no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 555 in 20
+  files under `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 40 in
+  `terminal/oslayer.test.ts`, 14 in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one
   is not exercised by them), and 7 in `consoleWiring.test.ts`, which pins the terminal's and the page's side from their
   source. Not yet: attaching a folder of the computer, full-screen programs and app windows, networking, programs
   written in Crimson Noir Script. `docs/console-operating-layer.md` is the design and `MANUAL.md`, "Files, programs and

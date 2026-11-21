@@ -2263,25 +2263,28 @@ console hands it. The design, every limit and what is not there yet are in `docs
   `&&`, `||`, `&`, `{ a; b; }`, `if`, `while`, `until`, `for`, `test` and `[ ]`, and `jobs`, `fg`, `wait` and
   `stop %1` for jobs left in the background. A text file that starts `#!/bin/sh` and is made runnable (`chmod +x`)
   is a script; one in `~/bin` runs by its name. `/etc/profile` and then `~/.profile`, once you make them, run each
-  time the console's shell starts. `exit` closes the console and gives up the rest of the line and of a file read
-  with `source`, so `cd /nowhere || exit; rm -r *` removes nothing. `jobs` lists a job's line as typed: a key or a
-  token on a line sent to the background shows there, though the history keeps it as dots. Not there: functions,
+  time the console's shell starts. `exit` closes the console and gives up the rest of the line, of a file read with
+  `source`, and of what was typed with it or ahead of it, so `cd /nowhere || exit; rm -r *` removes nothing, on one
+  line or two. `jobs` and `ps -f` list a job's line as typed: a key or a token on a line sent to the background shows
+  there, though the history keeps it as dots, as it does a key however it was typed (quoted, after `sh -c`), and the
+  reply to `read` stays out of the history. Not there: functions,
   `case`, `( )` subshells, `set`, arrays, aliases, and backquotes (that key opens and closes the console: use
   `$( )`).
 - **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
   forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
-  what you type, and on a line with text deletes the character after the cursor. On a touch screen, **Stop** and
-  **End input** do the same while a program has the terminal. A line typed while a program reads (`cat > notes`) is that
-  program's, even one that names a console command. The prompt shows the directory (`host:~# `), and `> ` while a
-  command needs more lines.
+  what you type, and on a line with text deletes the character after the cursor (a whole emoji). On a touch screen,
+  **Stop** and **End input** do the same while a program has the terminal. A line typed while a program reads
+  (`cat > notes`) is that program's, even one that names a console command. The prompt shows the directory
+  (`host:~# `), and `> ` while a command needs more lines.
 - **The tree** (`man files`): `~` is `/home/operator` (with a `README`); `/etc` and `/mnt`; `/tmp`, scratch space;
   `/bin` and `/usr/share/man`, read-only; `/dev/null`, `zero`, `full`, `random`, `urandom` and `tty`; `/proc`, a
   directory per running task (`ps -f` lists them); `/proc/city` and `/sys/city`, below. You are root at the prompt,
   and still `umount` leaves the system's own `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted.
 - **What is kept.** Everything outside `/tmp`, `/bin`, `/usr`, `/dev`, `/proc` and `/sys` is one disk of 8 MiB, saved in
   this browser's own storage for the site a moment after it changes (1.5 s, longer for a disk with more than 1 MiB in
-  use, 10 s at most), when the page is hidden, and before `boot`, `map` or **Back to the city** reloads the page, which
-  waits up to 4 s for the save; it is back the next time the page opens in the same browser, and the city's console and
+  use or many files, 10 s at most), when the page is hidden, reloaded or closed, and before `boot`, `map` or **Back to
+  the city** reloads the page, which waits up to 4 s for the save; it holds at most 4,096 files and directories, so a
+  save never holds the city up; it is back the next time the page opens in the same browser, and the city's console and
   the console alone (`?boot=tty`) share it. It is sent nowhere, and another browser or device has its own. `/tmp`
   (4 MiB) is emptied when the page closes. When the storage cannot be read, a second tab of the site saved a newer disk,
   or the browser gives the page no storage, the console says once

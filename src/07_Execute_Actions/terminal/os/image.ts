@@ -22,12 +22,29 @@ import { sha256 } from './sha.ts'
 const MAGIC = encode('CNDISK1\n')
 /** Bytes of the seal at the end of every image: the SHA-256 of everything before it. */
 export const SEAL_BYTES = 32
+/** Bytes of a node's fixed part: kind, permission bits, owner, group, time, the index of its directory, its name's length. */
+const HEAD_BYTES = 1 + 2 + 4 + 4 + 8 + 4 + 2
 
 /** The disk as one array of bytes, without its seal: what `sealed` makes an image of. Changes nothing on the disk. */
 export function dumpBody(fs: MemFs): Uint8Array {
-  const chunks: Uint8Array[] = [MAGIC]
-  const count = new Uint8Array(4)
-  chunks.push(count)
+  // Written straight into one buffer that doubles as it fills: a disk of thousands of small files costs one pass and a
+  // handful of copies, not a small array for every field of every node and a join at the end.
+  let out = new Uint8Array(1 << 16)
+  let view = new DataView(out.buffer)
+  let at = 0
+  const room = (more: number): void => {
+    if (at + more <= out.length) return
+    let size = out.length * 2
+    while (size < at + more) size *= 2
+    const grown = new Uint8Array(size)
+    grown.set(out.subarray(0, at))
+    out = grown
+    view = new DataView(out.buffer)
+  }
+  out.set(MAGIC, 0)
+  at = MAGIC.length
+  const countAt = at
+  at += 4
   let nodes = 0
   // Depth first, each directory's entries in the order of their names. What is still to visit is kept on a list of
   // its own, not on the call stack, so no tree is too deep to save (renames can build one deeper than any path).
@@ -36,29 +53,33 @@ export function dumpBody(fs: MemFs): Uint8Array {
     const st = fs.stat(next.ino)
     const index = nodes++
     const nameBytes = encode(next.name)
-    const head = new Uint8Array(1 + 2 + 4 + 4 + 8 + 4 + 2)
-    head[0] = st.kind === 'dir' ? 1 : 2
-    head[1] = st.mode & 255
-    head[2] = (st.mode >> 8) & 255
-    writeU32(head, 3, st.uid)
-    writeU32(head, 7, st.gid)
-    new DataView(head.buffer).setFloat64(11, st.mtime, true)
-    writeU32(head, 19, next.parent)
-    head[23] = nameBytes.length & 255
-    head[24] = (nameBytes.length >> 8) & 255
-    chunks.push(head, nameBytes)
-    if (st.kind === 'dir') {
+    const data = st.kind === 'dir' ? null : fs.read(next.ino, 0, st.size)
+    room(HEAD_BYTES + nameBytes.length + (data === null ? 0 : 4 + data.length))
+    out[at] = st.kind === 'dir' ? 1 : 2
+    out[at + 1] = st.mode & 255
+    out[at + 2] = (st.mode >> 8) & 255
+    writeU32(out, at + 3, st.uid)
+    writeU32(out, at + 7, st.gid)
+    view.setFloat64(at + 11, st.mtime, true)
+    writeU32(out, at + 19, next.parent)
+    out[at + 23] = nameBytes.length & 255
+    out[at + 24] = (nameBytes.length >> 8) & 255
+    at += HEAD_BYTES
+    out.set(nameBytes, at)
+    at += nameBytes.length
+    if (data === null) {
       // Last name first onto the list, so the first name comes off it first.
       const entries = fs.list(next.ino).sort((a, b) => (a.name < b.name ? 1 : a.name > b.name ? -1 : 0))
       for (const e of entries) pending.push({ ino: e.ino, parent: index, name: e.name })
     } else {
-      const size = new Uint8Array(4)
-      writeU32(size, 0, st.size)
-      chunks.push(size, fs.read(next.ino, 0, st.size))
+      writeU32(out, at, data.length)
+      at += 4
+      out.set(data, at)
+      at += data.length
     }
   }
-  writeU32(count, 0, nodes)
-  return concat(chunks)
+  writeU32(out, countAt, nodes)
+  return out.slice(0, at)
 }
 
 /**

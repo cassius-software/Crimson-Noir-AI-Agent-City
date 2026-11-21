@@ -261,7 +261,8 @@ test('patterns: the matching names in order; one that matches nothing stays; quo
 })
 
 test('a pattern may match 16384 names (MATCHES_MAX) and no more', () => {
-  const k = boot(all)
+  // A disk that holds more names than the console's own does (DISK_NODES), to reach the limit.
+  const k = boot(all, { diskNodes: 1 << 16 })
   const vfs = k.system.kernel.vfs
   now(vfs.mkdir('/home/operator/m', '/', ROOT_CRED))
   for (let i = 0; i < 128; i++) {
@@ -848,6 +849,33 @@ test('the console\'s own shell: exit closes the console once and ends the line, 
   assert.equal(k.system.atPrompt, true)
   assert.deepEqual(k.sh('echo $?'), ['2'])
   assert.deepEqual(k.system.kernel.ps().map((p) => p.name), ['init', '-sh'])
+})
+
+test('the console\'s own shell: exit also gives up what was typed with it or ahead of it, as Ctrl+C does', () => {
+  const c = testCity()
+  const k = boot(all, { city: c.host })
+  assert.deepEqual(k.sh('mkdir -p /tmp/home/notes; touch /tmp/home/README; cd /tmp/home'), [])
+  // One entry over two lines (Shift+Enter, or a paste): the line after the guard never runs once the guard exits.
+  assert.deepEqual(k.sh('cd /tmp/build || exit\nrm -r *'), ['!cd: /tmp/build: no such file or directory', 'exit ran'])
+  assert.deepEqual(k.sh('echo * $?'), ['README notes 1'])
+  let before = c.calls.length
+  assert.deepEqual(k.sh('[ -f /tmp/needed ] || exit\nstats'), ['exit ran'])
+  assert.deepEqual(c.calls.slice(before), ['exit[] exit (direct)'])
+  assert.deepEqual(k.sh('exit 3\necho "after $?"'), ['exit ran'])
+  assert.deepEqual(k.sh('echo "next $?"'), ['next 3'])
+  // A line typed ahead, with its own Enter, while the exiting line still runs is dropped as well.
+  assert.deepEqual(k.sh('sleep 1; exit'), [])
+  k.system.type('rm -r *')
+  k.tick(1000)
+  before = c.calls.length
+  assert.deepEqual(k.settle(), ['exit ran'])
+  assert.deepEqual(c.calls.slice(before), ['exit[] exit (direct)'])
+  assert.deepEqual(k.sh('echo * $?'), ['README notes 0'])
+  // A job in the background that runs exit ends alone, and what is typed meanwhile still runs.
+  assert.deepEqual(k.sh('{ sleep 1; exit 4; } &').length, 1)
+  k.system.type('echo still here')
+  k.tick(1000)
+  assert.deepEqual(k.settle(), ['still here'])
 })
 
 // Ctrl+C, Ctrl+D and the console's own shell.

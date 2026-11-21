@@ -96,7 +96,11 @@ at the line's start and, in a shell line, wherever the shell starts a command (a
 like); a line the console takes whole (question 3) is dotted only at its start, since nothing later in it runs as a
 command. A secret the shell hands a console command in a form the typed text does not show (`sh -c 'ask key ...'`, a
 quoted name, a script piped to `sh`) is recorded as the command takes it, and the console dots it in every history entry
-that holds it (`OsSession.takeSecrets`, `scrubSecrets`).
+that holds it (`OsSession.takeSecrets`, `scrubSecrets`). It is found as typed, with any run of blanks standing for one
+(the shell hands a command that takes the rest of its line its words joined by one space), or as the shell read it, with
+quotes and backslashes left out of both, so `"ring0" unlock --elite correct  horse` and `"ask" key sk-'V'7` are dotted
+too. The row `history` lists for the line that runs it is dotted the same way, so `"ask" key ...; history > notes`
+writes no key to the disk. The reply to the shell's own `read` is input, as a program's is: it stays out of the history.
 
 ## The kernel
 
@@ -160,7 +164,10 @@ ordinary and error output kept apart so the console can colour them. A line is c
 once (more is refused whole: `ash: too many lines are waiting to be read`), and each read takes one line. Only the
 foreground group may read: a job left in the background that reads is told the input has ended, so it never takes a
 line meant for another. Ctrl+D on an empty line is one end of input for whoever reads; on a line with text,
-`Terminal.tsx` deletes the character after the caret (or the selection) instead, as readline does.
+`Terminal.tsx` deletes the character after the caret (both halves of an emoji together) or the selection instead, as
+readline does, and a held Ctrl+D that has just emptied the line does not go on to end the input. A write of more than
+16 KiB reaches the screen a piece at a time (`SCREEN_PIECE`), with a breath between pieces, so one line of megabytes
+cannot hold the page past its turn.
 
 ### Groups, jobs and Ctrl+C
 
@@ -226,7 +233,7 @@ user 0 at the prompt, and the permission bits still decide which files run as pr
 | --- | --- |
 | The disk at `/` | 8 MiB (8,388,608 bytes); see below for what counts |
 | One file on the disk | as large as the disk |
-| Files and directories on the disk | 65,536 |
+| Files and directories on the disk | 4,096 (`DISK_NODES`; why: "When it is saved", below) |
 | `/tmp` | 4 MiB; one file up to 4 MiB; 16,384 files and directories |
 | `/bin` | 1 MiB; files up to 4,096 bytes; 4,096 nodes; sealed once built |
 | `/usr` | 4 MiB; files up to 1 MiB; 4,096 nodes; sealed once built |
@@ -260,8 +267,9 @@ mounted.
 The body and its seal can be made apart (`System.snapshotBody`, with image.ts `sealed` and `SEAL_BYTES`). Where the
 page has the browser's own SHA-256 (`crypto.subtle`), which does not hold the page up while it works, a timed save is
 sealed with it. A save made as the page is hidden or goes is sealed at once with the layer's own (`sha.ts`), so the
-store is asked before anything else is waited for; so is every save where the browser has no digest or its digest
-fails. An image that comes back is always checked with the layer's own.
+store is asked before anything else is waited for; so is every save where the browser has no digest, and one whose
+digest fails, answers anything but a 32-byte seal, or has not answered within 4 seconds (`SEAL_MS` in `Terminal.tsx`).
+An image that comes back is always checked with the layer's own.
 
 **The store** (`consoleDisk.ts`) is one IndexedDB database of the page, `civic-simulation:console-disk`, with one
 object store, `disk`. Its row `image` holds the disk, stored with a generation number; the copies of images that
@@ -270,19 +278,24 @@ the hex of its last 8 bytes, at most 8 in all (`REFUSED_MAX`). A copy is never w
 again adds nothing. Every wait on the browser is given 4 seconds (`OPEN_MS`): opening the database and reading the
 image together, each save, and each copy set aside. A load past it is refused, as a store that could not be read
 is; a save past it answers `failed`, and a write that still lands later moves this page's generation with the
-stored one, so the page's next save is not told `stale` by its own late write. A save is one transaction that reads
-the stored generation first and writes only if it is the one this page loaded or last saved; otherwise it answers
-`stale` and writes nothing, so a second tab that fell behind never writes over the newer disk. If the store could
+stored one, so the page's next save is not told `stale` by its own late write. A save is one transaction that asks for
+the stored generation and the write together, at once (a page being closed or reloaded runs nothing after its
+`pagehide`, so a write asked for only once the read had answered would never be sent), and undoes itself, write and
+all, unless that generation is the one this page loaded or last saved; then it answers `stale` and has written nothing,
+so a second tab that fell behind never writes over the newer disk. If the store could
 not be read at all (refused, failed, or no answer), the console says so at once and every save is refused for the
 visit, because an image that may still be there must not be replaced by an empty disk. Both consoles hand the layer
 the same store; a console opened again in the same page reads the disk afresh, so it gets what was last saved.
 
 **When it is saved.** `Terminal.tsx` saves the disk 1.5 seconds after it sees a change (`SAVE_MS`; with more than 1 MiB
-in use, 1.5 seconds for each MiB, 10 seconds at most), and at once when the page is hidden. Before the page goes it
-saves at once and waits for the store's answer, 4 seconds at most, then goes anyway: before `boot` or `map` reloads the
-page, and before **Back to the city** or the cards' **Open the console** does (App.tsx `reboot`, through
-`Terminal.flushAll`). Only a disk that changed since its last image is saved; one that came back as it was saved is not
-written again.
+in use, 1.5 seconds for each MiB, and at least 50 times as long as the last image took to make, `SAVE_SPACING`, so
+saving a disk of many small files takes no more than a fiftieth of the page's time; 10 seconds at most), and at once
+when the page is hidden, which a reload or a closed tab is too. Before the page goes it saves at once and waits for the
+store's answer, 4 seconds at most, then goes anyway: before `boot` or `map` reloads the page, and before **Back to the
+city** or the cards' **Open the console** does (App.tsx `reboot`, through `Terminal.flushAll`). It waits once: when the
+store did not answer in time, the page's own reload that follows goes at once. Only a disk that changed since its last
+image is saved; one that came back as it was saved is not written again. The image is made on the page's own thread
+(`System.snapshotBody`, about 2 ms for a disk of 4,096 files on a laptop), which is why the disk holds no more.
 
 **What the system does with what it is given.** Until the store has answered, the system waits (`waiting`): nothing
 is laid out, and typed lines wait. Then it is one of:
@@ -335,7 +348,9 @@ short:
   over.
 - **Exit:** `exit` at the console's own shell closes the console (`exit` is the console's word for that) and gives up
   the rest of the line and of any file read with `source` on the way, so `cd /nowhere || exit; rm -r *` removes nothing,
-  `while true; do exit; done` closes the console once, and the next prompt's `$?` is the status `exit` was given. In a
+  `while true; do exit; done` closes the console once, and the next prompt's `$?` is the status `exit` was given. What
+  was typed with it or ahead of it is dropped too, as with Ctrl+C: `cd /tmp/build || exit` and `rm -r *` sent as two
+  lines of one entry (Shift+Enter, or a paste) remove nothing. In a
   job sent to the background, a `$( )` or a stage of a pipe, it ends that part alone, with its status, and the console
   stays open; in a script run as a program or with `sh -c`, it ends that shell.
 - **Status:** that of the last command; 2 for a line it could not read; 127 when a command was not found; 130 after
@@ -378,7 +393,10 @@ do. The shell runs the command through the same handler the console uses, with t
   read or write of a file under `/proc/city` or `/sys/city` counted as one; the rest wait for the next turn, in order,
   and the shell waits with them. So `while true; do rain on; rain off; done` reaches the city 32 times a turn, at the
   pace of the turns, and never fills the engine's queue of commands, which drops what does not fit (the person's own
-  among them).
+  among them). A turn the console gives because an answer arrived goes on with the share it has until a frame (16 ms)
+  has passed, so a loop whose command answers at once (`memory`, over a store kept in memory) cannot run a new share on
+  each answer. Commands owed to a later turn run within that turn's time, one at least, and one owed to a line Ctrl+C
+  gives up, or to a job that has ended, is dropped rather than run for nobody.
 
 ### When a city command and a program share a name
 
@@ -606,14 +624,15 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `path.test.ts` (12): canonical paths, each limit at its edge, shell patterns in linear time.
 - `image.test.ts` (17): every kind of tree comes back exactly; the layout as documented; every corrupt or hostile
   image is refused whole and leaves the disk empty; the body and its seal made apart give the same image.
-- `system.test.ts` (19): the tree task 1 lays out; each state of the saved disk; an entry of the wrong kind at a mount
-  point moved aside under a free name; the image with or without its seal, the disk counted as saved only once it is
-  made; the bytes in use; the shell started again when it ends; Tab's lists, filtered by the word before any file is
-  checked; no saved disk, however it was left, keeps the shell from coming back.
+- `system.test.ts` (20): the tree task 1 lays out; each state of the saved disk; the count of files the disk holds; an
+  entry of the wrong kind at a mount point moved aside under a free name; the image with or without its seal, the disk
+  counted as saved only once it is made; the bytes in use; the shell started again when it ends; Tab's lists, filtered
+  by the word before any file is checked; no saved disk, however it was left, keeps the shell from coming back.
 - `parser.test.ts` (22): every construct read into the tree; console commands read the console's way; `hasOperator`
   agreeing with the shell; when more lines are needed; the nesting caps.
-- `shell.test.ts` (63): every expansion, pipelines, lists, jobs, redirections, each of its own commands, scripts,
-  console commands in pipes and lists, `exit` at the console ending the line, a sourced script and a loop, Ctrl+C and
+- `shell.test.ts` (64): every expansion, pipelines, lists, jobs, redirections, each of its own commands, scripts,
+  console commands in pipes and lists, `exit` at the console ending the line, a sourced script, a loop and what was
+  typed with it or ahead of it, Ctrl+C and
   Ctrl+D at awkward moments, and its caps.
 - `arith.test.ts` (12): sums exact or refused by name; `&&`, `||` and `? :` working out only the side they take; the
   nesting cap.
@@ -622,9 +641,9 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
   fed whole or in pieces.
 - `regex.test.ts` (30): each construct; each refusal by its message; generated patterns beside the host's matcher;
   step counts on the shapes that stall other matchers; linear growth; scans cut at every budget.
-- `fileutils.test.ts` (58), `textutils.test.ts` (59), `sysutils.test.ts` (32): the options and refusals of the file,
-  text and system programs, typed at the real shell, among them `umount` refusing the system's own mounts and `rev`
-  and `fold` working through a long line a slice at a time.
+- `fileutils.test.ts` (58), `textutils.test.ts` (60), `sysutils.test.ts` (32): the options and refusals of the file,
+  text and system programs, typed at the real shell, among them `umount` refusing the system's own mounts, `rev`
+  and `fold` working through a long line a slice at a time, and a line of megabytes reaching the screen in pieces.
 - `diff.test.ts` (21): diff, cmp and comm, with generated pairs whose output is applied back to rebuild the second
   file.
 - `grep.test.ts` (33): its options, binary files, long lines, stalling patterns, searches cut into turns and stopped
@@ -634,19 +653,21 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `programs.test.ts` (4): the gathered tables and the shape of every manual page.
 - `kit.test.ts` (0): the shared system under test; it holds no test of its own.
 
-Around the folder, `terminal/oslayer.test.ts` (34) holds the console to the gate, console commands in pipes, the city
-as files, lines typed while a program reads, Ctrl+C, Tab, the progression check (once a line, none for the console
-commands inside it), a proposal answered only at the prompt, at most 32 console commands a turn, the secrets the shell
-hands a command recorded for the history, `history` in a shell line, every fate of the disk, a save sealed by the
-host's digest or at once as the page goes and never throwing, and the wiring in `Terminal.tsx` and `App.tsx`;
-`consoleDisk.test.ts` (13) holds the store to its generations, its refusal to write over what it could not read, a
-fresh read for a console opened again, the rows an image is set aside in (never one over another, eight at most), and
+Around the folder, `terminal/oslayer.test.ts` (40) holds the console to the gate, console commands in pipes, the city as
+files, lines typed while a program reads (and the reply to `read`), Ctrl+C, Tab, the progression check (once a line,
+none for the console commands inside it), a proposal answered only at the prompt, at most 32 console commands a turn (a
+turn's share kept across answers that arrive at once, an owed command dropped with the line Ctrl+C gives up), the
+secrets the shell hands a command recorded for the history and found however they were typed, `history` in a shell line,
+every fate of the disk, a save sealed by the host's digest (or the layer's own when the host's is no seal) or at once as
+the page goes, timed, and never throwing, and the wiring in `Terminal.tsx` and `App.tsx`; `consoleDisk.test.ts` (14)
+holds the store to its generations, its write asked for with its read, its refusal to write over what it could not read,
+a fresh read for a console opened again, the rows an image is set aside in (never one over another, eight at most), and
 the 4-second bound on the read, each save and each copy, with a late write keeping the generations in step, over a
-stand-in for IndexedDB; `consoleWiring.test.ts` (7) pins from their source what Node cannot render in `Terminal.tsx`
-and `App.tsx`: what a closed console holds, Tab's row of at most 200 names, which results end a live view, the
-history's dots, Ctrl+D on a line with text, the save the page waits for before it goes, and the seal and timing of a
-save. That is 552 tests in the folder's 20 test files, and 606 with the three around it. The browser's real IndexedDB
-is not exercised by these tests.
+stand-in for IndexedDB; `consoleWiring.test.ts` (7) pins from their source what Node cannot render in `Terminal.tsx` and
+`App.tsx`: what a closed console holds, Tab's row of at most 200 names, which results end a live view, the history's
+dots, Ctrl+D on a line with text, the save the page waits for (once) before it goes, and the seal and timing of a save.
+That is 555 tests in the folder's 20 test files, and 616 with the three around it. The browser's real IndexedDB is not
+exercised by these tests.
 
 ## What it does not do yet
 
@@ -658,8 +679,9 @@ is not exercised by these tests.
 - **No programs written in Crimson Noir Script.** The `noir` command runs the console's second language as before,
   one line at a time, at the prompt or from a shell script; there is no program for it in `/bin`, so a file of it
   cannot be run as a program.
-- **`jobs` shows a job's line as typed.** A key or a token on a line sent to the background
-  (`net join <url> <token> &`) is dotted in the history, but `jobs` lists the line as it was typed, as the scrollback
-  above it already shows it.
+- **`jobs` and `ps -f` show a job's line as typed.** A key or a token on a line sent to the background
+  (`net join <url> <token> &`) is dotted in the history, but `jobs` and `ps -f` list the line as it was typed, as the
+  scrollback above it already shows it. A secret on a line that never ran its command (`false && "ask" key ...`, a
+  line with a syntax error) is dotted only in the plain forms above, since no command took it.
 - **The gaps above:** each program's page admits its own, and the shell has no functions, `case`, subshells, `set`,
   arrays, backquotes, aliases or pausing a job.

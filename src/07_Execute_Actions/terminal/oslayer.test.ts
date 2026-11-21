@@ -240,6 +240,17 @@ test('the operator tier\'s lock holds inside the shell: a console command in a p
   assert.deepEqual(b.calls.filter((c) => c.startsWith('tune')), [])
 })
 
+test('the reply to the shell\'s own read is input, as a program\'s is: kept out of the history and out of what history lists', () => {
+  const b = city()
+  const s = replSession(host())
+  const os = osOf(s)
+  assert.deepEqual(all('read x; echo "got $x"; history | tail -n 1', b, s), [])
+  assert.equal(os.system.capturing, true)
+  assert.equal(os.system.feeding, true, 'the console keeps the reply out of its history')
+  assert.deepEqual(all('help', b, s), ['got help', '    1  read x; echo "got $x"; history | tail -n 1'])
+  assert.deepEqual(b.calls, [], 'the reply reached no console command')
+})
+
 test('a line typed while a program reads the terminal is that program\'s, even when it names a console command', () => {
   const b = city()
   const s = replSession(host())
@@ -640,7 +651,7 @@ test('wiring: the page hands both consoles the one disk store; the terminal give
   assert.match(term, /os\.pump\(fullRef\.current \? OS_TURN_FULL_MS : OS_TURN_MS\)/)
   assert.match(term, /const prompt = ps1 \?\? `\$\{b\.brand\.host\}:~# `/)
   assert.match(term, /os\.system\.interrupt\(\)/)
-  assert.match(term, /if \(el\.value === ''\) endInput\(\)/)
+  assert.match(term, /if \(el\.value === ''\) \{ if \(!e\.repeat\) endInput\(\) \}/)
   assert.match(term, /window\.addEventListener\('pagehide', flush\)/)
   assert.match(term, /document\.addEventListener\('visibilitychange', hidden\)/)
   // A touch screen has no Ctrl key: the two buttons stand in for the two chords while a job has the terminal.
@@ -763,6 +774,57 @@ test('a shell loop drives the city at most CITY_TURN_MAX console commands a turn
   assert.deepEqual(printed, hours.map((h) => `${String(h).padStart(2, '0')}:00`))
 })
 
+test('the share of console commands is the host\'s turn, not one per answer: a loop whose command answers at once waits for the next turn', async () => {
+  const b = city()
+  // The swarm's memory as the city keeps it when the browser refuses storage: every answer a promise already settled.
+  b.memory = { status: () => Promise.resolve(['kept on this page']), ledger: () => Promise.resolve([]), forget: () => Promise.resolve('none') }
+  const h = host()
+  const s = replSession(h)
+  const os = osOf(s)
+  // As the terminal does: what arrives gets a turn at once.
+  os.wake = () => { if (os.busy) os.pump(4) }
+  let before = b.calls.length
+  run('while true; do memory > /dev/null; rain on; done', b, [], s)
+  for (let i = 0; i < 400; i++) await Promise.resolve()
+  const first = b.calls.length - before
+  // memory and rain each count: at most half a share of rain within the turn, however many answers arrived.
+  assert.ok(first > 0 && first <= CITY_TURN_MAX / 2, `${first} rain calls before the host's next turn`)
+  // The host's next turn, a frame later, gives the next share.
+  h.t += 16
+  before = b.calls.length
+  os.pump(4)
+  for (let i = 0; i < 400; i++) await Promise.resolve()
+  const second = b.calls.length - before
+  assert.ok(second > 0 && second <= CITY_TURN_MAX / 2, `${second} rain calls in the next turn`)
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  while (os.next() !== null) { /* shown */ }
+})
+
+test('a command owed to a later turn is dropped with the line Ctrl+C gives up, and owed commands keep to the turn\'s time', () => {
+  const t = city()
+  const h = host()
+  const u = replSession(h)
+  const os = osOf(u)
+  run([...Array(48).keys()].map((n) => `time ${n % 24}`).join('; '), t, [], u)
+  assert.equal(t.calls.length, CITY_TURN_MAX)
+  assert.equal(os.system.interrupt(), false)
+  os.pump(LINE_MS)
+  os.pump(LINE_MS)
+  while (os.next() !== null) { /* shown */ }
+  assert.equal(t.calls.length, CITY_TURN_MAX, 'nothing of the line runs after Ctrl+C')
+  // Forty jobs each owe a slow command (each takes 2 ms of the turn): a 4 ms turn runs no more than fit in it.
+  const v = city()
+  const w = replSession(h)
+  const slow = v.setClock
+  v.setClock = (hour) => { h.t += 2; slow(hour) }
+  run('for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40; do time 1 > /dev/null & done', v, [], w)
+  h.t += 16
+  const before = v.calls.length
+  osOf(w).pump(4)
+  assert.ok(v.calls.length - before <= 3, `${v.calls.length - before} slow commands in a 4 ms turn`)
+})
+
 test('a key, a token or a passphrase that a console command takes from the shell is recorded once, so the console can dot it in its history in whatever form it was typed', () => {
   const b = city()
   const s = replSession(host())
@@ -806,6 +868,35 @@ test('history run by the shell lists the line as it was typed as its last row, s
   assert.doesNotMatch(rows.join('\n'), /TOKEN123/)
 })
 
+test('a secret is dotted however its blanks, quotes or backslashes were typed, and the line that runs history lists it dotted too', () => {
+  // Blanks: the shell hands a command that takes the rest of its line its words joined by one space.
+  const history = [
+    '"ring0" unlock --elite correct  horse', "\\ring0 elite set correct \t battery", "\"ask\" key sk-'V'7", '"ask" key sk-V\\8',
+    'echo unrelated',
+  ]
+  scrubSecrets(history, ['correct horse', 'correct battery', 'sk-V7', 'sk-V8'])
+  assert.deepEqual(history, ['"ring0" unlock --elite ••••', '\\ring0 elite set ••••', '"ask" key ••••', '"ask" key ••••', 'echo unrelated'])
+  // The row history lists for the line that runs it holds no secret the same line handed a console command first.
+  const b = city()
+  const s = replSession(host())
+  const listing = (line: string): string[] => {
+    const out = texts(run(line, b, [], s))
+    for (let r = osOf(s).next(); r !== null; r = osOf(s).next()) out.push(...texts(r))
+    return out
+  }
+  for (const line of ["sh -c 'ask key sk-HIDDEN1'; history | cat", '"ask" key sk-HIDDEN2; history | cat', 'true\n\ufeffask key sk-HIDDEN3\nhistory | cat']) {
+    const listed = listing(line).join('\n')
+    assert.doesNotMatch(listed, /HIDDEN/, line)
+    assert.match(listed, /••••/, line)
+  }
+  // So nothing of it reaches a file on the saved disk either.
+  all('"ask" key sk-HOME6; history > ~/h.txt', b, s)
+  assert.doesNotMatch(all('cat ~/h.txt', b, s).join('\n'), /HOME6/)
+  // An empty line that ends a continuation does not make history list the shell's word in place of what was typed.
+  all('history | tail -n 1 \\', b, s)
+  assert.deepEqual(all('', b, s), ['    1  history | tail -n 1 \\'])
+})
+
 test('Tab asks the system only for the programs that start with the word, so a large directory on the path is not checked file by file', () => {
   const b = city()
   const s = replSession(host())
@@ -838,6 +929,42 @@ test('a save is sealed with the host\'s own digest when it has one, and the next
   await settle(next)
   assert.equal(osOf(next).system.state, 'restored')
   assert.deepEqual(all('cat note', b, next), ['sealed'])
+})
+
+test('a host digest that answers a seal of the wrong length is replaced by the layer\'s own: the save is kept, and three in a row lose nothing', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const h = host(disk.open())
+  h.digest = async () => new Uint8Array(20)
+  const s = replSession(h)
+  await settle(s)
+  const os = osOf(s)
+  for (const n of [1, 2, 3, 4]) {
+    all(`echo ${n} > n${n}`, b, s)
+    await os.save()
+    assert.equal(os.unsavedChanges, false, `save ${n} kept`)
+  }
+  assert.doesNotMatch((await settle(s)).join('\n'), /not kept/)
+  const next = replSession(host(disk.open()))
+  await settle(next)
+  assert.equal(osOf(next).system.state, 'restored')
+  assert.deepEqual(all('cat n4', b, next), ['4'])
+})
+
+test('the layer says how long its last image took to make, so the host can space its saves to match', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const h = host(disk.open())
+  const s = replSession(h)
+  await settle(s)
+  const os = osOf(s)
+  assert.equal(os.saveCost, 0, 'nothing made yet')
+  all('echo x > x', b, s)
+  // Each read of the clock while the image is made moves it 3 ms.
+  const snapshot = os.system.snapshotBody.bind(os.system)
+  os.system.snapshotBody = () => { h.t += 3; return snapshot() }
+  await os.save()
+  assert.equal(os.saveCost, 3)
 })
 
 test('a save asked for as the page goes is sealed at once and reaches the store before anything is awaited, even while another waits for its seal', async () => {

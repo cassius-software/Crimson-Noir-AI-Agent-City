@@ -43,7 +43,7 @@ import type { QualityState, RecordingState } from '../../05_Observe_Environment/
 import type { SwarmReport, SwarmStatus } from '../../08_Swarm/orchestrator.ts'
 import { Machine } from './repl.ts'
 import { ELITE_LIMITS, EMPTY_TABLES, NoirSession, type NoirHost, type NoirTables } from './noirscript/index.ts'
-import { BUILTIN_NAMES, Later, MANUAL, OsError, PROGRAMS, System, hasOperator, sealed, sha256, type CityHost, type CityLine, type CityResult, type TtyEvent } from './os/index.ts'
+import { BUILTIN_NAMES, Later, MANUAL, OsError, PROGRAMS, SEAL_BYTES, System, hasOperator, sealed, sha256, type CityHost, type CityLine, type CityResult, type TtyEvent } from './os/index.ts'
 import { CITY_MANUAL, cityFiles } from './cityfs.ts'
 
 /** The roster's pronoun choices, as its usage line names them (08_Swarm/roster.ts PRONOUNS; roster.test.ts pins the two). */
@@ -236,6 +236,12 @@ export const LINE_MS = 30
  * not fit (the player's own among them).
  */
 export const CITY_TURN_MAX = 32
+/**
+ * A turn's share lasts this long (a frame) when the turn was given because something the layer waited for arrived: a
+ * loop whose command answers at once (a promise already settled) would otherwise get a new share on every answer and
+ * never let the page draw.
+ */
+const SHARE_MS = 16
 
 /** What the console says when the shell would answer a proposal: only a person at the prompt does. */
 const ANSWERED_AT_THE_PROMPT = 'act: a proposal is answered at the prompt: type act ok, act no, y or n on its own'
@@ -294,18 +300,22 @@ export class OsSession {
   /** The bridge and the history of the line being run: the shell runs the city's commands with these. */
   bridge: TerminalBridge
   history: readonly string[] = []
-  /**
-   * The line being run as the history keeps it (secrets dotted), set by `run`: what `history` lists as its last row
-   * when the shell runs it, as it does when the line is typed alone. Empty until a line is typed.
-   */
-  typed = ''
+  /** The line being run as the history keeps it, and the secrets console commands took from the shell since it was set. */
+  private line = ''
+  private lineSecrets: string[] = []
   private readonly clock: () => number
   private readonly store: DiskStore | null
   private readonly digest: ((bytes: Uint8Array) => Promise<Uint8Array>) | null
-  /** Console commands (and city files) run in this turn of the layer, against CITY_TURN_MAX. */
+  /** Console commands (and city files) run in this turn's share, against CITY_TURN_MAX, and when that share began. */
   private calls = 0
-  /** Console commands past the turn's share, oldest first: each runs at the start of a later turn. */
-  private readonly owed: (() => void)[] = []
+  private shareFrom = Number.NEGATIVE_INFINITY
+  /** Whether the next turn is given because something the layer waited for arrived (rouse), not by the host's own timer or a key. */
+  private roused = false
+  /**
+   * Console commands past the turn's share, oldest first: each runs at the start of a later turn. Each answers whether
+   * it ran (one whose shell gave up waiting for it, at Ctrl+C or when its job ended, is dropped instead).
+   */
+  private readonly owed: (() => boolean)[] = []
   /** Secrets console commands took from the shell since the console last asked (takeSecrets). */
   private secrets: string[] = []
   /** What the layer printed, in order, each entry one result for the console to show. */
@@ -322,6 +332,8 @@ export class OsSession {
    */
   private sealing: { readonly body: Uint8Array; taken: Promise<void> | null } | null = null
   private failures = 0
+  /** Milliseconds the last image took to make (saveCost). */
+  private cost = 0
   /** The body of an image whose save failed, to try again before a newer one is made. */
   private unsaved: Uint8Array | null = null
   /** A saved disk that failed its checks: seen, and, until its copy is kept, a reason not to save over it. */
@@ -350,7 +362,7 @@ export class OsSession {
      */
     const handled = (name: string, args: string[], line: string): CommandResult => {
       // `history` lists the line as typed (and as the history keeps it), not the shell's words for the command.
-      const said = name === 'history' && this.typed !== '' ? this.typed : line
+      const said = name === 'history' && this.line !== '' ? this.typed : line
       try {
         return HANDLERS[name as Name](args, this.bridge, this.history, said, session)
       } catch (e) {
@@ -365,15 +377,23 @@ export class OsSession {
         // A secret the shell hands a command is recorded at once, whether or not the command takes it, so the console
         // can dot it in the history in whatever form it was typed (quoted, after `sh -c`, read from a pipe).
         const secret = secretOf(name, a)
-        if (secret !== null) this.secrets.push(secret)
+        if (secret !== null) {
+          this.secrets.push(secret)
+          this.lineSecrets.push(secret)
+        }
         const answered = decides(name, a)
-        const made = answered ? fail(ANSWERED_AT_THE_PROMPT) : this.paced(() => handled(name, a, line))
+        // What the shell waits for when the command is owed to a later turn. When the shell gives the wait up (it settles
+        // this itself), its task ends, or a Ctrl+C it has yet to notice will make it, the owed command is dropped, not
+        // run for nobody.
+        const lines = new Later<readonly CityLine[]>()
+        const by = this.system.running
+        const made = answered ? fail(ANSWERED_AT_THE_PROMPT) : this.paced(() => handled(name, a, line), () => !lines.done && !this.system.givesUp(by))
         if (!(made instanceof Later)) {
           const r = made
           let later: Later<readonly CityLine[]> | null = null
           if (r.pending) {
             const settle = new Later<readonly CityLine[]>()
-            r.pending.then((lines) => settle.resolve(lines.map(cityLine)), () => settle.resolve([])).then(() => this.wake?.())
+            r.pending.then((lines) => settle.resolve(lines.map(cityLine)), () => settle.resolve([])).then(() => this.rouse())
             later = settle
           }
           // Straight to the console: the console shows the result itself, exactly as if the line had been typed alone.
@@ -385,7 +405,6 @@ export class OsSession {
         // the console, its result is then queued for the console in the order the shell would have posted it (the
         // shell posts nothing now); either way the lines the shell waits for are all of its lines, so a pipe gets them
         // and the status counts an error among them.
-        const lines = new Later<readonly CityLine[]>()
         made.settled((from) => {
           const r = from.value
           if (from.error !== null || r === undefined) {
@@ -395,7 +414,7 @@ export class OsSession {
           if (direct) this.queue.push(r)
           const first = r.lines.map(cityLine)
           if (!r.pending) { lines.resolve(first); return }
-          r.pending.then((more) => lines.resolve([...first, ...more.map(cityLine)]), () => lines.resolve(first)).then(() => this.wake?.())
+          r.pending.then((more) => lines.resolve([...first, ...more.map(cityLine)]), () => lines.resolve(first)).then(() => this.rouse())
         })
         return direct ? { lines: [], later: lines, post: null, status: 0 } : { lines: [], later: lines }
       },
@@ -404,7 +423,10 @@ export class OsSession {
       bridge: () => this.bridge,
       command: (name, args) => (decides(name, args) ? [err(ANSWERED_AT_THE_PROMPT)]
         : Object.hasOwn(HANDLERS, name) ? handled(name, [...args], [name, ...args].join(' ')).lines : [err(`${name}: not found`)]),
-      paced: (job) => this.paced(job),
+      paced: (job) => {
+        const by = this.system.running
+        return this.paced(job, () => !this.system.givesUp(by))
+      },
       tuning: () => {
         try {
           const op = this.bridge.operator
@@ -444,13 +466,24 @@ export class OsSession {
 
   /** Gives the layer a turn of at most `ms` milliseconds and queues what it printed. */
   pump(ms: number): void {
-    // A new turn: the console commands owed from earlier turns run first, in order, within the turn's share.
-    this.calls = 0
-    while (this.owed.length > 0 && this.calls < CITY_TURN_MAX) {
-      this.calls++
-      this.owed.shift()!()
+    const start = this.clock()
+    const deadline = start + ms
+    // A new share of console commands comes with each turn the host gives of its own accord (its timer, a typed line, a
+    // key); a turn given because something arrived goes on with the share it has until a frame has passed.
+    if (!this.roused || start - this.shareFrom >= SHARE_MS) {
+      this.calls = 0
+      this.shareFrom = start
     }
-    this.take(this.system.run(PUMP_STEPS, this.clock() + ms))
+    this.roused = false
+    // The console commands owed from earlier turns run first, in order, within the share and the turn's time (one at
+    // least, so a slow one still gets its turn).
+    let ran = 0
+    while (this.owed.length > 0 && this.calls < CITY_TURN_MAX && (ran === 0 || this.clock() < deadline)) {
+      if (!this.owed.shift()!()) continue
+      this.calls++
+      ran++
+    }
+    this.take(this.system.run(PUMP_STEPS, deadline))
     // A saved disk that failed its checks is copied under another name before anything is saved over it; if the copy
     // cannot be kept, the stored one is left alone and this visit's files are not kept.
     if (!this.aside && this.system.state === 'refused' && this.system.refused !== null && this.store !== null) {
@@ -460,37 +493,67 @@ export class OsSession {
         this.holding = false
         if (kept) this.note('disk: the saved disk failed its check and was set aside; this is a new, empty one')
         else this.lose('the saved disk failed its check and could not be copied aside, so it is left where it is')
-        this.wake?.()
+        this.rouse()
       })
     }
+  }
+
+  /** Something the layer waited for from outside arrived: the host is asked for a turn (one that goes on with the share it has). */
+  private rouse(): void {
+    this.roused = true
+    this.wake?.()
   }
 
   /**
    * Runs `job` (a console command, or a city file read or written) now while this turn's share of them lasts and none
    * is owed from before; else owes it to a later turn and answers with a Later that holds what it gives then (or its
-   * refusal). A job that answers with a Later of its own is waited for.
+   * refusal). A job that answers with a Later of its own is waited for. An owed job that is no longer `wanted` by then
+   * is dropped, refused as interrupted.
    */
-  private paced<T>(job: () => T | Later<T>): T | Later<T> {
+  private paced<T>(job: () => T | Later<T>, wanted: () => boolean = () => true): T | Later<T> {
     if (this.owed.length === 0 && this.calls < CITY_TURN_MAX) {
       this.calls++
       return job()
     }
     const later = new Later<T>()
     this.owed.push(() => {
+      if (!wanted()) {
+        later.reject(new OsError('EINTR'))
+        return false
+      }
       let got: T | Later<T>
       try {
         got = job()
       } catch (e) {
         later.reject(e instanceof OsError ? e : new OsError('EIO', message(e)))
-        return
+        return true
       }
-      if (!(got instanceof Later)) { later.resolve(got); return }
+      if (!(got instanceof Later)) { later.resolve(got); return true }
       got.settled((from) => {
         if (from.error !== null) later.reject(from.error)
         else later.resolve(from.value as T)
       })
+      return true
     })
     return later
+  }
+
+  /**
+   * The line being run as the history keeps it (secrets dotted), set by `run`: what `history` lists as its last row
+   * when the shell runs it, as it does when the line is typed alone. Empty until a line is typed. Read back, it is also
+   * dotted where it holds a secret a console command took from the shell since it was set, as the console's history
+   * then is (`"ask" key ...; history > f` writes no key).
+   */
+  get typed(): string {
+    if (this.lineSecrets.length === 0) return this.line
+    const kept = [this.line]
+    scrubSecrets(kept, this.lineSecrets)
+    return kept[0]
+  }
+
+  set typed(line: string) {
+    this.line = line
+    this.lineSecrets = []
   }
 
   /** The secrets console commands took from the shell since the last call, oldest first (each handed over once). */
@@ -567,7 +630,7 @@ export class OsSession {
       // The body that waits for its seal is sealed here, or a newer one is when the disk changed since: it holds both.
       let body = sealing.body
       try {
-        body = this.system.snapshotBody() ?? body
+        body = this.image() ?? body
       } catch {
         // The newer image could not be made: the waiting one still holds what it held, and the change stays owed.
       }
@@ -584,7 +647,7 @@ export class OsSession {
     // The disk as it is now when it changed since; else the body of the image whose save failed.
     let body: Uint8Array | null
     try {
-      body = this.system.snapshotBody() ?? this.unsaved
+      body = this.image() ?? this.unsaved
     } catch {
       this.failed()
       return Promise.resolve()
@@ -597,6 +660,21 @@ export class OsSession {
     this.unsaved = null
     return this.put(store, body, now)
   }
+
+  /** The disk's image without its seal when it changed (System.snapshotBody), timed for saveCost. */
+  private image(): Uint8Array | null {
+    const start = this.clock()
+    const body = this.system.snapshotBody()
+    // Only an image made counts: asking a disk that has not changed costs nothing and says nothing of the next save.
+    if (body !== null) this.cost = Math.max(0, this.clock() - start)
+    return body
+  }
+
+  /**
+   * Milliseconds the last image of the disk took to make, on the page's own thread (0 before the first): a host spaces
+   * its saves by it, so saving a disk of many files never takes more than a small part of the page's time.
+   */
+  get saveCost(): number { return this.cost }
 
   /**
    * Seals `body` and hands the image to the store, then acts on the answer. Sealed here when `now` or the host has no
@@ -629,7 +707,8 @@ export class OsSession {
       const own = (): Uint8Array => sealed(body, sha256(body))
       let sealing: Promise<Uint8Array>
       try {
-        sealing = digest(body).then((seal) => sealed(body, seal), own)
+        // A seal that is not one (the wrong length, not bytes) is the host's fault, not the store's: the layer's own is used.
+        sealing = digest(body).then((seal) => (seal instanceof Uint8Array && seal.length === SEAL_BYTES ? sealed(body, seal) : own()), own)
       } catch {
         sealing = Promise.resolve().then(own)
       }
@@ -2763,7 +2842,9 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
     // program's input never enters the history, so the line whose command reads it stays the one listed.
     const capturing = os.system.capturing
     if (!os.system.feeding) {
-      os.typed = redactForHistory(capturing ? input : input.trim(), !capturing && runsWhole(input))
+      // An empty line (one that ends a continuation, say) leaves the line the history holds as it was.
+      const kept = redactForHistory(capturing ? input : input.trim(), !capturing && runsWhole(input))
+      if (kept.trim() !== '') os.typed = kept
     }
     // Something already running reads the terminal (a program's input, the rest of a command the shell is reading):
     // the line is its, whatever it says.
@@ -2818,11 +2899,12 @@ function shellLine(os: OsSession, input: string, earn: TerminalBridge | null): C
  * Where a console command may start inside a line, since the shell runs one anywhere a command goes
  * (`true && ask key <key>`): at the line's start, after `;`, `|`, `&`, `(`, a line end or a backquote, or after a word
  * such as `then` or `do`, with any blanks between. `echo ask key x` holds no command there and is kept as typed. The
- * blanks after the start are spaces and tabs only: a run of line ends is covered from its last line end (itself a
- * start), and a start that could run over line ends would be tried from every one of them, which takes time that grows
- * with the square of the run's length.
+ * blanks after the start are spaces, tabs and a byte order mark (the layer's decoder drops one at a line's start, so the
+ * shell runs what follows it): a run of line ends is covered from its last line end (itself a start), and a start that
+ * could run over line ends would be tried from every one of them, which takes time that grows with the square of the
+ * run's length.
  */
-const COMMAND_START = String.raw`((?:^|[;&|(\n\x60]|(?:^|\s)(?:if|then|elif|else|do|while|until|!|\{)\s)[ \t]*)`
+const COMMAND_START = String.raw`((?:^|[;&|(\n\x60]|(?:^|\s)(?:if|then|elif|else|do|while|until|!|\{)\s)[ \t\uFEFF]*)`
 
 /** The forms that carry a secret, each as (where the command starts, what is kept), the secret and the rest after it. */
 const SECRET_FORMS: readonly RegExp[] = [
@@ -2869,19 +2951,52 @@ export function runsWhole(line: string): boolean {
   return head !== null && RAW.has(head[1])
 }
 
+/** The characters the shell takes out of a word (quotes and the backslash): `sk-'V'7` and `sk-V\\7` both hand over sk-V7. */
+const QUOTING = /['"\\]/
+
+/** A pattern for `secret` in which any run of blanks matches any other (the shell joins words with one space). */
+function secretPattern(secret: string): RegExp | null {
+  const words = secret.split(/\s+/).filter((w) => w !== '')
+  return words.length === 0 ? null : new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'))
+}
+
 /**
- * Dots secrets in the history, in place: in each entry that holds one of `secrets` as written, the entry is kept up to
- * the first place any of them starts, and that place and everything after it become dots. An empty secret is passed
- * over. For a secret the shell handed a console command (OsSession.takeSecrets) in a form redactForHistory could not
- * see in the typed line.
+ * Where `secret` starts in `entry`, or -1: as written (any run of blanks matching any other), else as the shell read
+ * both, with their quotes and backslashes taken out.
+ */
+function secretAt(entry: string, secret: string): number {
+  const written = secretPattern(secret)
+  if (written === null) return -1
+  const found = written.exec(entry)
+  if (found) return found.index
+  if (!QUOTING.test(entry)) return -1
+  const loose = secretPattern(secret.split('').filter((ch) => !QUOTING.test(ch)).join(''))
+  if (loose === null) return -1
+  // The entry without its quoting, and where each character it keeps stood.
+  const stood: number[] = []
+  let bare = ''
+  for (let i = 0; i < entry.length; i++) {
+    if (QUOTING.test(entry[i])) continue
+    stood.push(i)
+    bare += entry[i]
+  }
+  const read = loose.exec(bare)
+  return read ? stood[read.index] : -1
+}
+
+/**
+ * Dots secrets in the history, in place: in each entry that holds one of `secrets`, the entry is kept up to the first
+ * place any of them starts, and that place and everything after it become dots. A secret is found as written, with any
+ * run of blanks for one (a command that takes the rest of its line is handed its words joined by one space), or as the
+ * shell read it, quotes and backslashes left out of both. An empty secret is passed over. For a secret the shell handed
+ * a console command (OsSession.takeSecrets) in a form redactForHistory could not see in the typed line.
  */
 export function scrubSecrets(history: string[], secrets: readonly string[]): void {
   for (let i = 0; i < history.length; i++) {
     const entry = history[i]
     let cut = -1
     for (const secret of secrets) {
-      if (secret === '') continue
-      const at = entry.indexOf(secret)
+      const at = secretAt(entry, secret)
       if (at >= 0 && (cut < 0 || at < cut)) cut = at
     }
     if (cut >= 0) history[i] = `${entry.slice(0, cut)}••••`
