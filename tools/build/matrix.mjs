@@ -13,11 +13,13 @@
  * version 1.0.0-stable-beta carries a pre-release tag, which WiX and rpm refuse in a version: the .msi takes the
  * numbers alone (1.0.0) and the .rpm the numbers as its Version with the tag in its Release (0.stable.beta), while
  * the app inside each says its full version (installerVersion, rpmRelease). Nothing here is signed: the Windows and Linux
- * files run as they are; the macOS app is unsigned (open it with right-click › Open the first time), the .apk is
- * signed with the Android debug key unless CRIMSON_ANDROID_KEYSTORE names a keystore, and the .ipa is unsigned (a
- * free Apple ID and a sideloading tool re-sign it; the App Store needs a paid account). Which browser engine the
- * shell gets, and whether it has WebGPU, is the platform's: WebView2 on Windows, WebKitGTK on Linux, WKWebView on
- * macOS and iOS, the Android System WebView; only Windows has been run so far (MANUAL.md, The build matrix).
+ * files run as they are; the macOS app is unsigned (Gatekeeper refuses it at first: `xattr -dr
+ * com.apple.quarantine` on the .app, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up
+ * to macOS 14; not tried on a Mac), the .apk is signed with the Android debug key unless CRIMSON_ANDROID_KEYSTORE
+ * names a keystore, and the .ipa is unsigned (a free Apple ID and a sideloading tool re-sign it; the App Store needs
+ * a paid account). Which browser engine the shell gets, and whether it has WebGPU, is the platform's: WebView2 on
+ * Windows, WebKitGTK on Linux, WKWebView on macOS and iOS, the Android System WebView; only Windows has been run so far
+ * (MANUAL.md, The build matrix).
  * The script is plain Node, like tools/verify/fvps.mjs: it runs programs with argument vectors (never a shell), so it
  * works the same from cmd.exe, PowerShell and a POSIX shell; .github/workflows/build-matrix.yml runs it on GitHub's
  * runners, one job per target, and publishes the files as workflow artifacts (and onto a tag's release).
@@ -32,6 +34,7 @@
  * the Windows app and the OS media.
  */
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -109,6 +112,11 @@ export function modelResources() {
   return Object.keys(JSON.parse(readFileSync(join(ROOT, MODEL_CONFIG), 'utf8')).bundle.resources)
 }
 
+/** The model, its LICENSE and its NOTICE must be in src-tauri/models/ before a model-carrying build starts. */
+function modelNeeds() {
+  return modelResources().map((r) => ({ kind: 'need', path: join(ROOT, 'src-tauri', r), hint: 'node tools/web/siteModel.mjs app --from <the folder holding the app\'s model> puts it there, checked' }))
+}
+
 /**
  * A Linux desktop build: the runner compiled in (cargo feature native-runner: llama.cpp in the app's own process,
  * src-tauri/src/runner.rs), the model and its licence checked present, the .deb and the .AppImage with the model, the
@@ -118,10 +126,53 @@ export function modelResources() {
 function linuxPlan(version) {
   const release = join(ROOT, 'src-tauri', 'target', 'release')
   return [
-    ...modelResources().map((r) => ({ kind: 'need', path: join(ROOT, 'src-tauri', r), hint: 'node tools/web/siteModel.mjs app --from <the folder holding the app\'s model> puts it there, checked' })),
+    ...modelNeeds(),
     tauri('build', '--config', NO_PAGE_BUILD, '--config', MODEL_CONFIG, '--features', 'native-runner', '--bundles', 'deb,appimage'),
     { kind: 'tidy', paths: () => [...dirsIn(join(release, 'bundle', 'deb')), ...dirsIn(join(release, 'bundle', 'appimage')), join(release, 'models')], what: 'the staging copies of the model (the .deb\'s folder, the AppDir, the copy beside the binary)' },
     rpmStep(version),
+  ]
+}
+
+/** The macOS app's lowest macOS (src-tauri/tauri.conf.json bundle.macOS.minimumSystemVersion): llama.cpp needs 10.15. */
+export const MAC_MINIMUM = JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.macOS.minimumSystemVersion
+
+/** The CMake file that sets llama.cpp's options for the Intel slice alone (its header says why and how). */
+export const MAC_SLICES = 'tools/build/macos-slices.cmake'
+
+/**
+ * The environment of the macOS build, which reaches both slices' cargo builds alike (Tauri runs one per slice):
+ * - CMAKE_PROJECT_ggml_INCLUDE: MAC_SLICES, which llama-cpp-sys-2 hands to CMake (it passes every CMAKE_* variable)
+ *   and which acts on the x86_64 slice alone;
+ * - GGML_SLICES_SHA256: that file's hash. llama-cpp-sys-2 rebuilds llama.cpp when a GGML_* variable changes, not a
+ *   CMAKE_* one, so an edited MAC_SLICES rebuilds both slices instead of keeping a cached build of the old one (CMake
+ *   reports the variable as unused);
+ * - MACOSX_DEPLOYMENT_TARGET: MAC_MINIMUM, the value Tauri itself exports from minimumSystemVersion for the build, so
+ *   rustc, cc and CMake (which reads it for CMAKE_OSX_DEPLOYMENT_TARGET) target the same macOS: ggml's
+ *   std::filesystem needs 10.15, and the Intel slice's default would be 10.12;
+ * - CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: llama.cpp's HTTP library must not find a Homebrew OpenSSL (as on Linux).
+ */
+export function macEnv() {
+  const slices = join(ROOT, MAC_SLICES)
+  return {
+    CMAKE_PROJECT_ggml_INCLUDE: slices,
+    GGML_SLICES_SHA256: createHash('sha256').update(readFileSync(slices)).digest('hex'),
+    MACOSX_DEPLOYMENT_TARGET: MAC_MINIMUM,
+    CMAKE_DISABLE_FIND_PACKAGE_OpenSSL: 'ON',
+  }
+}
+
+/**
+ * The macOS build: the runner compiled into both slices of the universal binary (Metal on Apple silicon, the processor
+ * alone on Intel: macEnv), the model and its licence checked present, the .app and the .dmg with the model, then the
+ * copies of the model Tauri's build step leaves beside each slice's binary removed.
+ */
+function macPlan() {
+  const release = (triple) => join(ROOT, 'src-tauri', 'target', triple, 'release')
+  return [
+    ...modelNeeds(),
+    rustupTarget(TRIPLES.macArm64, TRIPLES.macX64),
+    { ...tauri('build', '--config', NO_PAGE_BUILD, '--config', MODEL_CONFIG, '--features', 'native-runner', '--target', TRIPLES.macUniversal, '--bundles', 'app,dmg'), env: macEnv() },
+    { kind: 'tidy', paths: () => [join(release(TRIPLES.macArm64), 'models'), join(release(TRIPLES.macX64), 'models')], what: 'the copies of the model beside each slice\'s binary' },
   ]
 }
 
@@ -154,10 +205,11 @@ const NO_PAGE_BUILD = JSON.stringify({ build: { beforeBuildCommand: '' } })
  * `arch`: the host architecture it needs (process.arch), absent where the host's architecture does not matter (a
  * cross-compiled or interpreted target); `tools`: the programs that must be on PATH; `env`: the variables that must be
  * set; `plan(ctx)`: the steps, each a program and its argument vector; `collect(ctx)`: the files it leaves, as
- * [source path, published name]; `move`: those files are moved into the output folder, not copied (the Linux packages,
- * each carrying the model); `page`: false for a target that does not carry the page; `unsupported`: the reason no
- * machine builds it yet (none today). Besides programs, a plan's steps are `need` (a file that must be there, with how
- * to put it there) and `tidy` (folders removed once used).
+ * [source path, published name]; `move`: those files are moved into the output folder, not copied (the Linux packages
+ * and the macOS .dmg, each carrying the model); `page`: false for a target that does not carry the page;
+ * `unsupported`: the reason no machine builds it yet (none today). A program step may carry `env`, variables set for
+ * that program alone (the macOS build's: macEnv). Besides programs, a plan's steps are `need` (a file that must be
+ * there, with how to put it there) and `tidy` (folders removed once used).
  */
 export const TARGETS = Object.freeze([
   {
@@ -199,14 +251,15 @@ export const TARGETS = Object.freeze([
     note: 'no cross-compilation (WebKitGTK must be the target\'s own): build-matrix.yml runs it on ubuntu-22.04-arm; llama.cpp is built for the base armv8-a there, so it runs on every 64-bit Arm board but more slowly (not measured)',
   },
   {
-    id: 'macos-universal', artifact: 'macOS universal (Apple silicon and Intel in one): .app (zipped) and .dmg, unsigned', hosts: ['darwin'],
-    tools: ['cargo', 'rustup', 'xcodebuild'],
-    plan: () => [rustupTarget(TRIPLES.macArm64, TRIPLES.macX64), tauri('build', '--config', NO_PAGE_BUILD, '--target', TRIPLES.macUniversal, '--bundles', 'app,dmg')],
+    id: 'macos-universal', artifact: 'macOS universal (Apple silicon and Intel in one): .app (zipped) and .dmg, unsigned, each carrying the app\'s model and running it in the app', hosts: ['darwin'],
+    tools: ['cargo', 'rustup', 'xcodebuild', 'cmake'],
+    plan: () => macPlan(),
     collect: ({ out }) => [
       ...globs(join(ROOT, `src-tauri/target/${TRIPLES.macUniversal}/release/bundle/dmg`), (n) => n.endsWith('.dmg')),
       ...globs(join(ROOT, `src-tauri/target/${TRIPLES.macUniversal}/release/bundle/macos`), (n) => n.endsWith('.app')).map(([p, n]) => [zipDir(p, join(out, 'macos-universal'), `${n}.zip`), `${n}.zip`]),
     ],
-    note: 'unsigned and not notarized (no Apple Developer account): Gatekeeper asks once; open it with right-click > Open, or `xattr -d com.apple.quarantine`; not run on a Mac yet',
+    move: true,
+    note: 'unsigned and not notarized (no Apple Developer account): Gatekeeper refuses it at first: run `xattr -dr com.apple.quarantine` on the .app, or use Privacy & Security > Open Anyway (macOS 15 on; right-click > Open up to macOS 14); not tried on a Mac; macOS 11 or later; the plan puts the model on Metal on Apple silicon and on the processor alone on an Intel Mac with AVX2; not run on a Mac yet',
   },
   {
     id: 'android-apk', artifact: 'Android (arm64-v8a): .apk, signed with the debug key unless CRIMSON_ANDROID_KEYSTORE names one', hosts: ['linux', 'darwin', 'win32'],
@@ -322,12 +375,20 @@ function run(cmd, argv, opts = {}) {
 
 const show = (cmd, argv, cwd) => `${cwd && cwd !== ROOT ? `(in ${relative(ROOT, cwd)}) ` : ''}${basename(cmd)} ${argv.map((a) => (/[\s"{}]/.test(a) ? JSON.stringify(a) : a)).join(' ')}`
 
-/** The macOS .app (a directory) as one zip, with ditto (keeps the bundle's resource forks and permissions). */
+/**
+ * The ditto arguments that zip the macOS .app: its resource forks and permissions kept, and stored, not deflated
+ * (--zlibCompressionLevel 0): the app is mostly the model, which does not compress, and the upload stores it as it is.
+ */
+export function zipArgs(dir, zip) {
+  return ['-c', '-k', '--keepParent', '--zlibCompressionLevel', '0', dir, zip]
+}
+
+/** The macOS .app (a directory) as one zip, with ditto (zipArgs). */
 function zipDir(dir, outDir, name) {
   mkdirSync(outDir, { recursive: true })
   const zip = join(outDir, name)
   rmSync(zip, { force: true })
-  const r = run('ditto', ['-c', '-k', '--keepParent', dir, zip])
+  const r = run('ditto', zipArgs(dir, zip))
   if (!r.ok) throw new Error(`ditto could not zip ${dir}: ${r.err || r.out}`)
   return zip
 }
@@ -491,6 +552,7 @@ export function main(argv) {
       for (const s of t.plan(ctx)) {
         if (s.kind === 'run') {
           console.log(`  ${show(s.cmd, s.argv, s.cwd)}`)
+          for (const [k, v] of Object.entries(s.env ?? {})) console.log(`    with ${k}=${v}`)
           if (dryRun) continue
           const r = run(s.cmd, s.argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } })
           if (!r.ok) throw new Error(`${show(s.cmd, s.argv, s.cwd)} failed`)

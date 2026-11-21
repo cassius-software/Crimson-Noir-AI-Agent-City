@@ -2741,9 +2741,10 @@ them that answers (`auto`):
   stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
   page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
   model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
-  app runs no model (the Windows and macOS apps answer the runner's commands with none), it lists nothing and an
-  answer is told there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) has the
-  runner and carries Qwen2.5 1.5B Instruct for it (The Linux app's model, below).
+  app runs no model (the Windows app answers the runner's commands with none), it lists nothing and an answer is told
+  there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) and the macOS app (its
+  `.dmg` and zipped `.app`) have the runner and carry Qwen2.5 1.5B Instruct for it (The Linux app's model, The macOS
+  app's model, below).
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -3122,7 +3123,8 @@ Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or 
 kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
 The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
 beside its page; the page gets it the same way (The app's model, The launcher's model, below). The Linux app's packages
-carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, below).
+and the macOS app carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, The
+macOS app's model, below).
 `dist/index.html`, the bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
@@ -3267,8 +3269,9 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
   each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
   installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
-  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Android
-  and iPhone apps carry no model yet; the Linux app carries the same file and runs it itself (the next entry).
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Android and
+  iPhone apps carry no model yet; the Linux and macOS apps carry the same file and run it themselves (the next two
+  entries).
 - **The Linux app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
   `tools/build/linuxAudit.mjs`). The Linux app's `.deb`, `.rpm` and `.AppImage` (the build matrix's `linux-x64` and
   `linux-arm64`) carry the same file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, about 0.9 GB; each
@@ -3308,7 +3311,7 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
     within the minute the card keeps asking (When the city cannot start).
 
   What is verified: the overlay naming the model, its licence and notice, and llama.cpp's texts for every Linux package
-  (`siteModel.test.ts`), the build steps, the Linux-only feature and the checks' order (`buildMatrix.test.ts`), each
+  (`siteModel.test.ts`), the build steps, the Linux jobs' feature and the checks' order (`buildMatrix.test.ts`), each
   check of `linuxAudit.mjs` and that each can fail (`linuxAudit.test.ts`), the packaged run's script
   (`nativeRunner.test.ts`) and the runner's own Rust tests. Rehearsed in the container that wrote it, with the tiny
   test model in place of the real one: a release build as `.deb`, `.rpm` and `.AppImage`, each package passing the
@@ -3322,6 +3325,60 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   real model and need GLIBC_2.34 at most, and the installed x86-64 app answered with the real model, in its console
   too, where `ask stop` typed after the first words stopped the answer (24 of 24 checks). Not verified: the app on a
   real Linux desktop, how fast it answers there, and how fast it answers on Arm.
+- **The macOS app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
+  `tools/build/macAudit.mjs`, `tools/build/macos-slices.cmake`). The macOS app (the build matrix's `macos-universal`:
+  one universal `.app` for Apple silicon and Intel, published as a `.dmg` and as a zipped `.app`) carries the same
+  file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, and runs it in its own process as the Linux app does: both slices of its
+  shell are built with the `native-runner` feature, and the page asks it through `native` (above).
+  - In the app the file is `Crimson Noir Agent City.app/Contents/Resources/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`,
+    with its `LICENSE` and `NOTICE` beside it, and llama.cpp's licence and notice are in
+    `Contents/Resources/licenses/llama.cpp/`. The app checks the file's size and SHA-256 once and stamps the check in
+    its data folder; nothing is copied into the page's storage. The `.dmg` and the zip are about 1 GB each.
+  - It needs macOS 11 (Big Sur) or later: both slices are built for it (`bundle.macOS.minimumSystemVersion` in
+    `src-tauri/tauri.conf.json`, and the same `MACOSX_DEPLOYMENT_TARGET` for Rust, cc and CMake).
+  - On Apple silicon the plan puts every layer on the GPU through Metal (`GPU` in `runner.rs`; ggml's Metal backend is
+    compiled into that slice with its shaders embedded, which `macAudit.mjs slices` checks); no Mac has run it yet. On
+    an Intel Mac the plan keeps the processor alone: that slice is built without Metal, and llama.cpp's CPU code in it
+    is built for processors with AVX2, FMA, F16C and BMI2 (about 2013 on, as on Linux x86-64). On an Intel Mac without
+    them the app still opens, but its model does not start: Sloane's card says "The model inside this app couldn’t
+    start:" and that the processor is older than the app's model needs.
+  - The app is neither signed nor notarized, so Gatekeeper refuses it at the first opening (macOS may call it damaged).
+    In Terminal, `xattr -dr com.apple.quarantine` on the `.app` clears that. On macOS 15 and later the only other
+    way is System Settings › Privacy & Security › Open Anyway after the refusal; right-click › Open works only up to
+    macOS 14. None of this has been tried on a Mac.
+  - The build matrix's macOS job fetches and checks the file as the Linux jobs do, and fails before any upload unless
+    `tools/build/macAudit.mjs` passes six checks. `package`: the `.app`, the `.app` inside the `.dmg` (attached
+    read-only) and the `.app` inside the zip each hold the model at exactly its size with its licence and notice and
+    llama.cpp's texts, nothing holds the tiny test model, and the `.dmg` and the zip are each under GitHub's 2 GiB.
+    `archs`: `lipo -archs` lists arm64 and x86_64. `libraries`: every library either slice loads (`otool -L`) is
+    macOS's own, under `/System/Library/` or `/usr/lib/`, none is OpenSSL, curl or OpenMP, and an `@rpath` library
+    must be inside the app. `minos`: neither slice needs a macOS newer than 11.0 (`otool -l`). `symbols`: each slice's
+    Apple linker map (which `src-tauri/build.rs` writes) keeps none of the download, HTTP or subprocess code of
+    llama.cpp's common library, the binary holds none of its strings, and neither slice imports a network call
+    (`nm -u -m`). `slices`: llama.cpp's build output shows Metal and no x86 flag for arm64, no Metal and the six x86
+    flags for x86_64, and only the arm64 slice holds Metal's shader strings.
+  - `native-llm.yml`'s Apple silicon job reads a few greedy tokens of the 1.5B model with the macOS plan (every layer on
+    the GPU) and prints the devices llama.cpp found and where the model's weights went, read from llama.cpp's own log of
+    its weight buffers (the GPU only when a buffer that is not the processor's holds some, so a listed GPU is not taken
+    as proof); a runner without Metal does not fail it, an answer without a token, or with no such log line, does.
+  - The city needs WebGPU from WKWebView, macOS's web view. Where it gives none, the app shows the recovery card,
+    which names WebKit; the console alone (Track B) reaches the same runner. Neither has been seen on a Mac.
+
+  What is verified: the six checks of `macAudit.mjs`, each passing a good input and failing a bad one by name, run end
+  to end over small universal Mach-O binaries built in the container with clang, ld64.lld and llvm-lipo and read with
+  llvm-otool, llvm-lipo and llvm-nm, which print as Apple's tools do (`macAudit.test.ts`; the `.dmg` is the one input
+  not made there). ld64.lld's map names archive members in classic ld64's form (`lib.rlib(member.o)`), so ld-prime's
+  (`lib.rlib[N](member.o)`, Xcode 15 on, the macOS runner's linker) is pinned from a fixture and from those maps
+  rewritten to it; the parse of a real ld-prime map is not verified until CI runs. Also verified: the build step, the
+  overlay, the per-slice settings as literals (the build step's four variables, and `macos-slices.cmake`'s condition,
+  FORCE lines and status lines), the build cache's key and the job's steps and their order (`buildMatrix.test.ts`); the
+  runner compiled for Linux and macOS alone, the plan's GPU on Apple silicon alone, the desktop test's plan, and how it
+  reads where the weights went from llama.cpp's log lines (Rust tests, `desktopShell.test.ts`, `nativeRunner.test.ts`).
+  llama.cpp's CMake configuration was run in the container for each slice as Darwin with `macos-slices.cmake`: the
+  x86_64 slice printed Metal off and the six flags, the arm64 slice kept Metal on. CI builds the app, runs the six
+  checks and runs the 1.5B model on Apple silicon; none of that had run when this was written. Not verified: the macOS
+  build itself, the app in WKWebView, how fast Metal answers, any run on an Intel Mac, and Gatekeeper with this unsigned
+  app.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
@@ -4595,20 +4652,23 @@ The current build (below) carries the same three files from every commit on main
   `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
   tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
   Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
-- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux, the shell runs the model
-  it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends the page
-  three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its events on a
-  Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
-  answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
-  in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
-  for; and `app_model` answers nothing there, so the page never copies a model in. The Linux release builds turn the
-  feature on (the build matrix passes `--features native-runner` for `linux-x64` and `linux-arm64` alone; The Linux
-  app's model). Every other build (Windows, macOS, and a Linux build without the feature, such as `npm run app:build`:
-  the feature is off by default) registers the same three commands, which answer that there is none. Where the runner
-  is compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting
-  a debugger on it. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
-  builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
-  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
+- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux or macOS, the shell runs
+  the model it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends
+  the page three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its
+  events on a Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app
+  before its answer's request is kept and stops that answer as it arrives). The file is checked against its pin once
+  and stamped in the app's data folder; without the file no runner starts; a page that starts loading stops every
+  answer it asked for; and `app_model` answers nothing there, so the page never copies a model in. The Linux and macOS
+  release builds turn the feature on (the build matrix passes `--features native-runner` for `linux-x64`, `linux-arm64`
+  and `macos-universal` alone; The Linux app's model, The macOS app's model): the plan keeps the processor alone on
+  Linux and on an Intel Mac and puts every layer on the GPU through Metal on Apple silicon (not yet run on a Mac). Every
+  other build (Windows, the phones, and a Linux or macOS build without the feature, such as `npm run app:build`: the
+  feature is off by default) registers the same three commands, which answer that there is none. Where the runner is
+  compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting a
+  debugger on it.
+  `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it, builds the Linux app
+  with the runner and the tiny test model, and asks it through the page's own `shellRunner` and `createNativeMind`
+  inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
@@ -4639,7 +4699,7 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
 | `linux-x64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages, cmake and libclang, and the model in `src-tauri/models/` | built by the workflow on `ubuntu-22.04`, the packages checked, and the `.deb` installed on the runner and asked for one short answer under a virtual display; not installed on a desktop; WebGPU in WebKitGTK unverified |
 | `linux-arm64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own), with the same | built by the workflow on `ubuntu-22.04-arm` and the packages checked; not run on a device |
-| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
+| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized, each with the native runner and Sloane's model, for macOS 11 or later | macOS with Xcode and cmake, and the model in `src-tauri/models/` | CI builds it on `macos-15` and checks the `.app`, the `.dmg`, the zip and both slices (`tools/build/macAudit.mjs`), and fails on any check; not yet run when this was written; not opened on a Mac. Gatekeeper refuses it at first: `xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway (macOS 15 on; right-click › Open up to 14); not tried on a Mac |
 | `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
 | `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
@@ -4672,7 +4732,10 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   Linux job first fetches and checks Sloane's model, then checks its packages, their glibc floor and the binary
   (`tools/build/linuxAudit.mjs`; The Linux app's model), and the x86-64 job installs its `.deb` on the runner and asks
   the installed app for one answer of at most 16 tokens through the page's own code in WebKitGTK under Xvfb
-  (`tools/browser/nativeE2e.mjs --packaged`). Each job publishes its files as the artifact `matrix-<id>` and its report;
+  (`tools/browser/nativeE2e.mjs --packaged`). The macOS job fetches and checks the same model, builds both slices with
+  the runner, and checks the `.app`, its `.dmg` and its zip, both slices, their libraries, their lowest macOS, their
+  symbols and how each slice was built (`tools/build/macAudit.mjs`; The macOS app's model); nothing starts the built
+  app there. Each job publishes its files as the artifact `matrix-<id>` and its report;
   a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
   tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
