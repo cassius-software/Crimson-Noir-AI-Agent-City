@@ -73,7 +73,7 @@ jobs:
         run: sudo safaridriver --enable
       - name: The web copy in Safari on this Mac
         run: |
-          node tools/browser/safari.mjs --web dist-web --target mac --trace --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
+          node tools/browser/safari.mjs --web dist-web --target mac --trace --fresh-safari --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
             --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0' --query 'debug&onboarding=0&audio=0&safarihold=1'
       - uses: actions/upload-artifact@v4
         if: always()

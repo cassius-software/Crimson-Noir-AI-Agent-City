@@ -31,11 +31,14 @@
  * device with no words at all, so the calls just before it are the only account there is.
  * --needs-gpu makes a browser without a working GPU a failure of its own, for a runner known to give one: without it
  * a runner that stopped giving Safari a GPU would quietly turn the check from "the city draws" into "the card shows".
+ * --fresh-safari (the Mac target) quits Safari before each page and starts it again, so a page starts in a browser
+ * and a GPU process that nothing has touched, the probe included: for a runner, since it quits the Safari of the Mac.
  * On a Mac, a run with a failed check ends with the system's own account (evidence): the crash reports WebKit's
- * processes left since the run began, and what Safari's GPU process logged of its exit, a crash or memory pressure.
+ * processes left since the run began, and what the system logged about Safari's GPU process, each kind of line once
+ * and in the order it first came (a failed Metal command buffer, an exit, a crash, memory pressure).
  * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one.
  *   node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device "iPhone 17 Pro"] [--query "<query>"]...
- *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu] [--trace]
+ *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu] [--trace] [--fresh-safari]
  * It needs macOS with Safari's "Allow remote automation" on (`sudo safaridriver --enable` once), and for the iPhone
  * target Xcode with an iOS Simulator runtime. Nothing here reaches any address but this machine.
  * What breaks if it is removed? An iPhone is again something the page is only believed to run on.
@@ -189,8 +192,8 @@ const TRACER = `function (say, epoch) {
  */
 export const TRACE = `<script>(function () {
   var S = window.__SAFARI__ = window.__SAFARI__ || { errors: [], lines: [] }
-  var T = S.gpu = { calls: [], key: [], worker: [], lost: [], errors: [], total: 0, frozen: false, workers: 0 }
   var T0 = Date.now()
+  var T = S.gpu = { calls: [], key: [], worker: [], lost: [], errors: [], total: 0, frozen: false, workers: 0, epoch: T0 }
   // A frame is hundreds of buffer writes and bindings: they stay in the short list of everything (calls), and out of
   // the longer list of what can end a device (key: devices, pipelines, passes, draws, dispatches, submits, readbacks).
   var routine = /^\\d+ (?:Queue\\.writeBuffer|RenderPassEncoder\\.set|ComputePassEncoder\\.set|Device\\.createBindGroup\\b|Texture\\.createView|Device\\.pushErrorScope|Device\\.popErrorScope)/
@@ -248,6 +251,8 @@ export const TRACE = `<script>(function () {
       return new Real(url, options)
     }
     window.Worker.prototype = Real.prototype
+    var end = Real.prototype.terminate
+    Real.prototype.terminate = function () { try { if (T.key.length < 500) T.key.push((Date.now() - T0) + ' a worker is ended by the page') } catch (e) { /* the call goes on */ } return end.apply(this, arguments) }
   } catch (e) { T.errors.push('workers are not traced: ' + e) }
 })()</script>`
 
@@ -378,7 +383,7 @@ export const LADDER = `async (withTimeout) => {
   // three r186's mipmap pass (WebGPUTexturePassUtils), call for call: each texture's lower levels drawn from the level
   // above through a 2d-array view, one encoder and one submit a texture, the pipeline, sampler and uniform shared as
   // three shares them; \`bundles\` as three does it, or the draws made directly. \`sizes\` are the textures' edges.
-  const mips = async (d, bundles, sizes) => {
+  const mips = async (d, bundles, sizes, unread) => {
     const flip = d.createBuffer({ size: 4, usage: B.UNIFORM })
     const sampler = d.createSampler({ minFilter: 'linear' })
     const module = d.createShaderModule({ label: 'mipmap', code: MIP })
@@ -404,6 +409,8 @@ export const LADDER = `async (withTimeout) => {
       }
       d.queue.submit([e.finish()])
     }
+    // The city reads nothing back and waits for nothing after these passes: unread leaves them as it does.
+    if (unread) return { right: true }
     const pixel = await pixelOf(d, texture, levels - 1)
     return { pixel, right: near(pixel, [51, 102, 204, 255]) }
   }
@@ -416,6 +423,8 @@ export const LADDER = `async (withTimeout) => {
     power: { adapter: { powerPreference: 'high-performance' } },
     features: { features: true },
     cityStart: { adapter: { powerPreference: 'high-performance' }, features: true, label: 'page' },
+    unread: { adapter: { powerPreference: 'high-performance' }, features: true, label: 'page' },
+    garbage: { adapter: { powerPreference: 'high-performance' }, features: true, label: 'page' },
   }
   const WORKER = 'onmessage = async () => { try { const a = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" }); const d = a ? await a.requestDevice({ label: "probe: a worker" }) : null; let lost = null; if (d) d.lost.then((l) => { lost = l.reason }); await new Promise((r) => setTimeout(r, 800)); postMessage({ adapter: !!a, device: !!d, lost: lost }) } catch (e) { postMessage({ threw: String(e) }) } }'
   const STAGES = {
@@ -512,6 +521,26 @@ export const LADDER = `async (withTimeout) => {
         await new Promise((next) => { requestAnimationFrame(next); setTimeout(next, 500) })
       }
       return { format, right: true }
+    },
+    // The last two are the city's start as the city leaves it, and they come last because a stage the GPU faults on
+    // can leave the browser's GPU process refusing every later one: the same passes with nothing read back and
+    // nothing waited for, the thread then kept for most of a second as the city's is while it builds its world
+    // (unread), and the same while that thread makes and drops memory, so the passes' own objects are collected
+    // while the GPU may still be at them (garbage).
+    unread: async (d) => {
+      await mips(d, true, CITY_SIZES, true)
+      const until = performance.now() + 600
+      while (performance.now() < until) { /* the thread is kept */ }
+      await new Promise((later) => setTimeout(later, 800))
+      return { right: true }
+    },
+    garbage: async (d) => {
+      await mips(d, true, CITY_SIZES, true)
+      const until = performance.now() + 600
+      let made = 0
+      while (performance.now() < until) { const held = []; for (let i = 0; i < 64; i++) held.push(new Float64Array(16384)); made += held.length }
+      await new Promise((later) => setTimeout(later, 800))
+      return { made, right: true }
     },
   }
   const out = {}
@@ -659,7 +688,7 @@ export const STATE = `(() => {
     veil: veil ? text(veil).slice(0, 400) : null, running,
     bootDone: globalThis.__bootDone === true,
     pageErrors: R ? R.errors.slice(0, 20) : [], lines: R ? R.lines.slice(0, 40) : [],
-    gpu: R && R.gpu ? { total: R.gpu.total, workers: R.gpu.workers, lost: R.gpu.lost.slice(0, 8), errors: R.gpu.errors.slice(0, 40), key: R.gpu.key.slice(-500), calls: R.gpu.calls.slice(-120), worker: (R.gpu.worker || []).slice(0, 80) } : null,
+    gpu: R && R.gpu ? { total: R.gpu.total, workers: R.gpu.workers, epoch: R.gpu.epoch, lost: R.gpu.lost.slice(0, 8), errors: R.gpu.errors.slice(0, 40), key: R.gpu.key.slice(-500), calls: R.gpu.calls.slice(-120), worker: (R.gpu.worker || []).slice(0, 80) } : null,
     body: card || running ? null : text(document.body).slice(0, 600),
   }
 })()`
@@ -779,10 +808,24 @@ export function crashDigest(text, frames = 24) {
   return lines
 }
 
-/** Pure. The lines of the system log worth printing about the browser's GPU process: its exit, a crash, memory pressure, WebGPU. */
-export function logLinesOfNote(text, most = 160) {
-  const of = /GPUProcess|WebGPU|memory ?pressure|lowMemory|jetsam|IOGPU|crash|exit|terminat|unresponsive|\blost\b/i
-  return text.split('\n').filter((l) => of.test(l)).map((l) => l.slice(0, 420)).slice(-most)
+/**
+ * Pure. What the system log says about the browser's GPU process, each distinct message once and in the order it
+ * first appeared, with when it first and last came and how often: `log show --style compact` lines whose message is
+ * about the GPU process, Metal, a crash, an exit or memory pressure. The first of them is the cause; the hundreds
+ * after it are the same few lines again, which is why a tail of the log shows only the consequences.
+ */
+export function logDigest(text, most = 80) {
+  const of = /gpu|Metal|Paravirt|AGX|command buffer|memory ?pressure|lowMemory|jetsam|crash|exit|terminat|unresponsive|abort|fault|\blost\b|\bfail/i
+  const seen = new Map()
+  for (const line of text.split('\n')) {
+    const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\S*\s+(\S+)\s+(\S+?)\[(\d+):[0-9a-f]+\]\s+(.*)$/.exec(line)
+    if (!m || !of.test(m[5]) || m[3] === 'log') continue
+    const key = `${m[3]}[${m[4]}] ${m[2]} ${m[5].replace(/0x[0-9a-f]+/gi, '0x..').slice(0, 420)}`
+    const had = seen.get(key)
+    if (had) { had.count++; had.last = m[1] } else seen.set(key, { first: m[1], last: m[1], count: 1 })
+  }
+  const lines = [...seen].map(([key, v]) => `${v.first.slice(11)} ${key}${v.count > 1 ? ` (${v.count} times, to ${v.last.slice(11)})` : ''}`)
+  return lines.length > most ? [...lines.slice(0, most), `and ${lines.length - most} more kinds of line`] : lines
 }
 
 /** The Mac's own account of its memory: cores, RAM, and the kernel's memory pressure level (1 normal, 2 warning, 4 critical). */
@@ -813,9 +856,9 @@ async function evidence(since, name) {
     for (const line of crashDigest(text)) console.log(`${name}: crash report ${file.split(sep).pop()}: ${line}`)
   }
   const minutes = Math.ceil((Date.now() - since) / 60_000) + 1
-  const log = run('log', ['show', '--last', `${minutes}m`, '--style', 'compact', '--predicate', 'process == "com.apple.WebKit.GPU" OR eventMessage CONTAINS "GPUProcess" OR eventMessage CONTAINS[c] "memory pressure"'], { ms: 240_000 })
-  const lines = logLinesOfNote(log.out)
-  console.log(`${name}: the system log of Safari's GPU process, ${minutes} min: ${lines.length} line(s) of note${log.ok ? '' : ` (log show: ${log.err.trim().slice(0, 200)})`}`)
+  const log = run('log', ['show', '--last', `${minutes}m`, '--style', 'compact', '--predicate', 'process == "com.apple.WebKit.GPU" OR eventMessage CONTAINS "GPUProcess" OR eventMessage CONTAINS[c] "memory pressure" OR (process == "kernel" AND eventMessage CONTAINS[c] "gpu")'], { ms: 240_000 })
+  const lines = logDigest(log.out)
+  console.log(`${name}: the system log about Safari's GPU process, ${minutes} min, each kind of line once, in the order it first came: ${lines.length} kind(s)${log.ok ? '' : ` (log show: ${log.err.trim().slice(0, 200)})`}`)
   for (const line of lines) console.log(`${name}: log ${line}`)
   console.log(`${name}: this Mac now: ${machine()}`)
 }
@@ -826,7 +869,7 @@ async function main() {
   const all = (name) => argv.flatMap((a, i) => (a === `--${name}` && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
   const flag = (name) => argv.includes(`--${name}`)
   if (flag('help')) {
-    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu] [--trace]')
+    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu] [--trace] [--fresh-safari]')
     return 0
   }
   const web = resolve(arg('web') ?? 'dist-web')
@@ -871,12 +914,15 @@ async function main() {
   }
 
   const host = await serve(web, { record: true, trace: flag('trace') })
-  const driverProcess = spawn('safaridriver', ['--port', String(port)], { stdio: ['ignore', 'inherit', 'inherit'] })
-  let driverGone = null
-  driverProcess.on('exit', (code) => { driverGone = code ?? -1 })
-  driverProcess.on('error', (e) => { driverGone = e.message })
   const driver = new Driver(`http://127.0.0.1:${port}`)
-  try {
+  let driverProcess = null
+  /** Starts safaridriver and a Safari session with it; `label` names the checks. The session's capabilities, or null. */
+  const start = async (label) => {
+    const proc = spawn('safaridriver', ['--port', String(port)], { stdio: ['ignore', 'inherit', 'inherit'] })
+    driverProcess = proc
+    let driverGone = null
+    proc.on('exit', (code) => { driverGone = code ?? -1 })
+    proc.on('error', (e) => { driverGone = e.message })
     // The driver answers /status once it listens. Beside a simulator that has just started, on a Mac still busy with
     // it, that has taken most of a minute: three minutes are allowed, by the clock and not by the count of tries.
     let listening = false
@@ -885,18 +931,41 @@ async function main() {
       try { await driver.call('GET', '/status'); listening = true } catch { await sleep(500) }
     }
     const took = `${Math.round((Date.now() - asked) / 1000)} s`
-    if (!check(listening, `${target}: safaridriver listens`, listening ? `after ${took}` : `it ${driverGone === null ? `never answered in ${took}` : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) { save(); return 1 }
-
+    if (!check(listening, `${label}: safaridriver listens`, listening ? `after ${took}` : `it ${driverGone === null ? `never answered in ${took}` : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) return null
     let session = null
     let why = ''
     // A simulator that has just started can refuse its first session: a few tries, a pause between them.
     for (let i = 0; i < 4 && !session; i++) {
       try { session = await driver.start(capabilities) } catch (e) { why = e.message; await sleep(15_000) }
     }
-    if (!check(Boolean(session), `${target}: a Safari session`, session ? `${session.browserName ?? 'safari'} ${session.browserVersion ?? ''} on ${session.platformName ?? '?'}`.trim() : why.slice(0, 500))) { save(); return 1 }
-    report.session = session
+    if (!check(Boolean(session), `${label}: a Safari session`, session ? `${session.browserName ?? 'safari'} ${session.browserVersion ?? ''} on ${session.platformName ?? '?'}`.trim() : why.slice(0, 500))) return null
     await driver.timeouts(120_000)
     if (target === 'mac') await driver.rect(1280, 800).catch(() => {})
+    return session
+  }
+  /** Which of Safari's GPU processes run now, by number: a page that starts in a new one starts with nothing behind it. */
+  const gpuProcesses = () => (process.platform === 'darwin' ? run('pgrep', ['-f', 'com.apple.WebKit.GPU'], { ms: 10_000 }).out.trim().split(/\s+/).filter(Boolean).join(', ') || 'none' : 'unknown')
+  /**
+   * --fresh-safari, on the Mac: the session and its driver end, Safari itself is asked to quit (its GPU process goes
+   * with it), and a new driver and session start. What one page left in the browser's GPU process, a command queue
+   * the system stopped listening to among it, then never reaches the next page. It quits Safari on this Mac: for a
+   * runner, not for a Mac someone is using.
+   */
+  const fresh = async (label) => {
+    await driver.quit()
+    driverProcess?.kill()
+    run('pkill', ['-x', 'Safari'], { ms: 10_000 })
+    for (let i = 0; i < 60 && (run('pgrep', ['-x', 'Safari'], { ms: 5_000 }).ok || run('pgrep', ['-f', 'com.apple.WebKit.GPU'], { ms: 5_000 }).ok); i++) await sleep(250)
+    await sleep(1000)
+    const session = await start(label)
+    if (session) console.log(`${label}: a Safari started for this page (its GPU process: ${gpuProcesses()} so far)`)
+    return session
+  }
+  const freshEach = flag('fresh-safari') && target === 'mac' && process.platform === 'darwin'
+  try {
+    const session = await start(target)
+    if (!session) { save(); return 1 }
+    report.session = session
 
     // What the browser offers.
     await driver.go(`${host.origin}/__probe`)
@@ -919,6 +988,7 @@ async function main() {
       const name = `${target}-${queries.indexOf(query) + 1}`
       const page = { query, timeline: [], end: null, ms: 0 }
       report.pages.push(page)
+      if (freshEach && !(await fresh(name))) { page.outcome = 'no browser'; continue }
       const t0 = Date.now()
       await driver.go(`${host.origin}/?${query}`)
       let last = ''
@@ -945,7 +1015,7 @@ async function main() {
       for (const line of state?.lines ?? []) console.log(`${name}: console ${line}`)
       // Under --trace, a start that did not end in a running city prints what WebGPU was asked just before.
       if (state?.gpu && outcome !== 'running') {
-        console.log(`${name}: WebGPU trace: ${state.gpu.total} calls noted, ${state.gpu.workers} worker(s) traced`)
+        console.log(`${name}: WebGPU trace: ${state.gpu.total} calls noted, ${state.gpu.workers} worker(s) traced; the page's clock began at ${state.gpu.epoch ? new Date(state.gpu.epoch).toISOString() : '?'}; Safari's GPU process: ${gpuProcesses()}`)
         for (const line of state.gpu.errors) console.log(`${name}: WebGPU error ${line}`)
         for (const line of state.gpu.lost) console.log(`${name}: WebGPU ${line}`)
         for (const line of state.gpu.worker ?? []) console.log(`${name}: WebGPU worker call ${line}`)
@@ -960,7 +1030,7 @@ async function main() {
     check(false, `${target}: the run`, String(e?.stack ?? e).slice(0, 800))
   } finally {
     await driver.quit()
-    driverProcess.kill()
+    driverProcess?.kill()
     host.server.close()
     host.server.closeAllConnections?.()
     save()

@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SCRIPT = join(ROOT, 'tools', 'build', 'matrix.mjs')
 const WORKFLOW = readFileSync(join(ROOT, '.github', 'workflows', 'build-matrix.yml'), 'utf8')
 
-interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string }
+interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string; again?: number }
 interface Target { id: string; artifact: string; hosts: string[]; arch?: string; tools?: string[]; env?: string[]; unsupported?: string; note?: string; plan?: (ctx: object) => Step[] }
 interface Host { platform: string; arch: string; env: Record<string, string>; has: (cmd: string) => boolean }
 
@@ -51,6 +51,26 @@ test('the nine targets, in the order the plan names them, each saying what it ma
     else assert.ok(t.hosts.length > 0 && typeof t.plan === 'function', t.id)
   }
   assert.ok(Object.isFrozen(TARGETS))
+})
+
+test('a step that downloads is run again before it fails its target: rustup\'s targets and the two mobile builds, and nothing else', () => {
+  const again: string[] = []
+  for (const t of TARGETS) {
+    if (!t.plan) continue
+    for (const s of t.plan(CTX)) {
+      if (s.kind !== 'run') continue
+      const downloads = s.cmd === 'rustup' || ((t.id === 'android-apk' || t.id === 'ios-ipa') && s.argv?.[2] === 'build')
+      assert.equal(s.again, downloads ? (s.cmd === 'rustup' ? 2 : 1) : undefined, `${t.id}: ${s.cmd} ${s.argv?.slice(1, 4).join(' ')}`)
+      if (downloads) again.push(`${t.id}: ${s.cmd === 'rustup' ? 'rustup' : s.argv![1]}`)
+    }
+  }
+  // A package host that answered 429 once failed the Android build: both mobile builds, and every target rustup adds.
+  assert.deepEqual(again.filter((a) => !a.endsWith('rustup')), ['android-apk: android', 'ios-ipa: ios'])
+  assert.ok(again.includes('android-apk: rustup') && again.includes('ios-ipa: rustup') && again.includes('uefi-x64: rustup'))
+  const source = readFileSync(SCRIPT, 'utf8')
+  assert.equal(m.AGAIN_MS, 60_000)
+  assert.match(source, /for \(let left = s\.again \?\? 0; !r\.ok && left > 0; left--\) \{\n[^\n]*::warning::[^\n]*\n\s+Atomics\.wait\(new Int32Array\(new SharedArrayBuffer\(4\)\), 0, 0, AGAIN_MS\)\n\s+r = once\(\)\n/, 'the step is run again after the pause, and a failure that stays is still the target\'s')
+  assert.match(source, /if \(!r\.ok\) throw new Error\(`\$\{show\(s\.cmd, s\.argv, s\.cwd\)\} failed`\)/)
 })
 
 test('every plan is programs with argument vectors, never a shell line; every Tauri step says the page is already built; the page is built under this Node', () => {

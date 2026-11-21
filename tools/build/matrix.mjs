@@ -273,7 +273,7 @@ export const TARGETS = Object.freeze([
     plan: () => [
       rustupTarget(TRIPLES.android),
       tauriInit('android'),
-      tauri('android', 'build', '--ci', '--config', NO_PAGE_BUILD, '--apk', '--target', 'aarch64'),
+      fetches(tauri('android', 'build', '--ci', '--config', NO_PAGE_BUILD, '--apk', '--target', 'aarch64')),
       { kind: 'sign-apk' },
     ],
     collect: ({ out }) => globs(join(out, 'android-apk'), (n) => n.endsWith('.apk')),
@@ -285,7 +285,7 @@ export const TARGETS = Object.freeze([
     // Tauri drives xcodebuild itself: the project's "Build Rust Code" phase asks the running `tauri ios build` for its
     // options over a local socket, so xcodebuild run by hand fails at once; `--no-sign` archives with code signing off
     // and zips Payload/<app>.app into gen/apple/build/arm64/<product name>.ipa.
-    plan: () => [rustupTarget(TRIPLES.ios), tauriInit('ios'), tauri('ios', 'build', '--ci', '--no-sign', '--config', NO_PAGE_BUILD, '--target', 'aarch64')],
+    plan: () => [rustupTarget(TRIPLES.ios), tauriInit('ios'), fetches(tauri('ios', 'build', '--ci', '--no-sign', '--config', NO_PAGE_BUILD, '--target', 'aarch64'))],
     collect: ({ version }) => globs(join(ROOT, 'src-tauri/gen/apple/build/arm64'), (n) => n.endsWith('.ipa')).slice(0, 1).map(([p]) => [p, `crimson-noir-agent-city_${version}_ios-arm64-unsigned.ipa`]),
     note: 'cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid account for TestFlight or the App Store); the iPhone home-screen web copy (MANUAL.md, On an iPhone) needs none of that; not run on a Mac yet',
   },
@@ -331,7 +331,16 @@ function step(cmd, argv, extra = {}) { return { kind: 'run', cmd, argv, ...extra
 function tauri(...argv) { return step(process.execPath, [TAURI, ...argv]) }
 /** `tauri <android|ios> init` through npm (npmCli above says why), non-interactive, the Rust targets added by rustupTarget. */
 function tauriInit(platform) { return step(process.execPath, [npmCli(), 'run', '--', 'tauri', platform, 'init', '--ci', '--skip-targets-install']) }
-function rustupTarget(...triples) { return step('rustup', ['target', 'add', ...triples]) }
+/**
+ * A step that downloads as it runs (rustup's targets; Gradle's packages inside an Android build, the Swift and Rust
+ * ones inside an iOS build): when it fails it is run again, `again` more times, a minute apart. A package host that
+ * answers 429 or drops a connection is not the build's failure, and without this one busy minute at such a host
+ * leaves that target's download a commit behind. A build that is really broken fails each time, and so still fails.
+ */
+function fetches(s, again = 1) { return { ...s, again } }
+/** How long a step that downloads waits before it is run again, ms. */
+export const AGAIN_MS = 60_000
+function rustupTarget(...triples) { return fetches(step('rustup', ['target', 'add', ...triples]), 2) }
 
 /** Moves a file, by renaming it where both paths are on one file system and by copying and deleting it elsewhere. */
 function moveFile(from, to) {
@@ -560,7 +569,14 @@ export function main(argv) {
           console.log(`  ${show(s.cmd, s.argv, s.cwd)}`)
           for (const [k, v] of Object.entries(s.env ?? {})) console.log(`    with ${k}=${v}`)
           if (dryRun) continue
-          const r = run(s.cmd, s.argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } })
+          const once = () => run(s.cmd, s.argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } })
+          let r = once()
+          // A step that downloads is run again before it fails the target (fetches above).
+          for (let left = s.again ?? 0; !r.ok && left > 0; left--) {
+            console.log(`::warning::${t.id}: ${show(s.cmd, s.argv, s.cwd)} failed; it downloads as it runs, so it is run again in ${AGAIN_MS / 1000} s (${left} more ${left === 1 ? 'try' : 'tries'})`)
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, AGAIN_MS)
+            r = once()
+          }
           if (!r.ok) throw new Error(`${show(s.cmd, s.argv, s.cwd)} failed`)
         } else if (s.kind === 'need') {
           console.log(`  need ${relative(ROOT, s.path)}`)

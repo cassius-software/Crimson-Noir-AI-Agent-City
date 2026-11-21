@@ -37,7 +37,7 @@ const safari = (await import(SAFARI)) as {
   LADDER: string
   withRecorder(html: string, trace?: boolean): string
   crashDigest(text: string, frames?: number): string[]
-  logLinesOfNote(text: string, most?: number): string[]
+  logDigest(text: string, most?: number): string[]
 }
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -310,7 +310,7 @@ test('the tracer: an address with safarihold=1 keeps one 2D canvas drawn to, and
   }
 })
 
-test('crashDigest: a crash report is told in a few lines; the log keeps the lines about the GPU process', () => {
+test('crashDigest and logDigest: a crash report is told in a few lines; the log gives each kind of line about the GPU process once, the first one first', () => {
   const head = { app_name: 'com.apple.WebKit.GPU', app_version: '21625.1.2', bug_type: '309', timestamp: '2026-11-21 23:40:01.00 +0000' }
   const report = {
     procName: 'com.apple.WebKit.GPU', captureTime: '2026-11-21 23:40:00.1234 +0000',
@@ -335,11 +335,25 @@ test('crashDigest: a crash report is told in a few lines; the log keeps the line
   ])
   assert.match(safari.crashDigest('not a report at all')[0]!, /^a report that does not parse: not a report at all$/)
   assert.deepEqual(safari.crashDigest(`${JSON.stringify({ app_name: 'Safari', bug_type: '298' })}\n{}`), ['Safari  at ?: report type 298'])
-  const log = ['2026-11-21 23:40:00.100 Df com.apple.WebKit.GPU[512:1a2b] [com.apple.WebKit:Process] GPUProcess::lowMemoryHandler: critical=0, synchronous=0',
-    '2026-11-21 23:40:00.101 Df com.apple.WebKit.GPU[512:1a2b] [com.apple.CoreAnalytics] an unrelated line',
-    '2026-11-21 23:40:00.102 E  Safari[400:9f] [com.apple.WebKit:Process] 0x1 - GPUProcessProxy::gpuProcessExited: reason=IdleExit'].join('\n')
-  assert.deepEqual(safari.logLinesOfNote(log).map((l) => l.replace(/^.*\] /, '')), ['GPUProcess::lowMemoryHandler: critical=0, synchronous=0', '0x1 - GPUProcessProxy::gpuProcessExited: reason=IdleExit'])
-  assert.equal(safari.logLinesOfNote(Array.from({ length: 300 }, (_, i) => `line ${i} exit`).join('\n'), 5).length, 5)
+  // The log: each kind of line once, in the order it first came, so the cause leads and its echoes are counted.
+  const log = [
+    'Timestamp               Ty Process[PID:TID]',
+    '2026-11-21 23:28:15.700 E  com.apple.WebKit.GPU[7669:71ff] (Metal) Execution of the command buffer was aborted due to an error during execution. Caused GPU Timeout Error (00000002:kIOGPUCommandBufferCallbackErrorTimeout)',
+    '2026-11-21 23:28:15.701 Df com.apple.WebKit.GPU[7669:1a2b] [com.apple.CoreAnalytics:client] an unrelated line',
+    '2026-11-21 23:28:25.831 E  com.apple.WebKit.GPU[7669:71ff] (Metal) Execution of the command buffer was aborted due to an error during execution. Ignored (for causing prior/excessive GPU errors) (00000004:kIOGPUCommandBufferCallbackErrorSubmissionsIgnored)',
+    '2026-11-21 23:28:25.832 F  com.apple.WebKit.GPU[7669:71fd] (AppleParavirtGPUMetalIOGPUFamily) -[AppleParavirtTexture setupHostResourceInfo]: Info Command Buffer failed NSUnderlyingError=0xad8c992f0',
+    '2026-11-21 23:28:25.836 E  com.apple.WebKit.GPU[7669:66af] (Metal) Execution of the command buffer was aborted due to an error during execution. Ignored (for causing prior/excessive GPU errors) (00000004:kIOGPUCommandBufferCallbackErrorSubmissionsIgnored)',
+    '2026-11-21 23:28:25.837 F  com.apple.WebKit.GPU[7669:71fd] (AppleParavirtGPUMetalIOGPUFamily) -[AppleParavirtTexture setupHostResourceInfo]: Info Command Buffer failed NSUnderlyingError=0xad8c99111',
+    '2026-11-21 23:28:26.000 E  Safari[400:9f] [com.apple.WebKit:Process] 0x1 - GPUProcessProxy::gpuProcessExited: reason=IdleExit',
+    "2026-11-21 23:28:49.460 Df log[10137:7f0f] [com.apple.log:] log run noninteractively, args: 'log' 'show' '--predicate' 'eventMessage CONTAINS \"GPUProcess\"'",
+  ].join('\n')
+  assert.deepEqual(safari.logDigest(log), [
+    '23:28:15.700 com.apple.WebKit.GPU[7669] E (Metal) Execution of the command buffer was aborted due to an error during execution. Caused GPU Timeout Error (00000002:kIOGPUCommandBufferCallbackErrorTimeout)',
+    '23:28:25.831 com.apple.WebKit.GPU[7669] E (Metal) Execution of the command buffer was aborted due to an error during execution. Ignored (for causing prior/excessive GPU errors) (00000004:kIOGPUCommandBufferCallbackErrorSubmissionsIgnored) (2 times, to 23:28:25.836)',
+    '23:28:25.832 com.apple.WebKit.GPU[7669] F (AppleParavirtGPUMetalIOGPUFamily) -[AppleParavirtTexture setupHostResourceInfo]: Info Command Buffer failed NSUnderlyingError=0x.. (2 times, to 23:28:25.837)',
+    '23:28:26.000 Safari[400] E [com.apple.WebKit:Process] 0x.. - GPUProcessProxy::gpuProcessExited: reason=IdleExit',
+  ])
+  assert.deepEqual(safari.logDigest(Array.from({ length: 9 }, (_, i) => `2026-11-21 23:28:0${i}.000 E  kernel[0:1] gpu fault number ${i}`).join('\n'), 3), ['23:28:00.000 kernel[0] E gpu fault number 0', '23:28:01.000 kernel[0] E gpu fault number 1', '23:28:02.000 kernel[0] E gpu fault number 2', 'and 6 more kinds of line'])
 })
 
 test('the probe: its drawing ladder parses, runs inside the probe, and tries each kind of work the renderer asks for', () => {
@@ -348,7 +362,7 @@ test('the probe: its drawing ladder parses, runs inside the probe, and tries eac
   assert.ok(safari.PROBE.includes(safari.LADDER), 'the probe runs the ladder')
   const stages = /const STAGES = \{([\s\S]*?)\n {2}\}\n/.exec(safari.LADDER)
   assert.ok(stages, 'the stages')
-  assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'npot', 'fourMips', 'power', 'features', 'cityStart', 'idle', 'besideWorker', 'indirect', 'msaa', 'canvas'])
+  assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'npot', 'fourMips', 'power', 'features', 'cityStart', 'idle', 'besideWorker', 'indirect', 'msaa', 'canvas', 'unread', 'garbage'])
   // Each stage has a device of its own: a browser that drops the device on one kind of work still answers for the rest.
   assert.match(safari.LADDER, /for \(const name of Object\.keys\(STAGES\)\) \{[\s\S]*?requestAdapter\(how\.adapter\)[\s\S]*?requestDevice\(\{ label: how\.label \|\| 'probe: ' \+ name, /)
   assert.match(safari.LADDER, /r\.ok = r\.lost === null && r\.errors\.length === 0 && got !== null && got\.right === true/)
