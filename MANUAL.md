@@ -1013,10 +1013,11 @@ not been seen. Where the browser offers no immersive session the whole path is i
   when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
   still: back within a quarter of a second it resumes where it was, at the same speed and with no second snap, unless
   the hand comes back on the far side of the way it was heading, which counts as a pass through the middle (it stands,
-  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is
-  dropped, with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller
-  has no mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head;
-  hand microgestures are not read.
+  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A
+  pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is dropped,
+  with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller has no
+  mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head; hand
+  microgestures are not read.
 - **The floor.** A session not granted a floor-level space runs in a plain local one, whose origin is where the head
   began, and the rig lifts its floor by the body's eye height so the eyes stay at standing height.
 - **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
