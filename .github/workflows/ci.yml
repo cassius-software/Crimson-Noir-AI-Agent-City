@@ -4,7 +4,8 @@
 # Why does this file exist? It is the standing verification of every change: the checks that were run by hand in a
 # container at the end of each phase, run here on every pull request and every push to main, and the formal
 # verification step (FVPS) with them. The checks are the ones tools/selfheal/checks.sh names, so a contributor, this
-# workflow and the self-healing agent run the same commands. These jobs run side by side:
+# workflow and the self-healing agent run the same commands (the speech job runs its two tools directly: they need the
+# speech pack and a spoken clip, which no other check has). These jobs run side by side:
 # - page: tsc, oxlint, the 1,300-test suite, the single-file build with its no-server-code check, the host's smoke
 #   test, and the self-healing agent's own tests;
 # - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
@@ -21,6 +22,12 @@
 #   script, allowed from the card's key, refused, withdrawn, locked away and ended by a lost tether; the scenarios run
 #   as two parallel jobs (tools/browser/shard.mjs), and each job's screenshots and console transcripts are kept as an
 #   artifact;
+# - speech: the page's own speech recogniser, heard for real. A sentence is synthesized on the runner (espeak-ng; no
+#   recording is kept in the repository), the speech pack (tools/web/speechPack.mjs) reads it under Node through the
+#   page's own detector, tap and reader, and then the web copy with the pack beside it is opened in the runner's
+#   Chrome with a microphone that plays the clip (tools/browser/speech.mjs): the pill must show the words, the site
+#   must have been asked for the pack once, and a second visit must understand them again and fetch nothing. One
+#   Chromium, a synthetic voice: not a real microphone, a phone, Safari or Firefox;
 # - sandbox: the self-healing agent's zero-trust container (tools/selfheal/sandbox.mjs) tried from the inside:
 #   the escape probes (tools/sandbox/probe.sh) contained, the same probes in a weakened control, and two checks
 #   run contained (tools/sandbox/verify.mjs); the evidence is kept as an artifact;
@@ -156,6 +163,53 @@ jobs:
         with:
           name: browser-smoke-${{ github.run_id }}-${{ matrix.shard }}
           path: ${{ runner.temp }}/browser/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # The microphone understands words: the speech pack read under Node, then heard by the page in the runner's Chrome
+  # through a microphone that plays a spoken clip (see the header). The model's files are cached by the pack's whole
+  # pin; a new pin never restores an old file.
+  speech:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - id: speech
+        name: The speech pack, by the page's own pin
+        run: node tools/web/speechPack.mjs pin >> "$GITHUB_OUTPUT"
+      - id: speech-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-pack
+          key: ${{ steps.speech.outputs.key }}
+      - name: The speech model from the npm registry, at the pinned version (only when the cache does not hold it)
+        if: steps.speech-cache.outputs.cache-hit != 'true'
+        run: node tools/web/speechPack.mjs fetch --to "$RUNNER_TEMP/speech-pack"
+      - name: A spoken sentence, made here (no recording is kept in the repository)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends espeak-ng
+          espeak-ng -v en-us -s 150 -w "$RUNNER_TEMP/spoken.wav" "Where is the nearest coffee shop?"
+      - name: The pack reads it under Node, through the page's own detector, tap and reader
+        run: node tools/web/speechPack.mjs read --from "$RUNNER_TEMP/speech-pack" --expect "where is the nearest coffee shop" "$RUNNER_TEMP/spoken.wav"
+      - name: The web copy, with the pack beside it
+        run: |
+          npm run build:web
+          node tools/web/speechPack.mjs place --from "$RUNNER_TEMP/speech-pack" --out dist-web
+      - name: Chrome hears it through a microphone that plays the clip, on two visits; the second fetches nothing
+        run: node tools/browser/speech.mjs --web dist-web --clip "$RUNNER_TEMP/spoken.wav" --expect "nearest coffee shop" --out "$RUNNER_TEMP/speech"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: speech-${{ github.run_id }}
+          path: ${{ runner.temp }}/speech/
           if-no-files-found: ignore
           retention-days: 30
 

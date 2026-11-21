@@ -45,7 +45,7 @@ export const WALK = Object.freeze({
   walkMetres: 3,
 } as const)
 
-/** The role the exit program names and the swarm it asks for (docs/noirscript.md, the exam intrinsics). */
+/** The role the exit program names and the swarm it asks for (docs/crimson-noir-script.md, the exam intrinsics). */
 export const SWARM_ROLE = 'sim2real_workplaces'
 export const SWARM_SIZE = 24
 

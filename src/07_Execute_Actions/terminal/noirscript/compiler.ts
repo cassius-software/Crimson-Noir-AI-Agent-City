@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It turns a checked NoirScript line into bytecode for the VM: one CompiledFn per
+ * Why does this file exist? It turns a checked Crimson Noir Script line into bytecode for the VM: one CompiledFn per
  * function plus one for the line's top-level statements. It lays out frames (parameters first, then locals as
  * blocks open and close, so a slot is reused once its block ends), places the line's new globals in the arena
  * (arrays on 64-byte boundaries), picks the typed opcode for every operation from the types the checker wrote on
