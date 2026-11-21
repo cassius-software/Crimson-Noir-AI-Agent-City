@@ -75,6 +75,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     as Sloane's card's column already does there. The screen reader's opening line says "Escape to finish" on every
     device.
 
+
+- **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
+  `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
+  names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
+  chosen limits and features; memory of four kinds (device, images, upload, readback, the host kinds not coherent,
+  so `flush` and `invalidate` are explicit) backs buffers and images bound into it by hand; views, samplers, binding
+  layouts, pools and sets, pipeline layouts with 128 bytes of inline constants, render and compute pipelines; command
+  arenas and lists recorded between `begin` and `end`, with passes begun and ended inside them, barriers with
+  explicit stages, accesses and image layouts, copies, updates and indirect draws and dispatches; queues, fences and
+  semaphores. Shaders are **Lens**, its own binary form (typed SSA with structured control flow), with a builder,
+  a checker that refuses anything ill-formed or ill-typed, an exact encoder and decoder, and a disassembler. With
+  checks on, every submit is simulated first: a missing barrier (`hazard`) or an image in the wrong layout
+  (`layout`) refuses the whole submit before anything runs. A usage-scope rule refuses, as it is recorded, a pass or
+  dispatch that both writes and reads one resource. The first back end is a deterministic CPU reference renderer
+  (`soft.ts`): 1/256-pixel snapping, the top-left rule, clipping, four-sample coverage and resolve, quads with fine
+  derivatives, perspective-correct interpolation, mip-mapped sampling, depth, blending, and a Lens interpreter whose
+  per-submit step budget stops a runaway shader (and loses the device, as a GPU watchdog would). Calls run one at a
+  time, only objects Nightglass made are taken (a copy or a Proxy of one is refused before its code runs), and a
+  caller's list is read once, so nothing a caller's getter does lands between a call's checks and its work. 348 tests
+  in the folder pin it, among them seeded fuzzing of the binary form; an air-gap test keeps the folder free of other
+  interfaces' names. Nothing in the page uses it yet: slice 2 adds the WebGPU back end and a browser check that
+  compares its pictures with the reference renderer's, slice 3 the surfaces and the interface kit every console app
+  is to draw with.
 - **The macOS app carries Sloane's model and runs it in its own process.** The build matrix's `macos-universal` job
   now builds both slices of the universal app with `--features native-runner` and the model overlay, and puts Qwen2.5
   1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0) into the `.app` under
@@ -2418,6 +2441,79 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **Pedestrians no longer stare at you.** Until now everyone within about four and a half metres of you on foot turned
+  their head and chest to your eye. Now a person looks at you only while you are talking to them: a recruit standing
+  by at your side (the crowd kernel reports them interviewing and no rally sends them elsewhere), or the person a
+  conversation names through the new `Engine.setTalkingTo(agent | null)` (a pedestrian's index, the crowd frame's row
+  that is theirs; nobody until a caller names someone; the proximity talk with whoever is nearest is to call it, and
+  nothing calls it yet). Everyone else looks the way they are going. The page keeps twelve talk slots
+  (`03_Spawn_Agents/talkGaze.ts`: all eight recruits a summons can hold, the person named, and three still turning
+  back), each eased in over 0.4 s and out over 0.6 s, the named person served first, and hands them to the vertex
+  stage as six plain uniforms (`CrowdView.talkWho`, `talkWeight`); `bodyTalk` gives each person the weight of the slot that holds their index and
+  `bodyGaze` scales the eye by it, so the crowd kernel, its fingerprint and the storage buffers are unchanged (the
+  crowd's shaders bind 4 uniform and 7 storage buffers per stage, as before) and every tier, Lite included, runs the
+  same code. A conversation holds your eye out to 6.5 m and lets it go by 8.5 m, where a named conversation also ends
+  by itself, as it does when you are on another floor; from a car nobody looks. Their heads follow your eye exactly
+  while you move as a body moves, and through a move under 1.2 m in one frame (a short correction from the room);
+  when you get into a car, or your eye jumps farther (a ride to another floor, a teleport across the street) while
+  anyone is turned to you, that is a cut: heads turn back from where you stood, and whoever you are still talking
+  to then turns round to where you are now, instead of a head swinging after your eye in one frame
+  (`TalkGaze.look`). The gaze's hard edges are fades now:
+  past a right angle the head swings back to the front as you walk round behind someone instead of snapping at the
+  edge of the cone, it fades in close to the person's own neck, and a person stepping backwards keeps their head
+  ahead instead of flicking it from one shoulder to the other. Tests: `gazeAt` with and without a conversation, sweeps
+  in which no step of 0.005 rad of bearing or 5 mm of distance turns a head more than 0.03 rad, and `bodyGaze` and
+  `bodyTalk` compiled through `wgslHost.ts` and compared with `gazeAt` and `talkWeight` over 360 cases to f32, the
+  first test to run the gaze's WGSL (`humanoid.test.ts`); the slots' easing at 60 and at 5 frames a second, eight
+  recruits and a named person looking at once, a newcomer waiting for a free slot, the reach and the floor, the
+  cut (a car's seat nearer than 1.2 m included), and a recruit's head turning back by no more than 0.03 rad a frame,
+  at 60 and at 5 frames a second, when your eye jumps into a car's seat, up to a sky floor, away, or to beside or
+  behind them (`talkGaze.test.ts`); the engine's wiring
+  (`talkWiring.test.ts`). The page grows by 3,900 bytes (12,369,342 of the 14,817,000 budget). Before and after
+  pictures were taken on the software WebGPU adapter only; how it looks on a real GPU and on a real phone is
+  unverified.
+
+- **Lakefront Metro's workplaces, shops and homes stand all over the map, and every visitor starts in the region they
+  chose.** The sixteen indoor workplaces, five shops and seven homes used to take the lots nearest the start inside the
+  one 640 m street window, so more than nine tenths of the 2.56 km map had none of them; the start itself was the midpoint of the
+  arterial run nearest the chosen region's centre (the metropolis's visitor stood 742 m from its centre, in North Ridge,
+  and North Ridge and The Grand Ravine shared one start), and the page's map worker ignored the chosen region
+  altogether. Now the pack carries the map's quarters, its five regions and its ground per block (`pack.ts` `Quarters`,
+  read by `region/quarters.ts`), the worker builds the pack for the region asked for, the whole map's street grid is
+  built from the pack (`streets.ts` `mapStreetGrid`, the window a crop of it), and `region/placement.ts` shares the 28 places out
+  by a programme: every region a shop, at least one home and at least two workplaces of the kinds that suit it; each
+  region's heart the middle of its tallest cluster, its shop within three lots of the heart and two more places near it
+  (within two lots wherever its region has a free one); the rest spread, never on neighbouring lots, a ravine's floor, the landmark's lot or in the
+  lake; the same lots whichever region the visitor starts in. The visitor stands on the sidewalk across the street from
+  their region's shop, five metres along it (`START_LEAD`, clear of the street's trees and lamps), facing along the
+  street toward its heart, always inside that region, even where the shop stands on its edge (`regionWorld.ts`
+  `regionStart`, `RegionPlaces.spawnAt`; the metropolis's visitor under 300 m from The Spire on the three tested
+  seeds), `?place=<slug>` chooses the region for one visit, ahead of the onboarding's answer on the visit it runs
+  (`onboarding/script.ts` `placeWanted`, `onboardingPackFor`), and the HUD's street line leads with the region you stand in
+  (`RegionPlaces.label`). The physics worker takes a place on any lot of the region, not only on the window's; the
+  crowd works only in the rooms on the window's lots (`interiors.ts` `packRooms` takes a presence rule and
+  `workplaces.ts` `packRoutes` gives a room off the window an empty table, both by `streets.ts` `lotInWindow`; no WGSL
+  text changed, so no device's crowd kernel memory resets). `region/shops.ts` and `region/homes.ts` are removed;
+  `workplaces.ts` keeps the lot rules the placement reads (`lotCandidates`, `lotTier`). New tests: `placement.test.ts`
+  (12, three seeds, with a seed-1337 golden of every lot, doorway and start), `regionStart.test.ts` (11, three seeds by
+  five regions: the start in its own region, also on the five seeds a sweep of 2,550 starts found starting in the
+  next region before (their shop on a region's edge) and on a made-up map whose shop faces only the next region, on
+  a sidewalk's middle, a metre clear of every wall and out of the water,
+  every street pole a metre past the visitor's body, facing toward the heart, the five starts over 300 m apart, the
+  fallbacks and the HUD line) and `hollowPlaces.test.ts`
+  (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
+  (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
+  `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,665 bytes, from 12,353,777 to 12,365,442; the limit in
+  `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
+  people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
+  it stands on an empty street with nobody at work in it, and after dark a shop or home there is unlit inside (a
+  workplace's own ceiling lights still come on where the tier lights lamps); the painted light paints no floor on a
+  lot its edge runs through (`paintedLight.ts`, `paintedLight.test.ts`), so no room is lit to a straight line. On
+  the fifteen starts of the three tested seeds a start's window holds one to four workplaces, one or two shops and up
+  to two homes. Unverified on a real phone or GPU (the pictures are software
+  WebGPU).
+
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
   is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
@@ -2728,6 +2824,13 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **Lakefront Metro's ferry pier never opens with a guideway column inside it.** At the new waterfront start of
+  Lakefront Metropolis two columns of the elevated loop stood inside the pier's railings (columns every 8 m on the
+  quay's kerb, the pier 8 m wide). `region/transit.ts` `ferryDock` now passes over a shore point where a column of the
+  window's loop stands in the pier's mouth or its platform, grown by the column's radius and a metre; on seed 1337 the
+  pier opens at the foot of a cross street. `transit.test.ts` holds that no column stands in any pier on fifteen windows
+  of three seeds.
 
 - **Sloane's first-walk lines and her quiet watch's nudges waited for a slow frame.** The two hooks
   (`onboarding/useFirstWalk.ts`, `onboarding/useMentor.ts`) wrote their default clock inline, a new function on every

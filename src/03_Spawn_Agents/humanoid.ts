@@ -9,8 +9,8 @@
  * fifteen bones, every vertex tied to two of them, the body sliders that reshape it (height, mass, muscle, shoulders,
  * hips, leg length, posture, head) and the face sliders that reshape the head's features (brow, jaw, chin, cheek,
  * nose, eyes, lips), the walk (each leg solved from where its foot is, so a planted foot keeps its spot of ground;
- * the arms swinging against them) and the gaze (the head and the chest turned toward the operator near by, or the
- * way the person goes), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
+ * the arms swinging against them) and the gaze (the way the person goes, or, only while the operator is talking to
+ * them, the head and the chest turned toward the operator), as arithmetic the crowd's vertex stage (crowd.ts) runs on the GPU and this module runs on the
  * CPU, so the card's silhouette, the tests and the shader agree to the number. Everything here is written by hand for
  * this product: no imported mesh, skeleton, morph target or motion capture. Pure: no three, no DOM, no GPU, no clock,
  * no randomness.
@@ -328,15 +328,22 @@ export function heelPose(heel: number, legs: number): { readonly tilt: number; r
 }
 
 /**
- * Where the head turns (gazeAt). Metres from the neck: the operator's eye holds the gaze whole within `near`, not
- * at all past `reach`, never within `own` (a person's own eye stands at their own neck). Radians: the cone off the
- * body's front past which the operator is behind; the head's yaw and pitch at most; the chest's share of the yaw and
- * its most; the yaw toward the way they go at most (the head leads a turn), whole from `travelSpeed` m/s.
+ * Where the head turns (gazeAt). Nobody looks at the operator unless the operator is talking to them (talkGaze.ts:
+ * a recruit standing by at their side, or the person a conversation names); everyone else looks the way they go.
+ * Metres from the neck: in a conversation the operator's eye holds the gaze whole within `near` (as far off as a
+ * conversation is held), not at all past `reach`, and never inside `own`, fading in over `ownFade` short of it (a
+ * person's own eye stands at their own neck). Radians: the cone off the body's front past which the operator is
+ * behind, the gaze fading out over `coneFade` before it (from just past a right angle, where the head and the chest
+ * are both at their limits, so an operator walking round behind them sees the head swing back to the front rather
+ * than snap); the head's yaw and pitch at most; the chest's share of the
+ * yaw and its most; the yaw toward the way they go at most (the head leads a turn), whole from `travelSpeed` m/s, and
+ * let go from `travelFade` off the heading to nothing at `travelBack`, so someone stepping backwards keeps the head
+ * ahead instead of flicking it from one side to the other as the bearing passes behind them.
  */
 export const GAZE = Object.freeze({
-  near: 2.5, reach: 4.5, own: 0.5,
-  cone: 1.75, headYaw: 1.1, headPitch: 0.5, chestShare: 0.3, chestYaw: 0.45,
-  travelYaw: 0.6, travelSpeed: 0.3,
+  near: 6.5, reach: 8.5, own: 0.5, ownFade: 0.25,
+  cone: 2.3, coneFade: 0.7, headYaw: 1.1, headPitch: 0.5, chestShare: 0.3, chestYaw: 0.45,
+  travelYaw: 0.6, travelSpeed: 0.3, travelFade: 1.9, travelBack: 2.8,
 })
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
@@ -776,24 +783,35 @@ export const GAZE_AHEAD: Gaze = Object.freeze({ chest: 0, head: 0, pitch: 0 })
 
 /**
  * The gaze of a person whose neck is at `neck` (world), facing `heading` (forward (sin, cos)), moving at (vx, vz),
- * with the operator's eye at `target` (world; null: nobody afoot). The way they go first: the velocity's bearing off
- * the heading, held to GAZE.travelYaw, whole from GAZE.travelSpeed, so the head leads a turn. Then the eye, in front
- * and within reach: its bearing and its elevation, held to the head's limits with the chest's, fading out from
- * GAZE.near to GAZE.reach; the chest takes its share of the yaw and the head the rest. Exactly what the vertex stage
+ * with the operator's eye at `target` (world; null: nobody afoot), `talk` (0..1) into a conversation with the
+ * operator (talkGaze.ts talkWeight; 0, the default, for everyone the operator is not talking to). The way they go
+ * first: the velocity's bearing off the heading, held to GAZE.travelYaw, whole from GAZE.travelSpeed, so the head leads
+ * a turn, and let go as the bearing passes behind them (GAZE.travelFade to GAZE.travelBack). Then, in a conversation
+ * alone, the eye, in front and within reach: its bearing and its elevation, held to the head's limits with the
+ * chest's, by the conversation's weight, fading out from GAZE.near to GAZE.reach, toward the cone's edge and close to
+ * their own neck; the chest takes its share of the yaw and the head the rest. Every edge is a fade, so neither the
+ * operator walking round them nor the conversation beginning or ending snaps a head. Exactly what the vertex stage
  * computes (crowdBody.ts bodyGaze).
  */
-export function gazeAt(neck: readonly [number, number, number], heading: number, vx: number, vz: number, target: readonly [number, number, number] | null): Gaze {
+export function gazeAt(neck: readonly [number, number, number], heading: number, vx: number, vz: number, target: readonly [number, number, number] | null, talk = 0): Gaze {
   const speed = Math.hypot(vx, vz)
-  let yaw = speed > 1e-4 ? clampTo(wrapAngle(Math.atan2(vx, vz) - heading), -GAZE.travelYaw, GAZE.travelYaw) * Math.min(1, speed / GAZE.travelSpeed) : 0
+  let yaw = 0
+  if (speed > 1e-4) {
+    const off = wrapAngle(Math.atan2(vx, vz) - heading)
+    yaw = clampTo(off, -GAZE.travelYaw, GAZE.travelYaw) * Math.min(1, speed / GAZE.travelSpeed) * (1 - smoothTo(GAZE.travelFade, GAZE.travelBack, Math.abs(off)))
+  }
   let pitch = 0
-  if (target) {
-    const sh = Math.sin(heading), ch = Math.cos(heading)
+  const weight = clamp01(talk)
+  if (target && weight > 0) {
     const dx = target[0] - neck[0], dy = target[1] - neck[1], dz = target[2] - neck[2]
     const flat = Math.hypot(dx, dz)
-    const bearing = Math.atan2(dx * ch - dz * sh, dx * sh + dz * ch)
-    const hold = flat < GAZE.own || Math.abs(bearing) > GAZE.cone ? 0 : 1 - smoothTo(GAZE.near, GAZE.reach, flat)
-    yaw += (clampTo(bearing, -(GAZE.headYaw + GAZE.chestYaw), GAZE.headYaw + GAZE.chestYaw) - yaw) * hold
-    pitch = clampTo(Math.atan2(dy, flat), -GAZE.headPitch, GAZE.headPitch) * hold
+    if (flat > GAZE.own - GAZE.ownFade) {
+      const sh = Math.sin(heading), ch = Math.cos(heading)
+      const bearing = Math.atan2(dx * ch - dz * sh, dx * sh + dz * ch)
+      const hold = weight * smoothTo(GAZE.own - GAZE.ownFade, GAZE.own, flat) * (1 - smoothTo(GAZE.cone - GAZE.coneFade, GAZE.cone, Math.abs(bearing))) * (1 - smoothTo(GAZE.near, GAZE.reach, flat))
+      yaw += (clampTo(bearing, -(GAZE.headYaw + GAZE.chestYaw), GAZE.headYaw + GAZE.chestYaw) - yaw) * hold
+      pitch = clampTo(Math.atan2(dy, flat), -GAZE.headPitch, GAZE.headPitch) * hold
+    }
   }
   const chest = clampTo(yaw * GAZE.chestShare, -GAZE.chestYaw, GAZE.chestYaw)
   return { chest, head: clampTo(yaw - chest, -GAZE.headYaw, GAZE.headYaw), pitch }

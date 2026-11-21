@@ -8,8 +8,8 @@
  * It fetches nothing and holds nothing of the page: a seed in, a pack out.
  * What breaks if it is removed? The onboarding builds the map on the page's thread, and the first words stutter.
  */
-import { generateLakefront, ZONE, type LakefrontMap } from './lakefront.ts'
-import { packOf, type FromWorker, type ToWorker } from './lakefrontPack.ts'
+import { generateLakefront, type LakefrontMap } from './lakefront.ts'
+import { packOf, startZone, type FromWorker, type ToWorker } from './lakefrontPack.ts'
 
 const scope = self as unknown as { postMessage(message: FromWorker): void; onmessage: ((e: MessageEvent<ToWorker>) => void) | null }
 const say = (m: FromWorker) => scope.postMessage(m)
@@ -32,7 +32,9 @@ scope.onmessage = (e) => {
     } else if (m.kind === 'pack') {
       if (!map) throw new Error('no map was built yet')
       say({ kind: 'stage', stage: 'names' })
-      const pack = packOf(map, m.zone in ZONE ? m.zone : ZONE.metropolis)
+      // The asked zone when it is one of the five regions, else the metropolis (startZone: a zone is a number, so
+      // `in ZONE`, which tests ZONE's keys, the regions' names, would refuse every one of them).
+      const pack = packOf(map, startZone(m.zone))
       say({ kind: 'stage', stage: 'ready' })
       say({ kind: 'pack', id: m.id, pack })
     }

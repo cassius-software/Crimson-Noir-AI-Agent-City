@@ -1482,6 +1482,31 @@ test('the uniform: sixteen slots of a, b, furniture and stations as vec4s, zero 
   assert.throws(() => packRooms([...rooms, rooms[0]]), RangeError)
 })
 
+test('the uniform: a room the caller says is not present keeps its slot, empty; every other slot is as it was', () => {
+  const rooms = workplaces(42)
+  const all = packRooms(rooms)
+  // A generated region's rooms stand all over its map, and the crowd walks one window of it (region/streets.ts
+  // lotInWindow): the rooms off the window are packed as empty slots, the others in their own slots, bit for bit.
+  const absent = new Set([0, 5, 15])
+  const asked: Workplace[] = []
+  const some = packRooms(rooms, undefined, (room) => { asked.push(room); return !absent.has(rooms.indexOf(room)) })
+  assert.deepEqual(asked, rooms, 'every room is asked once, in order')
+  rooms.forEach((_, r) => {
+    const slot = some.subarray(r * ROOM_FLOATS, (r + 1) * ROOM_FLOATS)
+    if (absent.has(r)) assert.ok(slot.every((v) => v === 0), `slot ${r} is empty`)
+    else assert.deepEqual([...slot], [...all.subarray(r * ROOM_FLOATS, (r + 1) * ROOM_FLOATS)], `slot ${r} is as it was`)
+  })
+  assert.ok(packRooms(rooms, undefined, () => false).every((v) => v === 0), 'none present: the city without rooms')
+  assert.deepEqual([...packRooms(rooms, undefined, () => true)], [...all])
+  // A reused block is cleared first, so a room that was present and no longer is leaves nothing behind.
+  const reused = new Float32Array(ROOMS_FLOATS).fill(7)
+  packRooms(rooms, reused, (room) => rooms.indexOf(room) !== 3)
+  assert.ok(reused.subarray(3 * ROOM_FLOATS, 4 * ROOM_FLOATS).every((v) => v === 0))
+  // Too much furniture is refused whether or not the room is present.
+  const heavy = { ...rooms[0], furniture: Array.from({ length: ROOM.furniture + 1 }, () => rooms[0].furniture[0]) }
+  assert.throws(() => packRooms([heavy], undefined, () => false), RangeError)
+})
+
 test('the sixteen kinds: the ids in the order other threads dispatch by, the six first rooms under their new ids with their furniture and stations unchanged', () => {
   assert.deepEqual([...WORKPLACE_KINDS], [
     'roboticsLab', 'warehouse', 'serverVault', 'metroOps', 'controlTower', 'kitchen', 'microFab', 'twinStudio',
