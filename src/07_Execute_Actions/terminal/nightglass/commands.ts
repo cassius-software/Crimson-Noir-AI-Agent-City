@@ -54,10 +54,13 @@
  *   texel's bytes (and of 4 for a depth image), its rowBytes covers one row and (with more than one row) is a multiple of `limits.copyRowAlign`.
  *   A copy holds 1 to COPY_REGIONS (1024) regions. Regions stay inside their resources and never overlap a region the
  *   same copy writes, nor (within one buffer or one image subresource) the region it reads; the checks on buffer
- *   bytes sort and sweep, so they cost about n log n in the regions (and in the rows, for a copy into a buffer).
+ *   bytes sort and sweep, so they cost about n log n in the regions (and in the rows, for a copy into a buffer),
+ *   while image rectangles are compared pairwise under the cap.
  *   Four-sample images are never copied. Depth images are copied only into a buffer.
  * - A barrier holds at least one barrier; an image barrier never moves into `blank`, and two image barriers of one
- *   command never cover the same subresource.
+ *   command never cover the same subresource. That check sweeps each image's levels in turn, sorting the layer
+ *   ranges of the barriers that cover the level, so it costs about n log n in the image barriers times the levels
+ *   each covers (14 at most, for images up to 8192 pixels), and needs no cap.
  * - Groups nest: one begun inside a pass ends inside it, one begun outside ends outside, and end() needs none open.
  * - Commands that need a queue ability check the arena's group: a pass needs graphics, a compute pipeline compute,
  *   a copy, update or zero any of copy, graphics and compute.
@@ -351,10 +354,6 @@ function runClash(list: readonly Rows[], run: readonly number[], texel: number):
 
 function rectsOverlap(a: Region, b: Region): boolean {
   return a.level === b.level && a.layer === b.layer && overlaps(a.x, a.x + a.width, b.x, b.x + b.width) && overlaps(a.y, a.y + a.height, b.y, b.y + b.height)
-}
-
-function rangesOverlap(a: Range, b: Range): boolean {
-  return overlaps(a.base, a.base + a.count, b.base, b.base + b.count)
 }
 
 const INDIRECT_BYTES = { draw: 16, indexed: 20, dispatch: 12 } as const
@@ -1106,9 +1105,23 @@ export class CommandListImpl extends Base implements CommandList {
         this.touch(image)
         return Object.freeze({ before, after, image, from, to, levels, layers })
       })
-      images.forEach((a, i) => images.forEach((b, j) => {
-        if (j > i && a.image === b.image && rangesOverlap(a.levels, b.levels) && rangesOverlap(a.layers, b.layers)) fail('invalid', `${where}: images[${i}] and images[${j}] cover the same levels and layers of ${(a.image as ImageImpl).name}`)
-      }))
+      // Per image and level, the barriers' layer ranges are swept as clash() sweeps, instead of comparing every pair.
+      const covers = new Map<Image, Map<number, number[]>>()
+      images.forEach((b, i) => {
+        const byLevel = covers.get(b.image) ?? new Map<number, number[]>()
+        covers.set(b.image, byLevel)
+        for (let level = b.levels.base; level < b.levels.base + b.levels.count; level++) {
+          const at = byLevel.get(level) ?? []
+          byLevel.set(level, at)
+          at.push(i)
+        }
+      })
+      for (const [image, byLevel] of covers) {
+        for (const at of byLevel.values()) {
+          const hit = clash(at.length, (k) => images[at[k]].layers.base, (k) => images[at[k]].layers.base + images[at[k]].layers.count)
+          if (hit !== null) fail('invalid', `${where}: images[${at[hit[0]]}] and images[${at[hit[1]]}] cover the same levels and layers of ${(image as ImageImpl).name}`)
+        }
+      }
       if (memory.length + buffers.length + images.length === 0) fail('invalid', `${where}: the barrier holds no barrier`)
       const at = this.emit({ c: 'barrier' })
       this.note({ r: 'barrier', at, memory: Object.freeze(memory), buffers: Object.freeze(buffers), images: Object.freeze(images) })

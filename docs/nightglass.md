@@ -91,9 +91,11 @@ may be submitted again each time it is `ready`. Binding state lasts until the ne
 (**pinned**): draws bind inside a pass, dispatches outside one, and a pass starts with the viewport and scissor
 covering its attachments. Barriers, copies, updates and dispatches are outside passes. A viewport follows WebGPU's
 rules: at most `imageSize` wide and tall, from -2 x `imageSize` to 2 x `imageSize` - 1 on each axis, and
-0 <= near <= far <= 1. One copy carries 1 to 1024 regions (`COPY_REGIONS` in `commands.ts`, **pinned**), and its
-overlap checks sort and sweep, so recording it costs about n log n in its regions (and, for a copy into a buffer, in
-the rows of regions whose byte spans meet).
+0 <= near <= far <= 1. One copy carries 1 to 1024 regions (`COPY_REGIONS` in `commands.ts`, **pinned**). Its
+checks on buffer bytes sort and sweep, so they cost about n log n in its regions (and, for a copy into a buffer, in
+the rows of regions whose byte spans meet), while image rectangles are compared pairwise under that cap. Two image
+barriers of one barrier command never cover the same level of the same layer of one image; that check sorts the
+layer ranges level by level, so it costs about n log n in the image barriers times the levels each covers.
 
 The usage scope (**pinned**, checked when the command is recorded, whatever `checks` says): one pass, with its
 attachments and every resource every draw in it sees, is one scope; so is each dispatch. A draw or dispatch sees

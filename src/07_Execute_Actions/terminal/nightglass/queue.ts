@@ -13,6 +13,8 @@
  *
  * Rules (all pinned by queue.test.ts):
  * - A submit is all or nothing: a refused one changes no list, semaphore or fence.
+ * - A list named twice is found through a set of the lists named so far, so checking that each of n lists is named
+ *   once costs about n, not n squared.
  * - Within a submit, submissions run in order; within a submission its waits come first, then its lists, then its
  *   signals. A semaphore is armed by a signal and disarmed by the one wait that takes it, so a wait needs a signal
  *   in an earlier submission (of this submit or an earlier one), a submission cannot wait on its own signal, and a
@@ -67,6 +69,7 @@ export class QueueImpl implements Queue {
     if (f !== null && f.waiting) fail('state', `${where}: ${f.name} already waits on submitted work`)
     if (f !== null && f.signalled) fail('state', `${where}: ${f.name} is signalled; reset it first`)
     const lists: CommandListImpl[] = []
+    const named = new Set<CommandListImpl>()
     const steps: Step[] = []
     const armed = new Map<SemaphoreImpl, boolean>()
     const isArmed = (s: SemaphoreImpl): boolean => armed.get(s) ?? s.armed
@@ -88,7 +91,7 @@ export class QueueImpl implements Queue {
       listOf(o.lists, at, 'the lists').forEach((l, j) => {
         const lat = `${at} lists[${j}]`
         const list = own(core, CommandListImpl, l, lat, 'the list', 'CommandList')
-        if (lists.includes(list)) fail('state', `${lat}: ${list.name} is submitted twice`)
+        if (named.has(list)) fail('state', `${lat}: ${list.name} is submitted twice`)
         const state = list.state
         if (state === 'invalid') {
           const why = list.stale()
@@ -98,6 +101,7 @@ export class QueueImpl implements Queue {
         if (state !== 'ready') fail('state', `${lat}: ${list.name} is ${state}, not ready`)
         if (list.arena.group !== this.group) fail('mismatch', `${lat}: ${list.name} was recorded for queue group ${list.arena.group}, and this queue is of group ${this.group}`)
         lists.push(list)
+        named.add(list)
         step.lists.push({ list, at: lat })
       })
       const signals = o.signal === undefined ? [] : listOf(o.signal, at, 'the signals')

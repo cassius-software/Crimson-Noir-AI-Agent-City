@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { BindingSet, Buffer, Command, PipelineLayout, RenderPipeline, VertexBufferLayout, View, Viewport } from './api.ts'
+import type { BindingSet, Buffer, Command, Image, PipelineLayout, RenderPipeline, VertexBufferLayout, View, Viewport } from './api.ts'
 import { BindingSetImpl } from './bindings.ts'
 import { arrayOf, lens } from './builder.ts'
 import { COPY_REGIONS, CommandListImpl } from './commands.ts'
@@ -887,6 +887,33 @@ test('a barrier: at least one, names it knows, ranges inside their resources, ne
   list.beginPass({ colors: [{ view: canvas, load: 'keep', store: 'keep' }] })
   refuses(() => list.barrier({ buffers: [{ ...step, buffer: buf }] }), 'state', /this command sits outside a pass/)
   list.endPass()
+  list.end()
+  consistent(list)
+})
+
+test('image barriers are kept apart by sorting each image\'s layer ranges level by level, not by comparing every pair', () => {
+  const r = rig()
+  const list = r.device.createCommandArena().allocate() as CommandListImpl
+  const step = { before: { stages: ['copy'] }, after: { stages: ['copy'] } } as const
+  const stack = (): Image => image(r, { format: 'r8', width: 1, height: 1, layers: 256, use: ['copy-src'] })
+  const each = <T>(n: number, f: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => f(i))
+  const stacks = each(128, stack)
+  // One barrier per layer of 128 images of 256 layers: 32,768 barriers, every pair of which was compared (about half
+  // a billion comparisons, seconds); the sweep sorts 128 lists of 256.
+  const layers = stacks.flatMap((img) => each(256, (l) => ({ ...step, image: img, from: 'blank', to: 'copy-src', layers: { base: l, count: 1 } }) as const))
+  list.begin()
+  list.barrier({ images: layers })
+  // The one clash among them is found, the lower barrier named first.
+  refuses(() => list.barrier({ images: [...layers, { ...layers[300], layers: { base: 40, count: 8 } }] }), 'invalid', /^command list \d+ barrier: images\[296\] and images\[32768\] cover the same levels and layers of image \d+$/)
+  refuses(() => list.barrier({ images: [{ ...layers[0], layers: { base: 2, count: 2 } }, { ...layers[0], layers: { base: 0, count: 3 } }] }), 'invalid', /images\[0\] and images\[1\] cover the same levels/)
+  // Levels are swept one by one: a clash is found at the one level two barriers share, and the same layers at other
+  // levels, or of another image, are apart.
+  const mips = image(r, { format: 'rgba8', width: 4, height: 4, levels: 3, layers: 4, use: ['sampled'] })
+  const at = (levels: { base: number; count: number }, layers: { base: number; count: number }) => ({ ...step, image: mips, from: 'blank', to: 'shader-read', levels, layers }) as const
+  list.barrier({ images: [at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 1, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 2, count: 2 }), at({ base: 2, count: 1 }, { base: 0, count: 2 })] })
+  refuses(() => list.barrier({ images: [at({ base: 1, count: 2 }, { base: 0, count: 2 }), at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 1, count: 3 })] }), 'invalid', /images\[0\] and images\[2\] cover the same levels and layers of image \d+/)
+  list.barrier({ images: [at({ base: 1, count: 2 }, { base: 0, count: 2 }), at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 2, count: 2 }), { ...layers[0], layers: { base: 0, count: 4 } }] })
+  assert.equal(list.commands.length, 3)
   list.end()
   consistent(list)
 })
