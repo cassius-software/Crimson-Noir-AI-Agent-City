@@ -17,6 +17,7 @@
  * the south button reads 'B'.
  */
 import type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
+import { PAD, type PadHand } from '../04_Connect_Hardware/gamepad.ts'
 
 export type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 
@@ -38,7 +39,8 @@ export type GlyphKind = 'key' | 'button' | 'stick' | 'pill'
 export interface Hint { action: ControlAction; glyph: string; kind: GlyphKind; label: string }
 
 /** '' = the family has no control for the action. Touch reaches the clock, the console, the HUD and ghost view
- *  through its Menu button (TouchControls.tsx). */
+ *  through its Menu button (TouchControls.tsx); a pad reaches the console, the HUD and ghost view through its own
+ *  menu (PadMenu.tsx), opened by its menu button, named here as the pad prints it (PAD_BUTTON_NAMES). */
 const GLYPHS = {
   keyboard: {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
@@ -46,19 +48,19 @@ const GLYPHS = {
   },
   abxy: {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'RB', mic: 'RS',
   },
   bayx: {
     move: 'L', look: 'R', run: 'LS', interact: 'B', handbrake: 'A', reset: 'X',
-    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R', mic: 'RS',
+    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '+', hud: '+', ghost: '+', ping: 'R', mic: 'RS',
   },
   numbered: {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1', mic: 'R3',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'R1', mic: 'R3',
   },
   generic: {
     move: 'L', look: 'R', run: 'LS', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'RB', mic: 'RS',
   },
   touch: {
     move: 'Stick', look: 'Drag', run: 'Run', interact: 'Enter car', handbrake: 'Handbrake', reset: 'Reset',
@@ -66,8 +68,6 @@ const GLYPHS = {
   },
 } as const satisfies Record<GlyphFamily, Record<ControlAction, string>>
 
-/** Controllers have no binding for these; the keyboard still does it, so pad hints show the key. */
-const KEYBOARD_ONLY: ReadonlySet<ControlAction> = new Set(['console', 'hud', 'ghost'])
 const FACE: ReadonlySet<ControlAction> = new Set(['interact', 'handbrake', 'reset'])
 
 /** The glyph for an action in a family ('' when the family has no such control). */
@@ -89,7 +89,7 @@ export function isPadFamily(family: GlyphFamily): family is PadFamily {
 
 export function glyphKind(action: ControlAction, family: GlyphFamily): GlyphKind {
   if (family === 'touch') return 'pill'
-  if (family === 'keyboard' || KEYBOARD_ONLY.has(action)) return 'key'
+  if (family === 'keyboard') return 'key'
   if (action === 'move' || action === 'look') return 'stick'
   if (FACE.has(action) && glyph(action, family).length === 1) return 'button'
   return 'pill'
@@ -100,6 +100,32 @@ const SPOKEN: Readonly<Record<string, string>> = { '◀': 'left', '▶': 'right'
 export function spokenGlyph(g: string): string {
   if (SPOKEN[g]) return SPOKEN[g]
   return g.replace(/[◀▶▲]/gu, (c) => SPOKEN[c]).replace(/\s+/g, ' ').trim()
+}
+
+/**
+ * Each pad button's printed name by layout, in the standard mapping's order (south, east, west, north, the left and
+ * right shoulders, the left and right triggers, the two centre buttons, the stick clicks, the d-pad up, down, left and
+ * right, home): what the on-screen keys' legend and the pad's menu call a button. Position-true, as the table above.
+ */
+export const PAD_BUTTON_NAMES: Readonly<Record<PadFamily, readonly string[]>> = {
+  abxy: ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home'],
+  bayx: ['B', 'A', 'Y', 'X', 'L', 'R', 'ZL', 'ZR', '−', '+', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home'],
+  numbered: ['South', 'East', 'West', 'North', 'L1', 'R1', 'L2', 'R2', 'Select', 'Start', 'L3', 'R3', 'Up', 'Down', 'Left', 'Right', 'Home'],
+  generic: ['South', 'East', 'West', 'North', 'LB', 'RB', 'LT', 'RT', 'Select', 'Start', 'LS', 'RS', 'Up', 'Down', 'Left', 'Right', 'Home'],
+}
+
+/** A pad button's printed name in a layout (standard mapping index); '' for an index the mapping has no name for. */
+export function padButtonName(family: PadFamily, button: number): string {
+  return PAD_BUTTON_NAMES[family][button] ?? ''
+}
+
+/**
+ * The pad's menu button for the player's hand, as the pad prints it (gamepad.ts PAD_UI): start with both hands; with
+ * one hand, whose centre buttons are its ping and run latch, select with that hand's shoulder held.
+ */
+export function padMenuWord(family: PadFamily, hand: PadHand): string {
+  if (hand === 'both') return padButtonName(family, PAD.start)
+  return `${padButtonName(family, PAD.select)} with ${padButtonName(family, hand === 'left' ? PAD.l1 : PAD.r1)} held`
 }
 
 type Row = readonly [ControlAction, string]
@@ -144,15 +170,16 @@ export function modeGlyph(action: ControlAction, family: GlyphFamily, driving: b
 }
 
 /** Touch's one row for everything its Menu holds: the four keyboard rows it stands for would push a landscape phone's
- *  card off the screen. */
+ *  card off the screen. A pad's menu gets one row too, which also names the on-screen keys it opens. */
 const TOUCH_MENU_LABEL = 'Microphone, clock, console, HUD, ghost view'
+const PAD_MENU_LABEL = 'Menu: console, HUD, ghost view, on-screen keys'
 
 /**
  * Control hints for the current mode. 'tips' = the Concierge's three; 'all' = every control the family
  * has (unbound ones skipped, the touch stick's throttle folded into "Steer and accelerate", and the touch
  * Menu's actions into one row).
  */
-export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all'): Hint[] {
+export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips' | 'all', hand: PadHand = 'both'): Hint[] {
   const group = family === 'keyboard' || family === 'touch' ? family : 'pad'
   let rows = scope === 'tips' ? TIPS[group][driving ? 'drive' : 'foot'] : driving ? DRIVE_ALL : FOOT_ALL
   if (scope === 'all' && driving && family === 'touch') {
@@ -164,6 +191,10 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
     if (!g) continue
     if (family === 'touch' && g === GLYPHS.touch.console) {
       if (!out.some((h) => h.glyph === g)) out.push({ action, glyph: g, kind: glyphKind(action, family), label: TOUCH_MENU_LABEL })
+      continue
+    }
+    if (isPadFamily(family) && (action === 'console' || action === 'hud' || action === 'ghost')) {
+      if (!out.some((h) => h.label === PAD_MENU_LABEL)) out.push({ action, glyph: hand === 'both' ? g : padMenuWord(family, hand), kind: glyphKind(action, family), label: PAD_MENU_LABEL })
       continue
     }
     out.push({ action, glyph: g, kind: glyphKind(action, family), label })

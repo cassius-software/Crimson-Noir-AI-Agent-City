@@ -20,6 +20,7 @@
  */
 import { useCallback, useEffect, useReducer, useRef, useState, type CSSProperties, type MouseEvent, type PointerEvent } from 'react'
 import type { Input, TouchButton } from './input.ts'
+import { menuItems } from './menuItems.ts'
 import { layoutAttribute, PointerOwner, stickCentreBounds, TOUCH, validateTouchLayout, type ControlKind, type ControlRect, type Viewport } from './touchLayout.ts'
 
 const STICK = { zone: 184, base: 116, knob: 52, travel: 42, deadPx: 5 } as const
@@ -414,23 +415,7 @@ function MenuSheet({ input, host, at, onClose }: { input: Input; host: TouchMenu
     fn()
     if (close) onClose()
   }
-  // `id` keys an item whose label changes as it is pressed (the text size), so React keeps the same button, with its
-  // focus and the scan's place, instead of mounting a new one each press.
-  const items: { label: string; id?: string; on?: boolean; run: () => void; keep?: boolean }[] = [
-    { label: 'Console', run: host.onConsole },
-    ...(host.onModelFile ? [{ label: 'Model file', run: host.onModelFile }] : []),
-    { label: 'Clock −1 h', run: () => input.press('timeBack'), keep: true },
-    { label: 'Clock +1 h', run: () => input.press('timeForward'), keep: true },
-    { label: 'Ghost view', on: host.ghost, run: () => input.press('ghost') },
-    { label: 'Rain mode', on: host.rain, run: () => input.press('matrix') },
-    // The microphone: the same press as V and the right stick's click (the engine hands it to the host's switch).
-    { label: 'Microphone', on: host.mic === true, run: () => input.press('mute') },
-    ...(host.onHeadset ? [{ label: 'Headset', on: host.headset === true, run: host.onHeadset }] : []),
-    // Accessibility (access.ts): the two settings most wanted on a phone; the rest is the console's `access`.
-    ...(host.onContrast ? [{ label: 'High contrast', on: host.contrast === true, run: host.onContrast }] : []),
-    ...(host.onTextScale ? [{ label: `Text size ${host.textScale ?? 100} %`, id: 'text-size', run: host.onTextScale, keep: true }] : []),
-    { label: host.hudVisible ? 'Hide HUD' : 'Show HUD', run: host.onHud },
-  ]
+  const items = menuItems(host, input)
   // The sheet takes the text size like every card (its layer is in .ui-zoom: a list of words, unlike the thumb-sized
   // buttons), so the window's pixels it is placed by are divided by the zoom, and it is that much wider.
   const zoom = Math.max(1, (host.textScale ?? 100) / 100)

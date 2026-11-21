@@ -845,6 +845,12 @@ export class Engine {
    */
   onBrowse: ((index: number) => void) | null = null
   /**
+   * The host's: what player 1's pads asked of the page this frame (04_Connect_Hardware/gamepad.ts PAD_UI: the pad's
+   * menu, the on-screen keys), never while a home's doorstep card has the pad (its own menu button closes it). Null:
+   * the asks go nowhere.
+   */
+  onPadUi: ((ui: number) => void) | null = null
+  /**
    * The host's: a home's doorstep card asked for (E or B on foot inside home `home`, its property index, with no car in
    * reach to take the E). Null: nothing opens.
    */
@@ -2694,6 +2700,9 @@ export class Engine {
     // Gamepads and touch first, so their presses are seen by take() this same frame. Under a headset the sticks are
     // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
     this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
+    // Whether this frame's poll is drained below (a home's card open, or the poll right after it closed): its menu and
+    // keys buttons are dropped with it, so the start that closed the card does not open the pad's menu too.
+    const draining = this.homeCard !== null || this.drainNext
     input.poll(dt)
     // The microphone's mute (V, the right stick's click) is a privacy switch that nothing holds back, an action card's
     // shield included: taken before a home's card drains the rest.
@@ -2702,6 +2711,9 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
+    // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
+    // unless this poll was drained, or a headset is on (neither the menu nor the keys would show inside it).
+    const padUi = input.takeUi()
     // While a home is furnished the card's right stick turns its draft camera, and the head the poll just turned by
     // that stick (Input reads the look even under suspend) is held where it was: the player's figure does not turn in
     // the draft, and no tilt is left over when the card closes.
@@ -2726,6 +2738,7 @@ export class Engine {
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (mute) this.onMute?.()
+    if (padUi !== 0 && !draining && !this.rig.headset) this.onPadUi?.(padUi)
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
@@ -3308,10 +3321,10 @@ export class Engine {
   }
 
   /**
-   * The city's structure-of-arrays columns for NoirScript (terminal/noirscript): every array a copy taken now, so a run
-   * reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off the
-   * zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai,
-   * 1 player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
+   * The city's structure-of-arrays columns for Crimson Noir Script (terminal/noirscript): every array a copy taken now,
+   * so a run reads one consistent moment and nothing of the realm is handed out by reference. The crowd straight off
+   * the zero-copy bridge (as crowd.positions above), split into x and z; the cars from the newest poses (mode 0 ai, 1
+   * player, 2 parked, as simProtocol.ts MODES orders them); the kernel's counters; the frame clock.
    */
   private soaTables(): NoirTables {
     const b = this.sim.bridge

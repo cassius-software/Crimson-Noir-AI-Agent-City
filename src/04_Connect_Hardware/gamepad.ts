@@ -68,6 +68,24 @@ export type PadHand = 'both' | 'left' | 'right'
 export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16, mute: 32 } as const
 
 /**
+ * What a pad asks of the page rather than of the game, left in PadMapper.ui by each read: its menu (the keyboard's
+ * one-key actions in a list, PadMenu.tsx) and the on-screen keys (ScreenKeys.tsx; with no field to type in, the
+ * console and its keys). With both hands these are the two centre buttons, start and select, which the game itself
+ * reads for nothing. With one hand the centre buttons are that hand's ping and run latch, so the menu is select with
+ * the hand's shoulder held (the shoulder with start stays the ping aimed by a glance) and the keys are an item of the
+ * menu. A pad read by position that has no centre buttons opens the menu with its left shoulder, which the game
+ * leaves unused with both hands.
+ */
+export const PAD_UI = { menu: 1, keys: 2 } as const
+
+/**
+ * How far from the centre a stick may rest, past the dead zone and on its 0..1 scale, and still count as let go when
+ * the pads come back from the on-screen keys or the pad's menu (PadMapper.lend): well short of the push that steps the
+ * keys' highlight (keysPad.ts, 0.6), well past a worn stick's drift.
+ */
+export const STICK_REST = 0.3
+
+/**
  * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
  * the mapper's button word, above any button index it reads: the left paddle is a second L3 (the run latch), the
  * right paddle a second R1 (a ping), so the sticks' thumbs never leave them.
@@ -398,6 +416,22 @@ export class PadMapper {
   private familyId = ''
   /** Pads without the standard mapping, read by position. */
   readonly generic = new GenericPads()
+  /**
+   * The pads of the last read, each in the standard shape (one without the standard mapping as `generic` lays it
+   * out): what a reader that borrows the pad for a while reads (the on-screen keys, ScreenKeys.tsx), so it sees the
+   * same buttons in the same places as the game does. Refilled by every read, never reallocated.
+   */
+  readonly views: GamepadLike[] = []
+  /** A button went down on some pad during the last read: a hand is on a pad (a stick that drifts is not one). */
+  pressed = false
+  /** What the last read's presses asked of the page (PAD_UI bits); nothing while the pads are lent. */
+  ui = 0
+  /** The pads are lent to a reader of `views` (lend). */
+  private lent = false
+  /** Handed back with a button or a trigger still held: the game waits until all of them are let go. */
+  private settling = false
+  /** Handed back with a stick still pushed: the sticks move nothing until all of them have been seen at rest. */
+  private settlingSticks = false
   /** The reads' clock in milliseconds (GenericPads time how long a pad's axes hold still). */
   private readonly now: () => number
 
@@ -405,11 +439,35 @@ export class PadMapper {
     this.now = now
   }
 
+  /**
+   * Lends the pads to a reader of `views` (the on-screen keys, the pad's menu), or takes them back. While they are
+   * lent a read still follows every button (so no press replays afterwards), the device and the family, but gives the
+   * game stillness and no edge but the microphone's mute, a privacy switch nothing borrows; the run latch stays as it
+   * is. Taken back, the game still gets nothing from the buttons and triggers until every one of them has been let go
+   * once, and nothing from the sticks until they have all been seen at rest once (within STICK_REST of the centre, past
+   * the dead zone, so a stick that drifts is at rest too): the press that closed the keys, a
+   * trigger still squeezed from typing, or the stick that was stepping the highlight never opens a door or moves a
+   * car or the avatar. (The two waits are apart, so a stick that rests off centre holds back only the sticks.)
+   */
+  lend(on: boolean): void {
+    if (on === this.lent) return
+    this.lent = on
+    this.settling = !on
+    this.settlingSticks = !on
+  }
+
+  /** Whether the game is getting no press from the pads: they are lent, or handed back with a button not yet let go. */
+  get borrowed(): boolean {
+    return this.lent || this.settling
+  }
+
   /** Fills `out` (zeroed first) and returns PAD_EDGE bits for buttons that went down since the last read. */
   read(pads: ArrayLike<GamepadLike | null | undefined> | null, out: Analog): number {
     zeroAnalog(out)
     this.seen.fill(0)
-    let edges = 0, count = 0, any = false, bestMove = 0, bestStick = 0, bestLook = 0, l3 = false
+    this.views.length = 0
+    this.pressed = false
+    let edges = 0, ui = 0, count = 0, any = false, held = false, bestMove = 0, bestStick = 0, bestLook = 0, l3 = false
     let firstPad: GamepadLike | null = null, lastPad: GamepadLike | null = null
     const dz = PAD_TUNING.stickDeadzone, v = this.v
     const n = pads ? pads.length : 0
@@ -421,6 +479,7 @@ export class PadMapper {
       if (!standard && at < 0) at = this.now()
       const p = standard ? raw : this.generic.view(raw, at)
       count++
+      this.views.push(p)
       firstPad ??= p
       const slot = p.index & (SLOTS - 1)
       this.seen[slot] = 1
@@ -460,6 +519,8 @@ export class PadMapper {
       if (!standard && !this.before[slot]) this.prev[slot] = bits
       const rising = (bits & ~this.prev[slot]) >>> 0
       this.prev[slot] = bits
+      if (rising !== 0) this.pressed = true
+      if (bits !== 0) held = true
       if (hand === 'both') {
         if (rising & (1 << PAD.south)) edges |= PAD_EDGE.interact
         if (rising & (1 << PAD.north)) edges |= PAD_EDGE.reset
@@ -471,6 +532,10 @@ export class PadMapper {
         // The right stick's click: the microphone's mute, a thumb that never leaves the stick (L3 is the run latch).
         if (rising & (1 << PAD.r3)) edges |= PAD_EDGE.mute
         if (bits & (1 << PAD.east)) out.handbrake = true
+        // The centre buttons are the page's (PAD_UI); a pad read by position without them asks for the menu with its left shoulder.
+        if (rising & (1 << PAD.start)) ui |= PAD_UI.menu
+        if (rising & (1 << PAD.select)) ui |= PAD_UI.keys
+        if (partial && rising & (1 << PAD.l1)) ui |= PAD_UI.menu
       } else {
         // One hand: the centre buttons are shared, the rest sits on that hand's side (PadHand).
         if (rising & (1 << (hand === 'left' ? PAD.down : PAD.south))) edges |= PAD_EDGE.interact
@@ -479,8 +544,10 @@ export class PadMapper {
         if (hand === 'left' && rising & (1 << PAD.left)) edges |= PAD_EDGE.timeBack
         if (hand === 'left' && rising & (1 << PAD.right)) edges |= PAD_EDGE.timeForward
         if (rising & (1 << PAD.start)) edges |= PAD_EDGE.ping
-        if (rising & (1 << PAD.select)) l3 = true
-        if (rising & (1 << (hand === 'left' ? PAD.l3 : PAD.r3))) edges |= PAD_EDGE.mute
+        // Select with the hand's shoulder held asks for the page's menu (PAD_UI) and latches no run.
+        if (rising & (1 << PAD.select)) { if (lookHeld) ui |= PAD_UI.menu; else l3 = true }
+        // While the pads are lent this hand's stick steps a highlight: its click is the mute only with the stick at rest.
+        if (rising & (1 << (hand === 'left' ? PAD.l3 : PAD.r3)) && !(this.lent && stick > 0)) edges |= PAD_EDGE.mute
         if (hand === 'right' && bits & (1 << PAD.east)) out.handbrake = true
       }
       if (bits !== 0 || stick > 0 || look > 0 || throttle > 0 || brake > 0) {
@@ -491,11 +558,26 @@ export class PadMapper {
     }
     for (let s = 0; s < SLOTS; s++) if (!this.seen[s]) { this.prev[s] = 0; this.generic.forget(s) }
     this.before.set(this.seen)
-    if (l3) { this.running = !this.running; this.runMoved = false }
-    else if (this.hand === 'both') { if (bestMove === 0) this.running = false }
-    else if (bestMove > 0) this.runMoved = true
-    else if (bestStick === 0 && this.runMoved) this.running = false
-    out.run = this.running
+    if (this.settling && !held) this.settling = false
+    // At rest is near the centre, not exactly on it: a worn stick that drifts past the dead zone rests there for good.
+    if (this.settlingSticks && bestStick < STICK_REST * STICK_REST && bestLook < STICK_REST * STICK_REST) this.settlingSticks = false
+    this.ui = this.lent || this.settling ? 0 : ui
+    if (this.lent || this.settling) {
+      // Lent (lend), or handed back and still held: stillness, and no edge but the mute. The run latch is left alone.
+      zeroAnalog(out)
+      edges &= PAD_EDGE.mute
+    } else if (this.settlingSticks) {
+      // Handed back, the buttons let go, a stick still pushed: the buttons are the game's again, the sticks not yet.
+      out.moveX = 0; out.moveY = 0; out.steer = 0; out.lookX = 0; out.lookY = 0
+      if (l3) { this.running = !this.running; this.runMoved = false }
+      out.run = this.running
+    } else {
+      if (l3) { this.running = !this.running; this.runMoved = false }
+      else if (this.hand === 'both') { if (bestMove === 0) this.running = false }
+      else if (bestMove > 0) this.runMoved = true
+      else if (bestStick === 0 && this.runMoved) this.running = false
+      out.run = this.running
+    }
     this.active = any
     if (any) this.used = true
     if (count === 0) { this.used = false; this.running = false; this.runMoved = false; this.lastSlot = -1 }

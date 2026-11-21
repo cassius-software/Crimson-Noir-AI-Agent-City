@@ -13,8 +13,11 @@
  * class's own runtime name) into a processor module the page loads from a blob: URL, so the detector keeps up with
  * the audio thread at 128-frame blocks whatever the page's frame rate, and the page gets only transitions and a
  * level a few times a second. That is why VadCore is self-contained: it reaches nothing outside itself but Math.
+ * The utterance tap (utterance.ts) rides in the same processor module, serialised the same way: the detector tells it
+ * when a person starts and stops, and it keeps the sentence between for the page's speech recogniser.
  * What breaks if it is removed? The pill shows a level and nothing else: no speech state, no barge-in.
  */
+import { UtteranceTap } from './utterance.ts'
 
 /** The detector's tuning (VadCore takes a copy; the worklet gets it as processorOptions). */
 export const VAD = Object.freeze({
@@ -401,31 +404,50 @@ export function vadFrame(rate: number): number {
 /** The processor's registered name. */
 export const VAD_PROCESSOR = 'noir-vad'
 
-/** What the worklet posts to the page: a level a few times a second, and every speech boundary. */
-export interface VadMessage { rms: number; speech?: boolean; t: number }
+/** What the worklet posts to the page: a level a few times a second, every speech boundary, and, while the page asked
+ *  it to hear, each utterance as it ends (utterance.ts: 16 kHz samples, transferred; `cut` when it was cut at the cap). */
+export interface VadMessage { rms: number; speech?: boolean; t: number; utterance?: Float32Array; cut?: boolean }
 
 /** What the page posts to the worklet. */
-export interface VadCommand { speaking?: boolean; line?: boolean; reset?: boolean }
+export interface VadCommand { speaking?: boolean; line?: boolean; reset?: boolean; hear?: boolean }
 
 /**
- * The AudioWorklet processor module as source text: VadCore itself (by its runtime name, which a minifier may have
- * shortened) and a processor that feeds it the input's first channel, posts a level every `every` frames and every
- * boundary at once, and takes `speaking`, `line` (VadCore.newLine) and `reset` from the page. Load it from a blob: URL (the page's policy admits
- * blob: workers and scripts, index.html).
+ * The AudioWorklet processor module as source text: VadCore itself (its own source, whatever a minifier named it),
+ * the utterance tap beside it (utterance.ts UtteranceTap, the same way), and a processor that feeds the
+ * detector the input's first channel, posts a level every `every` frames and every boundary at once, and takes
+ * `speaking`, `line` (VadCore.newLine) and `reset` from the page. While the page asked it to `hear`, the same samples
+ * go through the tap with the detector's word, and each utterance that ends is posted (its buffer transferred, so the
+ * audio thread copies nothing twice); the tap is made on the first `hear`, with processorOptions.tap, and holds nothing
+ * before it. Load it from a blob: URL (the page's policy admits blob: workers and scripts, index.html).
  */
 export function vadWorkletSource(options: Partial<VadOptions> = VAD, every = 4): string {
-  const core = VadCore.toString()
-  const name = VadCore.name
   const n = Math.max(1, Math.round(every))
   return [
-    core,
+    // Each class as an expression under a name of this module's own: a minifier may have given both classes the same
+    // short inner name, or none at all, and two declarations of one name (or a nameless declaration) would not parse.
+    `const VadCoreClass = (${VadCore.toString()});`,
+    `const UtteranceTapClass = (${UtteranceTap.toString()});`,
     `const VadOpts = ${JSON.stringify(options)};`,
     `class VadProcessor extends AudioWorkletProcessor {`,
     `  constructor(o) {`,
     `    super();`,
-    `    this.core = new ${name}(Object.assign({}, VadOpts, (o && o.processorOptions) || {}));`,
+    `    const po = (o && o.processorOptions) || {};`,
+    `    this.core = new VadCoreClass(Object.assign({}, VadOpts, po));`,
+    `    this.tapOpts = po.tap || null;`,
+    `    this.tap = null;`,
+    `    this.hear = false;`,
     `    this.tick = 0;`,
-    `    this.port.onmessage = (e) => { const d = e.data || {}; if (typeof d.speaking === 'boolean') this.core.speaking = d.speaking; if (d.line) this.core.newLine(); if (d.reset) this.core.reset(); };`,
+    `    this.port.onmessage = (e) => {`,
+    `      const d = e.data || {};`,
+    `      if (typeof d.speaking === 'boolean') this.core.speaking = d.speaking;`,
+    `      if (d.line) this.core.newLine();`,
+    `      if (d.reset) { this.core.reset(); if (this.tap) this.tap.reset(); }`,
+    `      if (typeof d.hear === 'boolean') {`,
+    `        this.hear = d.hear && this.tapOpts !== null;`,
+    `        if (this.hear && this.tap === null) this.tap = new UtteranceTapClass(this.tapOpts);`,
+    `        else if (this.tap) this.tap.reset();`,
+    `      }`,
+    `    };`,
     `  }`,
     `  process(inputs) {`,
     `    const ch = inputs[0] && inputs[0][0];`,
@@ -433,6 +455,10 @@ export function vadWorkletSource(options: Partial<VadOptions> = VAD, every = 4):
     `    const frames = this.core.push(ch, 0, ch.length);`,
     `    if (this.core.changed) this.port.postMessage({ rms: this.core.rms, speech: this.core.speech, t: currentTime });`,
     `    else if (frames > 0 && (this.tick += frames) >= ${n}) { this.tick = 0; this.port.postMessage({ rms: this.core.rms, t: currentTime }); }`,
+    `    if (this.hear) {`,
+    `      const u = this.tap.push(ch, 0, ch.length, this.core.speech);`,
+    `      if (u) this.port.postMessage({ rms: this.core.rms, t: currentTime, utterance: u, cut: this.tap.cut }, [u.buffer]);`,
+    `    }`,
     `    return true;`,
     `  }`,
     `}`,

@@ -332,7 +332,7 @@ test('the console: a command that earns prints its check after its own lines; an
   const failing = { ...b, ghost: () => { throw new Error('no') } }
   assert.ok(run('ghost on', failing, []).lines.every((l) => l.kind === 'err'))
   assert.equal(p.record[AT.checks], checks)
-  // NoirScript runs offline: computers.
+  // Crimson Noir Script runs offline: computers.
   const noir = run('noir print(1 + 1);', b, [])
   assert.equal(texts(noir)[0], '2')
   assert.match(texts(noir)[1], /^Computers: /)

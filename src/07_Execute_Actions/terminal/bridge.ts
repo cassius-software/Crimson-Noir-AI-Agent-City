@@ -195,10 +195,10 @@ export interface FeaturesBridge {
 }
 
 /**
- * The writes the elite tier opens to NoirScript (terminal/noirscript's NoirWrites has this shape), each through the
- * operator's own facade: the tuning knobs `set` uses, a scripted intent (the same Bouncer, envelope and latch as the
- * wheel, in the physics worker), the crowd's density, and the feature inspector's bias. Each throws while the tier is
- * locked. Nothing here reaches the laws, the Sanctuary, the Ring-0 auditor or the 14A screen.
+ * The writes the elite tier opens to Crimson Noir Script (terminal/noirscript's NoirWrites has this shape), each
+ * through the operator's own facade: the tuning knobs `set` uses, a scripted intent (the same Bouncer, envelope and
+ * latch as the wheel, in the physics worker), the crowd's density, and the feature inspector's bias. Each throws while
+ * the tier is locked. Nothing here reaches the laws, the Sanctuary, the Ring-0 auditor or the 14A screen.
  */
 export interface EliteWrites {
   /** `physics.<k>` or `shaders.<k>` (a bare `car.<k>` is physics, anything else bare is shaders); the value the knob holds now. */
@@ -213,11 +213,11 @@ export interface EliteWrites {
 
 /**
  * The Ring-0 elite tier, above the operator tier: a passphrase the operator sets once (kept by the host as a salted
- * SHA-256 record, never the words) opens NoirScript's writes and its raised limits for this console session. `unlock`
- * and `set` throw while the operator tier is locked; `set` also throws while a passphrase is set and this tier closed;
- * `unlock` throws on a wrong passphrase and refuses after five wrong in a row until the operator tier is locked and
- * unlocked again. `operator lock` closes this tier too. Nothing it opens reaches the laws, the Sanctuary, the Ring-0
- * auditor or the 14A screen.
+ * SHA-256 record, never the words) opens Crimson Noir Script's writes and its raised limits for this console session.
+ * `unlock` and `set` throw while the operator tier is locked; `set` also throws while a passphrase is set and this tier
+ * closed; `unlock` throws on a wrong passphrase and refuses after five wrong in a row until the operator tier is locked
+ * and unlocked again. `operator lock` closes this tier too. Nothing it opens reaches the laws, the Sanctuary, the
+ * Ring-0 auditor or the 14A screen.
  */
 export interface EliteBridge {
   /** One line: locked or unlocked, whether a passphrase is set (or can be kept), writes this session. */
@@ -340,8 +340,8 @@ export interface TopicBridge {
 }
 
 /**
- * The city's structure-of-arrays columns for NoirScript (noirscript/index.ts NoirTables): the crowd's x and z, the
- * cars' x, z, heading, speed and mode, the kernel's counters and the frame clock, every array a copy taken at the
+ * The city's structure-of-arrays columns for Crimson Noir Script (noirscript/index.ts NoirTables): the crowd's x and z,
+ * the cars' x, z, heading, speed and mode, the kernel's counters and the frame clock, every array a copy taken at the
  * call. Read-only: the VM copies them again into its own arena, and the host hands it no write surface.
  */
 export interface SoaBridge {
@@ -350,9 +350,9 @@ export interface SoaBridge {
 
 /**
  * The first walk's exam (onboarding/exam.ts, composed by the host over the walk, the kernel and the team runner): the
- * three doors NoirScript's exit program opens (the shape of noirscript's NoirExam, which the console hands the VM;
- * tsc holds the two together), the lines each door said since last read (the console prints them after the run), the
- * stage the visitor is on, and the program itself. Absent in the console shell.
+ * three doors Crimson Noir Script's exit program opens (the shape of noirscript's NoirExam, which the console hands the
+ * VM; tsc holds the two together), the lines each door said since last read (the console prints them after the run),
+ * the stage the visitor is on, and the program itself. Absent in the console shell.
  */
 export interface ExamBridge {
   /** A u32 seal over the live kernel; 0 when it does not hold. */
@@ -486,9 +486,9 @@ export interface TerminalBridge {
   haptics(arg?: 'on' | 'off'): string
   /** The unified namespace of topics (read-only); absent on a host that publishes none (the TTY shell, an older host). */
   topics?: TopicBridge
-  /** The city's columns for NoirScript (read-only copies); absent on a host without a running city (the TTY shell). */
+  /** The city's columns for Crimson Noir Script (read-only copies); absent without a running city (the TTY shell). */
   soa?: SoaBridge
-  /** The first walk's exam for NoirScript's exit program; absent on a host without a city (the TTY shell). */
+  /** The first walk's exam for Crimson Noir Script's exit program; absent on a host without a city (the TTY shell). */
   exam?: ExamBridge
   ping: PingBridge
   operator: OperatorBridge
@@ -574,9 +574,8 @@ export interface GoalPlan {
 
 /**
  * The team runner (08_Swarm/team.ts) as the console reads it: the lanes Sloane's planner opened for a goal (or the
- * first walk's spawn_subagents for its swarm), one isolated NoirScript lane a sub-agent, their fault ledger, and the
- * way to close them. `dispatch` is the `goal`
- * command's: the planner's team opened as the card would open it.
+ * first walk's spawn_subagents for its swarm), one isolated Crimson Noir Script lane a sub-agent, their fault ledger,
+ * and the way to close them. `dispatch` is the `goal` command's: the planner's team opened as the card would open it.
  */
 export interface LanesBridge {
   /** The team, a table of its lanes (tag, state, word, steps, reading), the bodies asked over and the latest notes; one line without a team. */

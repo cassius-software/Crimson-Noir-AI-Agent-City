@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? It is the one table of NoirScript's intrinsics: for each name, its overloads (the
+ * Why does this file exist? It is the one table of Crimson Noir Script's intrinsics: for each name, its overloads (the
  * parameter types, the result type, and the instruction the compiler emits), in the order the checker tries them,
  * so integer forms win for bare literals. The checker resolves a call against it, the compiler copies its code
  * into the program, and the VM's typed opcodes do the work; INTRINSIC_NAMES is the same table as `words()` lists

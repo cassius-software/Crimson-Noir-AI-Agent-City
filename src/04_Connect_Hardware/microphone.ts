@@ -9,17 +9,24 @@
  * from the page where it does not; nothing is connected to the speakers, so the visitor never hears themselves),
  * the level and the speech state the pill draws, the switch kept between visits (MIC_KEY: the visitor who turned the
  * microphone on and left it on finds it on again; one who muted it finds it off), and the barge-in signal: speech
- * starting while the page itself is speaking. The audio never leaves this object: no recording, no network, no
- * transcript here (the on-device recogniser, 08_Swarm/recruitment.ts, opens its own session beside it; App wires the
- * two together). Mute releases the device (the browser's own indicator goes out with the pill's), it does not merely
- * silence a track: a privacy mute the visitor can trust. Pure where it can be: the settings, the phase words and the
- * meter are functions a Node test runs; `Microphone` takes the browser's objects as arguments.
+ * starting while the page itself is speaking. No recording, no network and no transcript here. The one way audio
+ * leaves this object is the utterance: while the page asked it to hear (`hear`, off until the page's own speech
+ * recogniser is ready to read), each sentence the detector marks out is handed over once, as 16 kHz samples in memory
+ * (utterance.ts; an `utterance` event), for the recogniser on this device to read and drop; a browser's own
+ * recogniser (08_Swarm/recruitment.ts), where one is used instead, opens its own session beside it, and App wires
+ * them together. A device that is open and sends nothing (the system holds it muted, or the browser picked an input
+ * that is not the one in use: the capture succeeds and every sample is zero) reads as that, Mic silent, after
+ * SILENT_MS, instead of a pill that says Listening to a person it will never hear. Mute releases the device (the
+ * browser's own indicator goes out with the pill's), it does not merely silence a track: a privacy mute the visitor
+ * can trust. Pure where it can be: the settings, the phase words and the meter are functions a Node test runs;
+ * `Microphone` takes the browser's objects as arguments.
  * MIC_OPEN_BY_DEFAULT is the one line that decides whether a first visit opens the microphone at boot: it ships true
  * (the owner's choice, 2026-11-07), so the browser asks its permission as the city starts; a saved switch (the visitor's
  * own choice: left on, or muted) wins over it either way, so a mute holds across visits.
  * What breaks if it is removed? No microphone pill, no voice to Sloane, no barge-in: the on-device recogniser still
  * answers `recruit listen` in the console, with its own small MIC chip.
  */
+import { UTTERANCE, UtteranceTap, utteranceOptions } from './utterance.ts'
 import { VAD, VAD_PROCESSOR, VadCore, vadFrame, vadWorkletSource, type VadMessage } from './vad.ts'
 
 /**
@@ -88,9 +95,26 @@ export function phaseWord(phase: MicPhase): string {
   }
 }
 
-/** The pill's word: the page speaking (Sloane) over an open microphone reads Speaking; else the phase's word. */
-export function pillWord(phase: MicPhase, speaking: boolean): string {
-  return speaking && (phase === 'listening' || phase === 'speech') ? 'Speaking' : phaseWord(phase)
+/** The pill's word for an open device that sends nothing at all (see SILENT_MS). */
+export const SILENT_WORD = 'Mic silent'
+/** Why, for the pill's accessible name, its tooltip and the console. */
+export const SILENT_DETAIL = 'no sound is arriving: the system may hold the microphone muted, or the browser may be using another input than yours'
+/** The pill's word for an open device that has sent only exact silence since it opened (see SILENT_MS): a hint, not a
+ *  failure, since some inputs (a noise gate, a voice-isolation filter) send exact zeros until the visitor speaks. */
+export const HUSHED_WORD = 'No sound yet'
+/** Why, for the pill's accessible name, its tooltip and the console. */
+export const HUSHED_DETAIL = 'nothing has arrived since the microphone opened: if you have spoken, the system may hold it muted or the browser may be using another input than yours'
+
+/**
+ * The pill's word: the page speaking (Sloane) over an open microphone reads Speaking; an open microphone that sends
+ * nothing reads Mic silent, and one that has sent only exact silence since it opened No sound yet (never while it
+ * hears speech); else the phase's word.
+ */
+export function pillWord(phase: MicPhase, speaking: boolean, silent = false, hushed = false): string {
+  if (speaking && (phase === 'listening' || phase === 'speech')) return 'Speaking'
+  if (silent && phase === 'listening') return SILENT_WORD
+  if (hushed && phase === 'listening') return HUSHED_WORD
+  return phaseWord(phase)
 }
 
 /** Whether the device is open (the pill shows the meter and the browser shows its own indicator). */
@@ -107,8 +131,8 @@ export function tapMeans(phase: MicPhase): 'open' | 'mute' {
  * The accessible name of the pill: the state, what a press does, and the key, in one sentence a screen reader says
  * ("Microphone: listening. Press to mute. Key V."). `detail` (why it failed) follows the state when there is one.
  */
-export function pillLabel(phase: MicPhase, speaking: boolean, detail = '', key = 'V'): string {
-  const word = pillWord(phase, speaking).toLowerCase()
+export function pillLabel(phase: MicPhase, speaking: boolean, detail = '', key = 'V', silent = false, hushed = false): string {
+  const word = pillWord(phase, speaking, silent, hushed).toLowerCase()
   const state = word.startsWith('mic ') ? word.slice(4) : word
   const does = tapMeans(phase) === 'mute' ? 'mute' : 'listen'
   return `Microphone: ${state}${detail ? ` (${detail})` : ''}. Press to ${does}. Key ${key}.`
@@ -116,7 +140,14 @@ export function pillLabel(phase: MicPhase, speaking: boolean, detail = '', key =
 
 // ---------------------------------------------------------------- the browser's objects, by what is used of them
 
-export interface TrackLike { enabled: boolean; readyState?: string; stop(): void; addEventListener?(type: 'ended', fn: () => void): void }
+export interface TrackLike {
+  enabled: boolean
+  readyState?: string
+  /** The system is holding the source silent (its own mute, a hardware switch, another program's hold): the browser's word. */
+  muted?: boolean
+  stop(): void
+  addEventListener?(type: 'ended' | 'mute' | 'unmute', fn: () => void): void
+}
 export interface StreamLike { getTracks(): TrackLike[]; getAudioTracks?(): TrackLike[] }
 export interface MediaLike { getUserMedia(c: { audio: Record<string, unknown> }): Promise<StreamLike> }
 export interface NodeLike { connect(to: NodeLike): unknown; disconnect(): void }
@@ -188,6 +219,16 @@ export interface MicMeter { readonly levels: Float32Array; readonly head: number
 const POLL_MS = 16
 /** A tap on the pill that lands within this many ms of the last is the same tap (a double-fire on touch). */
 const DEBOUNCE_MS = 150
+/**
+ * An open device that has sent no level at all for this long reads Mic silent; one whose every sample has been zero
+ * for this long since it opened reads No sound yet. A plain microphone is not exactly silent from the start (its own
+ * noise is some tens of decibels above nothing), so four seconds of nothing at all is most often a device that is not
+ * delivering (muted by the system, or not the input the visitor speaks into); but an input behind a noise gate or a
+ * voice-isolation filter sends exact zeros until the first word, so that case is a hint and not a failure.
+ */
+export const SILENT_MS = 4_000
+/** The level under which a reading counts as nothing at all (about −140 dBFS: far under any real microphone's noise). */
+export const SILENT_LEVEL = 1e-7
 
 export interface MicEvents {
   change: MicState
@@ -195,7 +236,12 @@ export interface MicEvents {
   speech: boolean
   /** Speech started while the page itself was speaking: cut the page's voice. */
   barge: undefined
+  /** A sentence ended while the page was hearing (`hear`): its samples at `rate`, for the recogniser to read and drop. */
+  utterance: MicUtterance
 }
+
+/** One utterance as the microphone hands it over: 16 kHz mono samples, and whether it was cut at the cap (more follows). */
+export interface MicUtterance { readonly samples: Float32Array; readonly rate: number; readonly cut: boolean }
 
 /** The microphone, its detector and its meter. One per page. */
 export class Microphone extends EventTarget {
@@ -221,6 +267,19 @@ export class Microphone extends EventTarget {
   #generation = 0
   #lastTap = -Infinity
   #disposed = false
+  /** The page asked for utterances (its recogniser is ready to read them). */
+  #hear = false
+  /** The tap on the page's side: the AnalyserNode path's, and the tests'. The worklet path keeps its own. */
+  #tap: UtteranceTap | null = null
+  /** The tracks of the open stream, for their `muted` word. */
+  #tracks: TrackLike[] = []
+  /** When the device opened (or the system last gave its sound back), when a level last arrived at all, and whether
+   *  any level since then was above nothing (the microphone's clock): `silent` runs on them. */
+  #openedAt = 0
+  #levelAt = 0
+  #sounded = false
+  /** Why the page could not read the open device (its audio graph failed to build), or '': `silent` says so. */
+  #fault = ''
   /** The meter: the newest LEVELS smoothed levels (0..1), `head` the slot the next one goes in. */
   readonly levels = new Float32Array(LEVELS)
   head = 0
@@ -246,6 +305,32 @@ export class Microphone extends EventTarget {
   get speaking(): boolean { return this.#speaking }
   /** Whether the device is open. */
   get open(): boolean { return isOpen(this.#phase) }
+  /**
+   * Whether the open device sends nothing at all: the system says it holds it muted (the track's word), the page
+   * could not build its graph over it, or no level has come at all for SILENT_MS (a context the system put to sleep: a
+   * call on a phone). Worked out when read, on the microphone's clock, so the HUD's own tick shows it and no timer runs
+   * for it. A browser with no Web Audio at all has no level to judge by: not silent.
+   */
+  get silent(): boolean {
+    if (!this.open) return false
+    if (this.#fault !== '') return true
+    if (this.#tracks.length > 0 && this.#tracks.every((t) => t.muted === true)) return true
+    if (this.path === 'none') return false
+    return this.#now() - this.#levelAt >= SILENT_MS
+  }
+  /**
+   * Whether the open device has sent only exact zeros in the SILENT_MS since it opened (or since the system gave it
+   * back): the wrong input, or an input behind a gate that opens at the first word, so a hint and never the failure's
+   * word. A device that has sounded once is delivering: zeros after that are a gate between words and never count.
+   */
+  get hushed(): boolean {
+    if (!this.open || this.path === 'none' || this.silent) return false
+    return !this.#sounded && this.#now() - this.#openedAt >= SILENT_MS
+  }
+  /** Why it is silent, in words for the pill's name, its tooltip and the console. */
+  get silentDetail(): string { return this.#fault !== '' ? this.#fault : SILENT_DETAIL }
+  /** Whether the page asked for utterances. */
+  get hearing(): boolean { return this.#hear }
 
   /** Whether this page would open the microphone at boot (the kept switch, or the one line). */
   opensAtBoot(byDefault = MIC_OPEN_BY_DEFAULT): boolean {
@@ -253,10 +338,15 @@ export class Microphone extends EventTarget {
   }
 
   /** The pill's word now. */
-  word(): string { return pillWord(this.#phase, this.#speaking) }
+  word(): string { return pillWord(this.#phase, this.#speaking, this.silent, this.hushed) }
 
   /** The pill's accessible name now. */
-  label(key = 'V'): string { return pillLabel(this.#phase, this.#speaking, this.#phase === 'listening' || this.#phase === 'speech' || this.#phase === 'off' || this.#phase === 'muted' ? '' : this.#detail, key) }
+  label(key = 'V'): string {
+    const quiet = this.#phase === 'listening' && this.silent
+    const hushed = this.#phase === 'listening' && this.hushed
+    const detail = quiet ? this.silentDetail : hushed ? HUSHED_DETAIL : this.#phase === 'listening' || this.#phase === 'speech' || this.#phase === 'off' || this.#phase === 'muted' ? '' : this.#detail
+    return pillLabel(this.#phase, this.#speaking, detail, key, quiet, hushed)
+  }
 
   /**
    * Opens the device (the browser asks its permission the first time). Resolves with the state once the device is
@@ -291,12 +381,19 @@ export class Microphone extends EventTarget {
     }
     this.#stream = stream
     const tracks = stream.getAudioTracks?.() ?? stream.getTracks()
-    for (const t of tracks) t.addEventListener?.('ended', () => { if (this.#stream === stream) this.#lost() })
+    this.#tracks = tracks
+    this.#openedAt = this.#levelAt = this.#now()
+    this.#sounded = false
+    for (const t of tracks) {
+      t.addEventListener?.('ended', () => { if (this.#stream === stream) this.#lost() })
+      // The system gave the sound back (`silent` reads the track's own word while it holds it): the count starts again.
+      t.addEventListener?.('unmute', () => { if (this.#stream === stream) { this.#openedAt = this.#levelAt = this.#now(); this.#sounded = false } })
+    }
     await this.#graph(stream)
     if (generation !== this.#generation || this.#disposed) return this.state
     this.#settings = Object.freeze({ on: true, kept: true })
     this.#keep()
-    return this.#set('listening', this.path === 'worklet' ? 'on-device detector in an audio worklet' : this.path === 'page' ? 'on-device detector on the page' : 'open; this browser has no Web Audio, so no level or speech state')
+    return this.#set('listening', this.path === 'worklet' ? 'on-device detector in an audio worklet' : this.path === 'page' ? 'on-device detector on the page' : this.#fault !== '' ? this.#fault : 'open; this browser has no Web Audio, so no level or speech state')
   }
 
   /** Closes the device (the browser's indicator goes out), remembers the choice, and reads Muted. */
@@ -335,6 +432,18 @@ export class Microphone extends EventTarget {
     this.#worklet?.port.postMessage({ line: true })
   }
 
+  /**
+   * Whether the page wants utterances: each sentence the detector marks out, resampled to 16 kHz, as an `utterance`
+   * event. Off until asked (nothing is held before), and whatever was being kept is dropped when it goes off.
+   */
+  hear(on: boolean): void {
+    const want = on === true
+    if (want === this.#hear) return
+    this.#hear = want
+    this.#tap?.reset()
+    this.#worklet?.port.postMessage({ hear: want })
+  }
+
   /** A gesture: a context the browser started asleep (opened at boot, without one) wakes up. */
   resume(): void {
     const ctx = this.#ctx
@@ -362,18 +471,26 @@ export class Microphone extends EventTarget {
     core.push(samples)
     this.#level(core.rms)
     if (core.changed) this.#heard(core.speech)
+    if (!this.#hear) return
+    const tap = this.#tap ??= new UtteranceTap(utteranceOptions(core.rate))
+    const u = tap.push(samples, 0, samples.length, core.speech)
+    if (u !== null) this.#utter(u, tap.cut)
   }
 
   /** Builds the graph over the stream: the worklet where the browser has one, else the AnalyserNode poll. */
   async #graph(stream: StreamLike): Promise<void> {
     const C = this.#env.Context
     this.path = 'none'
+    this.#fault = ''
     if (!C) return
+    // A browser that has Web Audio and cannot put this device in it (a rate it refuses, a device that went as it
+    // opened) is a failure the pill says, not a healthy Listening with a dead meter.
+    const fault = (e: unknown): void => { this.#fault = `the page could not read the microphone (${e instanceof Error && e.message ? e.message : String(e)})` }
     let ctx: ContextLike
-    try { ctx = new C({ latencyHint: 'interactive' }) } catch { return }
+    try { ctx = new C({ latencyHint: 'interactive' }) } catch (e) { fault(e); return }
     this.#ctx = ctx
     let source: NodeLike
-    try { source = ctx.createMediaStreamSource(stream) } catch { return }
+    try { source = ctx.createMediaStreamSource(stream) } catch (e) { fault(e); return }
     this.#source = source
     // The frame follows the context's rate, which is the output device's (often 96 kHz on an audio interface), so every
     // count of frames in VAD is the time it says (vad.ts vadFrame).
@@ -382,6 +499,7 @@ export class Microphone extends EventTarget {
     const opts = frame === VAD.frame && rate === VAD.rate ? VAD : Object.freeze({ ...VAD, frame, rate })
     if (this.#core.frame !== frame || this.#core.rate !== rate) this.#core = new VadCore(opts)
     this.#core.reset()
+    this.#tap = null
     this.#core.speaking = this.#speaking
     this.#speech = false
     const W = this.#env.WorkletNode
@@ -391,9 +509,10 @@ export class Microphone extends EventTarget {
       try {
         await ctx.audioWorklet.addModule(m.url)
         if (this.#ctx !== ctx) return
-        const node = new W(ctx, VAD_PROCESSOR, { processorOptions: opts })
+        const node = new W(ctx, VAD_PROCESSOR, { processorOptions: { ...opts, tap: utteranceOptions(rate) } })
         node.port.onmessage = (e) => this.#message(e.data)
         node.port.postMessage({ speaking: this.#speaking })
+        if (this.#hear) node.port.postMessage({ hear: true })
         source.connect(node)
         this.#worklet = node
         this.path = 'worklet'
@@ -427,13 +546,16 @@ export class Microphone extends EventTarget {
         if (fresh > 0) this.feed(buf.subarray(size - fresh))
       }, POLL_MS)
       this.path = 'page'
-    } catch {
+    } catch (e) {
       this.path = 'none'
+      fault(e)
     }
   }
 
   #message(m: VadMessage): void {
     if (!m || typeof m !== 'object') return
+    // An utterance is its own message (the level and the boundary came in theirs).
+    if (m.utterance instanceof Float32Array) { this.#utter(m.utterance, m.cut === true); return }
     if (typeof m.rms === 'number') this.#level(m.rms)
     if (typeof m.speech === 'boolean') this.#heard(m.speech)
   }
@@ -443,6 +565,14 @@ export class Microphone extends EventTarget {
     this.level = v
     this.levels[this.head] = v
     this.head = (this.head + 1) % LEVELS
+    this.#levelAt = this.#now()
+    if (v > SILENT_LEVEL) this.#sounded = true
+  }
+
+  /** An utterance ended: handed on only while the device is open and the page still wants it. */
+  #utter(samples: Float32Array, cut: boolean): void {
+    if (!this.open || !this.#hear || samples.length === 0) return
+    this.#emit('utterance', { samples, rate: UTTERANCE.rate, cut })
   }
 
   #heard(speech: boolean): void {
@@ -478,6 +608,9 @@ export class Microphone extends EventTarget {
     const ctx = this.#ctx
     this.#ctx = null
     if (ctx) void ctx.close().catch(noop)
+    this.#tap = null
+    this.#tracks = []
+    this.#fault = ''
     this.#speech = false
     this.path = 'none'
     this.level = 0
@@ -529,7 +662,7 @@ export function voiceStatus(m: Microphone, speaking: boolean, recognition: strin
   const s = m.state
   return [
     `mic       ${s.phase}${s.detail ? ` · ${s.detail}` : ''}`,
-    `pill      ${pillWord(s.phase, speaking)}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
+    `pill      ${pillWord(s.phase, speaking, m.silent, m.hushed)}${s.phase !== 'listening' ? '' : m.silent ? ` · ${m.silentDetail}` : m.hushed ? ` · ${HUSHED_DETAIL}` : ''}  (V, R3, the pill or the Menu mute and unmute; mic on|off here)`,
     `detector  ${m.path === 'worklet' ? 'audio worklet' : m.path === 'page' ? 'on the page' : 'none'}${m.open ? m.speech ? ' · hearing you' : ' · the room' : ''}`,
     `boot      ${m.opensAtBoot() ? 'opens at boot' : 'off until pressed'}  (kept switch ${m.settings().kept ? m.settings().on ? 'on' : 'muted' : 'none'}; the default ${MIC_OPEN_BY_DEFAULT ? 'open' : 'off'})`,
     `words     ${recognition}`,

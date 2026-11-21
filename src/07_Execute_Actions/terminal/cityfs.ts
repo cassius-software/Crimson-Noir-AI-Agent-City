@@ -147,7 +147,7 @@ function rows(n: number, row: (i: number) => string): string {
   return out
 }
 
-/** The city's columns as the bridge copies them out (the same copies NoirScript reads). */
+/** The city's columns as the bridge copies them out (the same copies Crimson Noir Script reads). */
 function tables(c: CityConsole): ReturnType<SoaBridge['tables']> {
   const b = c.bridge()
   if (!b.soa) absent(b)

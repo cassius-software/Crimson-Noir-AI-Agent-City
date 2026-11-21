@@ -23,7 +23,8 @@
  *   release() and dispose() settle an answer at once even if the runtime does not;
  * - when it is unloaded: after ten minutes idle, after a minute in the background on a phone, at the console, and
  *   when the GPU it was on was reset (the GPU is then left off for this page).
- * Its settings (the file chosen, think, the GPU) are kept as JSON in its own slice of the router's store.
+ * Its settings (the file chosen, think, the GPU) are kept as JSON in its own slice of the router's store. Whether it
+ * keeps no file, as last listed, is read from memory (empty) by the brain readout (brainReadout.ts).
  * What breaks if it is removed? The `inpage` provider has nothing behind it: the router's stand-in answers 'offline',
  * so a phone with no model server never gets a model answering in the page.
  */
@@ -107,6 +108,11 @@ export interface InPageMind extends Mind {
    * such file. Asks nothing, loads nothing, makes no runtime.
    */
   cold(newest: boolean): boolean
+  /**
+   * Whether this page keeps no model file, as last listed (a look, an answer, a keep or a forget lists them): null
+   * until one has. Asks nothing (09_Cognition/brainReadout.ts reads it).
+   */
+  empty(): boolean | null
   unload(): Promise<string>
   setGpu(mode: GpuMode): GpuMode
   log(): readonly string[]
@@ -888,6 +894,8 @@ export function createInPageMind(d: InPageDeps): InPageMind {
       if (removed === 0) return 'no model file is kept in this page'
       return n ? `forgot ${n}: it is no longer kept in this page` : `forgot ${removed} model file${removed === 1 ? '' : 's'}: none is kept in this page now`
     },
+
+    empty: (): boolean | null => (known === null ? null : known.length === 0),
 
     cold: (newest: boolean): boolean => {
       const target = model ?? (newest ? known?.[0]?.name ?? null : null)

@@ -114,7 +114,7 @@ export const SKILL_TITLE: readonly string[] = Object.freeze([
 ])
 /** What earns a check in each skill (the page's keeper decides, 07_Execute_Actions/progress.ts; this is its summary). */
 export const SKILL_DOES: readonly string[] = Object.freeze([
-  'NoirScript, R0 and scripts at the console',
+  'Crimson Noir Script, R0 and scripts at the console',
   'boarding a parked car with the door key',
   'the robots and the workplaces\' stations',
   'audits: the act log, the swarm\'s trail, the harnesses',
