@@ -205,7 +205,11 @@ test('the tracer: in a page with a device, it notes the calls, an error caught i
   const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
   const window: Record<string, unknown> = { GPUDevice, GPUAdapter, GPURenderPassEncoder, GPUQueue, Worker: class {} }
   class Channel { onmessage: unknown = null; postMessage() {} }
-  new Function('window', 'globalThis', 'self', 'BroadcastChannel', 'URL', 'Blob', 'Map', body)(window, window, window, Channel, { createObjectURL: () => 'blob:x' }, Blob, Map)
+  // The tracer keeps a timer running to know when its thread was last free: here it gets one that never fires, so
+  // the test's process is free to end.
+  const timers: number[] = []
+  new Function('window', 'globalThis', 'self', 'BroadcastChannel', 'URL', 'Blob', 'Map', 'setInterval', body)(window, window, window, Channel, { createObjectURL: () => 'blob:x' }, Blob, Map, (_f: () => void, ms: number) => { timers.push(ms); return 0 })
+  assert.deepEqual(timers, [20], 'one timer, the one that marks the thread free')
   const gpu = (window.__SAFARI__ as { gpu: { calls: string[]; key: string[]; lost: string[]; errors: string[]; total: number; frozen: boolean } }).gpu
   const device = await new GPUAdapter().requestDevice({ label: 'page' })
   device.createShaderModule({ label: 'fragment', code: 'x'.repeat(90) })
@@ -228,7 +232,8 @@ test('the tracer: in a page with a device, it notes the calls, an error caught i
   const before = gpu.calls.length
   lostResolve[0]!({ reason: 'unknown', message: '' })
   await new Promise((r) => setTimeout(r, 0))
-  assert.deepEqual(gpu.lost.map((l) => l.replace(/^\d+ /, '')), ['device page lost: reason unknown, message ""'])
+  assert.equal(gpu.lost.length, 1)
+  assert.match(gpu.lost[0]!, /^\d+ device page lost: reason unknown, message "" \(heard now; this thread was last free at \d+\)$/)
   new GPUQueue().submit([{}])
   assert.equal(gpu.calls.length, before, 'the list is frozen at the loss: it ends with what came before')
   assert.equal(gpu.frozen, true)
@@ -240,9 +245,9 @@ test('the probe: its drawing ladder parses, runs inside the probe, and tries eac
   assert.ok(safari.PROBE.includes(safari.LADDER), 'the probe runs the ladder')
   const stages = /const STAGES = \{([\s\S]*?)\n {2}\}\n/.exec(safari.LADDER)
   assert.ok(stages, 'the stages')
-  assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'indirect', 'msaa', 'canvas'])
+  assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'npot', 'fourMips', 'power', 'features', 'cityStart', 'idle', 'besideWorker', 'indirect', 'msaa', 'canvas'])
   // Each stage has a device of its own: a browser that drops the device on one kind of work still answers for the rest.
-  assert.match(safari.LADDER, /for \(const name of Object\.keys\(STAGES\)\) \{[\s\S]*?requestAdapter\(\)[\s\S]*?requestDevice\(\{ label: 'probe: ' \+ name \}\)/)
+  assert.match(safari.LADDER, /for \(const name of Object\.keys\(STAGES\)\) \{[\s\S]*?requestAdapter\(how\.adapter\)[\s\S]*?requestDevice\(\{ label: how\.label \|\| 'probe: ' \+ name, /)
   assert.match(safari.LADDER, /r\.ok = r\.lost === null && r\.errors\.length === 0 && got !== null && got\.right === true/)
 })
 

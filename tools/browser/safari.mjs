@@ -84,9 +84,12 @@ export const RECORDER = `<script>(function () {
  * the report names the calls that came just before. `say(kind, text)` is where a note goes: the page's own list, or
  * from a worker a BroadcastChannel the page listens on.
  */
-const TRACER = `function (say) {
+const TRACER = `function (say, epoch) {
   var G = typeof globalThis !== 'undefined' ? globalThis : self
-  var t0 = Date.now()
+  var t0 = epoch || Date.now()
+  // When this thread last ran a timer: a loss is only heard once the thread is free, so this bounds when it happened.
+  var free = 0
+  try { setInterval(function () { free = Date.now() - t0 }, 20) } catch (e) { /* no timers: no bound */ }
   var brief = function (v) { try { return JSON.stringify(v, function (k, x) { return typeof x === 'string' && x.length > 80 ? x.slice(0, 80) + '...(' + x.length + ')' : typeof x === 'object' && x !== null && x.constructor && /^GPU/.test(x.constructor.name) ? '<' + x.constructor.name.slice(3) + (x.label ? ' ' + x.label : '') + '>' : ArrayBuffer.isView(x) || x instanceof ArrayBuffer ? '<' + x.byteLength + ' bytes>' : x }).slice(0, 260) } catch (e) { return '?' } }
   var note = function (name, args) { say('call', (Date.now() - t0) + ' ' + name + (args === undefined ? '' : ' ' + args)) }
   var wrap = function (ctor, name, describe) {
@@ -101,7 +104,7 @@ const TRACER = `function (say) {
   var watch = function (device) {
     try {
       var label = device.label || '(no label)'
-      device.lost.then(function (l) { say('lost', (Date.now() - t0) + ' device ' + label + ' lost: reason ' + l.reason + ', message ' + JSON.stringify(l.message)) })
+      device.lost.then(function (l) { say('lost', (Date.now() - t0) + ' device ' + label + ' lost: reason ' + l.reason + ', message ' + JSON.stringify(l.message) + ' (heard now; this thread was last free at ' + free + ')') })
       device.addEventListener('uncapturederror', function (e) { say('error', (Date.now() - t0) + ' device ' + label + ': ' + String(e.error && e.error.message).slice(0, 600)) })
     } catch (e) { say('error', 'could not watch a device: ' + e) }
   }
@@ -169,13 +172,17 @@ const TRACER = `function (say) {
  */
 export const TRACE = `<script>(function () {
   var S = window.__SAFARI__ = window.__SAFARI__ || { errors: [], lines: [] }
-  var T = S.gpu = { calls: [], key: [], lost: [], errors: [], total: 0, frozen: false, workers: 0 }
+  var T = S.gpu = { calls: [], key: [], worker: [], lost: [], errors: [], total: 0, frozen: false, workers: 0 }
+  var T0 = Date.now()
   // A frame is hundreds of buffer writes and bindings: they stay in the short list of everything (calls), and out of
   // the longer list of what can end a device (key: devices, pipelines, passes, draws, dispatches, submits, readbacks).
   var routine = /^\\d+ (?:Queue\\.writeBuffer|RenderPassEncoder\\.set|ComputePassEncoder\\.set|Device\\.createBindGroup\\b|Texture\\.createView|Device\\.pushErrorScope|Device\\.popErrorScope)/
   var say = function (where) { return function (kind, text) {
     if (kind === 'call') {
       T.total++
+      // A worker's notes arrive when the page is free to hear them, which can be after a loss they came before: its
+      // first calls are kept apart, on the page's clock, whatever the page has heard since.
+      if (where && T.worker.length < 80) T.worker.push(text)
       if (T.frozen) return
       if (T.calls.length >= 120) T.calls.shift()
       T.calls.push(where + text)
@@ -186,7 +193,7 @@ export const TRACE = `<script>(function () {
     if (T.errors.length < 40) T.errors.push(where + text)
   } }
   var tracer = ${TRACER}
-  try { tracer(say('')) } catch (e) { T.errors.push('the tracer did not start: ' + e) }
+  try { tracer(say(''), T0) } catch (e) { T.errors.push('the tracer did not start: ' + e) }
   try {
     var channel = new BroadcastChannel('__safari_gpu_trace__')
     var fromWorker = say('worker: ')
@@ -195,11 +202,11 @@ export const TRACE = `<script>(function () {
     var make = URL.createObjectURL
     URL.createObjectURL = function (b) { var url = make.apply(URL, arguments); try { if (b instanceof Blob) blobs.set(url, b) } catch (e) { /* as it was */ } return url }
     var Real = window.Worker
-    var prelude = '(' + tracer.toString() + ')((function () { var c = new BroadcastChannel("__safari_gpu_trace__"); return function (kind, text) { try { c.postMessage({ kind: kind, text: text }) } catch (e) {} } })());\\n'
+    var prelude = '(' + tracer.toString() + ')((function () { var c = new BroadcastChannel("__safari_gpu_trace__"); return function (kind, text) { try { c.postMessage({ kind: kind, text: text }) } catch (e) {} } })(), ' + T0 + ');\\n'
     window.Worker = function (url, options) {
       var blob = blobs.get(String(url))
       if (blob && (!options || options.type !== 'module')) {
-        try { T.workers++; return new Real(make.call(URL, new Blob([prelude, blob], { type: blob.type || 'text/javascript' })), options) } catch (e) { T.errors.push('a worker started without the tracer: ' + e) }
+        try { T.workers++; if (T.key.length < 500 && !T.frozen) T.key.push((Date.now() - T0) + ' a worker is started (' + blob.size + ' bytes)'); return new Real(make.call(URL, new Blob([prelude, blob], { type: blob.type || 'text/javascript' })), options) } catch (e) { T.errors.push('a worker started without the tracer: ' + e) }
       }
       return new Real(url, options)
     }
@@ -306,7 +313,11 @@ export class Driver {
  * `{ ok, pixel, lost, errors }`. WebKit reports a lost device with no words, so this is how the check learns whether
  * a browser can draw at all (clear, draw), through a render bundle (bundle), three's own mipmap pass (mips, and
  * mipsDirect: the same passes with the draws made directly), an indirect indexed draw from a vertex buffer
- * (indirect), into a multisampled float target with depth (msaa), and onto a canvas (canvas).
+ * (indirect), into a multisampled float target with depth (msaa), and onto a canvas (canvas); then the city's own
+ * start a piece at a time: a texture whose edge is no power of two (npot), the four noise textures the renderer
+ * uploads first (fourMips), the adapter asked for as the city asks (power), the device with the features three asks
+ * for (features), all of that together under the page's label (cityStart), a device left alone (idle), and a device
+ * beside a worker's own (besideWorker).
  */
 export const LADDER = `async (withTimeout) => {
   const U = GPUTextureUsage, B = GPUBufferUsage
@@ -327,33 +338,49 @@ export const LADDER = `async (withTimeout) => {
   const target = (d, format) => d.createTexture({ size: [64, 64], format: format || 'rgba8unorm', usage: U.RENDER_ATTACHMENT | U.COPY_SRC })
   const colour = (view, extra) => ({ colorAttachments: [Object.assign({ view, loadOp: 'clear', storeOp: 'store', clearValue: [1, 0, 0, 1] }, extra)] })
   const triangle = (d, format, extra) => d.createRenderPipeline(Object.assign({ layout: 'auto', vertex: { module: d.createShaderModule({ code: TRI }), entryPoint: 'vs' }, fragment: { module: d.createShaderModule({ code: TRI }), entryPoint: 'fs', targets: [{ format: format || 'rgba8unorm' }] } }, extra))
-  // three r186's mipmap pass (WebGPUTexturePassUtils), call for call: a 64 px texture's six lower levels, each drawn
-  // from the level above through a 2d-array view, in one encoder; \`bundles\` as three does it, or the draws made directly.
-  const mips = async (d, bundles) => {
-    const texture = d.createTexture({ size: { width: 64, height: 64, depthOrArrayLayers: 1 }, mipLevelCount: 7, sampleCount: 1, dimension: '2d', format: 'rgba8unorm', usage: U.COPY_SRC | U.COPY_DST | U.TEXTURE_BINDING | U.RENDER_ATTACHMENT })
-    const texels = new Uint8Array(64 * 64 * 4)
-    for (let i = 0; i < texels.length; i += 4) texels.set([51, 102, 204, 255], i)
-    d.queue.writeTexture({ texture, mipLevel: 0 }, texels, { bytesPerRow: 256 }, [64, 64, 1])
+  // three r186's mipmap pass (WebGPUTexturePassUtils), call for call: each texture's lower levels drawn from the level
+  // above through a 2d-array view, one encoder and one submit a texture, the pipeline, sampler and uniform shared as
+  // three shares them; \`bundles\` as three does it, or the draws made directly. \`sizes\` are the textures' edges.
+  const mips = async (d, bundles, sizes) => {
     const flip = d.createBuffer({ size: 4, usage: B.UNIFORM })
     const sampler = d.createSampler({ minFilter: 'linear' })
     const module = d.createShaderModule({ label: 'mipmap', code: MIP })
     const pipeline = d.createRenderPipeline({ label: 'mipmap-rgba8unorm-2d-array', layout: 'auto', vertex: { module }, fragment: { module, entryPoint: 'main_2d_array', targets: [{ format: 'rgba8unorm' }] } })
-    const e = d.createCommandEncoder({ label: 'mipmapEncoder' })
-    for (let level = 1; level < 7; level++) {
-      const group = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: texture.createView({ dimension: '2d-array', baseMipLevel: level - 1, mipLevelCount: 1 }) }, { binding: 2, resource: { buffer: flip } }] })
-      const into = texture.createView({ dimension: '2d', baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 })
-      const pass = e.beginRenderPass({ colorAttachments: [{ view: into, loadOp: 'clear', storeOp: 'store' }] })
-      if (bundles) {
-        const b = d.createRenderBundleEncoder({ colorFormats: ['rgba8unorm'] })
-        b.setPipeline(pipeline); b.setBindGroup(0, group); b.draw(3, 1, 0, 0)
-        pass.executeBundles([b.finish()])
-      } else { pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.draw(3, 1, 0, 0) }
-      pass.end()
+    let texture = null, levels = 0
+    for (const size of sizes || [64]) {
+      levels = Math.floor(Math.log2(size)) + 1
+      texture = d.createTexture({ label: 'fbm' + size, size: { width: size, height: size, depthOrArrayLayers: 1 }, mipLevelCount: levels, sampleCount: 1, dimension: '2d', format: 'rgba8unorm', usage: U.COPY_SRC | U.COPY_DST | U.TEXTURE_BINDING | U.RENDER_ATTACHMENT })
+      const texels = new Uint8Array(size * size * 4)
+      for (let i = 0; i < texels.length; i += 4) texels.set([51, 102, 204, 255], i)
+      d.queue.writeTexture({ texture, mipLevel: 0 }, texels, { bytesPerRow: size * 4 }, [size, size, 1])
+      const e = d.createCommandEncoder({ label: 'mipmapEncoder' })
+      for (let level = 1; level < levels; level++) {
+        const group = d.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: sampler }, { binding: 1, resource: texture.createView({ dimension: '2d-array', baseMipLevel: level - 1, mipLevelCount: 1 }) }, { binding: 2, resource: { buffer: flip } }] })
+        const into = texture.createView({ dimension: '2d', baseMipLevel: level, mipLevelCount: 1, baseArrayLayer: 0, arrayLayerCount: 1 })
+        const pass = e.beginRenderPass({ colorAttachments: [{ view: into, loadOp: 'clear', storeOp: 'store' }] })
+        if (bundles) {
+          const b = d.createRenderBundleEncoder({ colorFormats: ['rgba8unorm'] })
+          b.setPipeline(pipeline); b.setBindGroup(0, group); b.draw(3, 1, 0, 0)
+          pass.executeBundles([b.finish()])
+        } else { pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.draw(3, 1, 0, 0) }
+        pass.end()
+      }
+      d.queue.submit([e.finish()])
     }
-    d.queue.submit([e.finish()])
-    const pixel = await pixelOf(d, texture, 6)
+    const pixel = await pixelOf(d, texture, levels - 1)
     return { pixel, right: near(pixel, [51, 102, 204, 255]) }
   }
+  // The page's own start, piece by piece: the adapter asked for as the city asks (HOW.power), the device with every
+  // feature three asks for that the adapter has (HOW.features), the four noise textures the renderer uploads first
+  // (CITY_SIZES), all of it together (cityStart), a device left alone, and a device beside a worker's.
+  const FEATURES = ['core-features-and-limits', 'depth-clip-control', 'depth32float-stencil8', 'texture-compression-bc', 'texture-compression-bc-sliced-3d', 'texture-compression-etc2', 'texture-compression-astc', 'texture-compression-astc-sliced-3d', 'timestamp-query', 'indirect-first-instance', 'shader-f16', 'rg11b10ufloat-renderable', 'bgra8unorm-storage', 'float32-filterable', 'float32-blendable', 'clip-distances', 'dual-source-blending', 'subgroups', 'texture-formats-tier1', 'texture-formats-tier2']
+  const CITY_SIZES = [64, 128, 192, 256]
+  const HOW = {
+    power: { adapter: { powerPreference: 'high-performance' } },
+    features: { features: true },
+    cityStart: { adapter: { powerPreference: 'high-performance' }, features: true, label: 'page' },
+  }
+  const WORKER = 'onmessage = async () => { try { const a = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" }); const d = a ? await a.requestDevice({ label: "probe: a worker" }) : null; let lost = null; if (d) d.lost.then((l) => { lost = l.reason }); await new Promise((r) => setTimeout(r, 800)); postMessage({ adapter: !!a, device: !!d, lost: lost }) } catch (e) { postMessage({ threw: String(e) }) } }'
   const STAGES = {
     clear: async (d) => {
       const t = target(d)
@@ -387,6 +414,19 @@ export const LADDER = `async (withTimeout) => {
     },
     mips: (d) => mips(d, true),
     mipsDirect: (d) => mips(d, false),
+    npot: (d) => mips(d, true, [192]),
+    fourMips: (d) => mips(d, true, CITY_SIZES),
+    power: (d) => mips(d, true),
+    features: (d) => mips(d, true),
+    cityStart: (d) => mips(d, true, CITY_SIZES),
+    idle: async () => { await new Promise((later) => setTimeout(later, 1500)); return { right: true } },
+    besideWorker: async (d) => {
+      const drawn = await mips(d, true)
+      const worker = new Worker(URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' })))
+      const said = await withTimeout(new Promise((yes, no) => { worker.onmessage = (e) => yes(e.data); worker.onerror = (e) => no(new Error(e.message || 'the worker failed to start')); worker.postMessage(0) }), 20000, 'the worker')
+      worker.terminate()
+      return { pixel: drawn.pixel, worker: said, right: drawn.right && said.device === true && said.lost === null }
+    },
     indirect: async (d) => {
       const t = target(d)
       const module = d.createShaderModule({ code: BUF })
@@ -442,9 +482,10 @@ export const LADDER = `async (withTimeout) => {
     const r = { ok: false, lost: null, errors: [] }
     out[name] = r
     try {
-      const adapter = await withTimeout(navigator.gpu.requestAdapter(), 20000, 'requestAdapter')
+      const how = HOW[name] || {}
+      const adapter = await withTimeout(navigator.gpu.requestAdapter(how.adapter), 20000, 'requestAdapter')
       if (!adapter) { r.errors.push('no adapter'); continue }
-      const d = await withTimeout(adapter.requestDevice({ label: 'probe: ' + name }), 20000, 'requestDevice')
+      const d = await withTimeout(adapter.requestDevice({ label: how.label || 'probe: ' + name, requiredFeatures: how.features ? FEATURES.filter((f) => adapter.features.has(f)) : [] }), 20000, 'requestDevice')
       let over = false
       d.lost.then((l) => { if (!over) r.lost = l.reason + (l.message ? ': ' + l.message : '') })
       d.addEventListener('uncapturederror', (e) => r.errors.push(String(e.error && e.error.message).slice(0, 300)))
@@ -455,7 +496,7 @@ export const LADDER = `async (withTimeout) => {
       if (scoped) r.errors.push(String(scoped.message).slice(0, 300))
       await withTimeout(Promise.race([d.queue.onSubmittedWorkDone(), d.lost]), 10000, 'the submitted work').catch((e) => r.errors.push(String(e).slice(0, 300)))
       // A loss reported a moment after the work was done still belongs to this stage.
-      await new Promise((later) => setTimeout(later, 400))
+      await new Promise((later) => setTimeout(later, 1000))
       if (got) Object.assign(r, got)
       r.ok = r.lost === null && r.errors.length === 0 && got !== null && got.right === true
       over = true
@@ -581,7 +622,7 @@ export const STATE = `(() => {
     veil: veil ? text(veil).slice(0, 400) : null, running,
     bootDone: globalThis.__bootDone === true,
     pageErrors: R ? R.errors.slice(0, 20) : [], lines: R ? R.lines.slice(0, 40) : [],
-    gpu: R && R.gpu ? { total: R.gpu.total, workers: R.gpu.workers, lost: R.gpu.lost.slice(0, 8), errors: R.gpu.errors.slice(0, 40), key: R.gpu.key.slice(-500), calls: R.gpu.calls.slice(-120) } : null,
+    gpu: R && R.gpu ? { total: R.gpu.total, workers: R.gpu.workers, lost: R.gpu.lost.slice(0, 8), errors: R.gpu.errors.slice(0, 40), key: R.gpu.key.slice(-500), calls: R.gpu.calls.slice(-120), worker: (R.gpu.worker || []).slice(0, 80) } : null,
     body: card || running ? null : text(document.body).slice(0, 600),
   }
 })()`
@@ -804,6 +845,7 @@ async function main() {
         console.log(`${name}: WebGPU trace: ${state.gpu.total} calls noted, ${state.gpu.workers} worker(s) traced`)
         for (const line of state.gpu.errors) console.log(`${name}: WebGPU error ${line}`)
         for (const line of state.gpu.lost) console.log(`${name}: WebGPU ${line}`)
+        for (const line of state.gpu.worker ?? []) console.log(`${name}: WebGPU worker call ${line}`)
         for (const line of state.gpu.key) console.log(`${name}: WebGPU key call ${line}`)
         for (const line of state.gpu.calls) console.log(`${name}: WebGPU last call ${line}`)
       }
