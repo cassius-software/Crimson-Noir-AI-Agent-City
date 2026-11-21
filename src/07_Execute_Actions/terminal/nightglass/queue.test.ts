@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It pins how work reaches the device and how long it holds what it uses: a submit is
  * checked whole and changes nothing when refused; semaphores are signalled before they are waited on and taken once;
- * a fence waits on one submit and is signalled when it is done, calling back in order outside any refusal handling;
+ * a fence waits on one submit and is signalled when it is done, calling back in order outside any refusal handling
+ * (every callback, whatever one raises);
  * while work is in flight nothing it uses may be destroyed, written, reset or read back (unless checks are off); a
  * back end that refuses a submit gets it undone; a submit runs as one call, so its getters cannot change what it
  * checked, and only lists, fences and semaphores the core made reach it. It ends with the whole path, from an
@@ -245,7 +246,7 @@ test('a back end that refuses a submit gets it undone; a back end Fault passes t
   refuses(() => queue.submit([{ lists: [list] }]), 'lifetime', /queue 0\.0 submit: the device is destroyed/)
 })
 
-test('fence callbacks run in order once the work is done, outside any refusal handling', () => {
+test('fence callbacks run in order once the work is done, outside any refusal handling, each whatever one raised', () => {
   const { r, list, queue, fence } = work()
   refuses(() => fence.onSignal('soon' as never), 'invalid', /fence "f" onSignal: the callback is a function, not "soon"/)
   const calls: string[] = []
@@ -256,7 +257,8 @@ test('fence callbacks run in order once the work is done, outside any refusal ha
   })
   fence.onSignal(() => calls.push('c'))
   const faults = r.faults.length
-  // The back end finishes inside submit; the callbacks run after it returns, and what one raises is the app's.
+  // The back end finishes inside submit; the callbacks run after it returns, every one of them, and what one raises
+  // is the app's, thrown once all have run.
   let raised: unknown = null
   try {
     queue.submit([{ lists: [list] }], fence)
@@ -264,21 +266,26 @@ test('fence callbacks run in order once the work is done, outside any refusal ha
     raised = e
   }
   assert.ok(raised instanceof Error && !isFault(raised) && raised.message === 'the app\'s own')
-  assert.deepEqual(calls, ['a', 'b'])
+  assert.deepEqual(calls, ['a', 'b', 'c'])
   assert.equal(r.faults.length, faults)
   assert.deepEqual([list.state, fence.signalled], ['ready', true])
   // A callback added to a signalled fence runs at once, and its error is its own as well.
   fence.onSignal(() => calls.push('now'))
-  assert.deepEqual(calls, ['a', 'b', 'now'])
+  assert.deepEqual(calls, ['a', 'b', 'c', 'now'])
   assert.throws(() => fence.onSignal(() => { throw new RangeError('mine') }), RangeError)
-  // Callbacks are taken once: a reset fence signalled again calls only what was added since.
+  // Callbacks are taken once: a reset fence signalled again calls only what was added since. A back end that says
+  // done outside any call runs them all at once, the same way.
   fence.reset()
   r.fake.auto = false
-  fence.onSignal(() => calls.push('later'))
+  fence.onSignal(() => {
+    calls.push('later')
+    throw new RangeError('later')
+  })
+  fence.onSignal(() => calls.push('last'))
   queue.submit([{ lists: [list] }], fence)
-  assert.deepEqual(calls, ['a', 'b', 'now'])
-  r.fake.finish()
-  assert.deepEqual(calls, ['a', 'b', 'now', 'later'])
+  assert.deepEqual(calls, ['a', 'b', 'c', 'now'])
+  assert.throws(() => r.fake.finish(), RangeError)
+  assert.deepEqual(calls, ['a', 'b', 'c', 'now', 'later', 'last'])
   // A fence destroyed with callbacks waiting never calls them.
   const lone = r.device.createFence()
   lone.onSignal(() => calls.push('never'))
@@ -287,6 +294,71 @@ test('fence callbacks run in order once the work is done, outside any refusal ha
   refuses(() => queue.submit([{ lists: [list] }], lone), 'lifetime', /fence \d+ is destroyed/)
   assert.equal(calls.includes('never'), false)
   refuses(() => r.device.createFence({ signalled: 'yes' } as never), 'invalid', /signalled is true or false/)
+})
+
+test('fence callbacks held while another call runs all run when it lets go, though one raises', () => {
+  const { r, list, queue } = work()
+  r.fake.auto = false
+  const second = copyList(r, 0, 'second')
+  const f1 = r.device.createFence({ label: 'f1' })
+  const f2 = r.device.createFence({ label: 'f2' })
+  queue.submit([{ lists: [list] }], f1)
+  const calls: string[] = []
+  f1.onSignal(() => {
+    calls.push('f1')
+    throw new Error('the app callback of f1')
+  })
+  f2.onSignal(() => calls.push('f2'))
+  // The back end finishes everything it holds, the new submit included, inside submit().
+  const fake = r.fake
+  const submit = fake.submit.bind(fake)
+  fake.submit = (lists, done) => {
+    submit(lists, done)
+    fake.finish()
+  }
+  // The submit was handed over; f1's callback raises its own error once every held callback, f2's too, has run.
+  assert.throws(() => queue.submit([{ lists: [second] }], f2), /the app callback of f1/)
+  assert.deepEqual(calls, ['f1', 'f2'])
+  assert.deepEqual([f1.signalled, f2.signalled, list.state, second.state], [true, true, 'ready', 'ready'])
+})
+
+test('a report that raises for a refusal the app caught inside a submit leaves the submit and its fence callbacks be', () => {
+  const backend = new FakeBackend('fake', [adapterReport()])
+  let rethrow = false
+  const inst = createInstance({
+    backends: [backend],
+    report: (f) => {
+      if (rethrow) throw new Error(`the app's own, for ${f.code}`)
+    },
+  })
+  const d = inst.open(inst.adapters()[0])
+  const list = d.createCommandArena().allocate('l')
+  list.begin()
+  list.end()
+  const fence = d.createFence({ label: 'f' })
+  let called = 0
+  fence.onSignal(() => called++)
+  rethrow = true
+  let inner: unknown = null
+  const swallowing = {
+    lists: [list],
+    get signal() {
+      try {
+        d.createFence()
+      } catch (e) {
+        inner = e
+      }
+      return undefined
+    },
+  }
+  d.queue(0, 0).submit([swallowing as never], fence)
+  assert.ok(isFault(inner, 'state'))
+  assert.deepEqual([fence.signalled, called, list.state], [true, 1, 'ready'])
+  // A refusal that comes out of the submit is replaced by what its report raises, and the submit changes nothing.
+  const fence2 = d.createFence({ label: 'g' })
+  const leaking = { lists: [list], get signal(): undefined { d.createFence(); return undefined } }
+  assert.throws(() => d.queue(0, 0).submit([leaking as never], fence2), /^Error: the app's own, for state$/)
+  assert.deepEqual([fence2.signalled, waiting(fence2), list.state], [false, false, 'ready'])
 })
 
 test('with checks off, work in flight no longer guards what it uses; staleness and list states are still checked', () => {

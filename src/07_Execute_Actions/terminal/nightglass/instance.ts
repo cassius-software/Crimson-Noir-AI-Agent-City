@@ -49,10 +49,14 @@ export const LIMIT_NAMES = Object.freeze(Object.keys(LIMIT_RULES) as (keyof Limi
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] }
 
-/** Three whole numbers of at least 1. */
+/** Three whole numbers of at least 1, read once: every one, a missing one refused. */
 function axes(x: unknown, where: string, what: string): readonly [number, number, number] {
-  if (!Array.isArray(x) || x.length !== 3) fail('invalid', `${where}: ${what} is three whole numbers, not ${say(x)}`)
-  const [a, b, c] = (x as unknown[]).map((n, i) => whole(n, where, `${what} ${'xyz'[i]}`, 1))
+  const no = (): never => fail('invalid', `${where}: ${what} is three whole numbers, not ${say(x)}`)
+  if (!Array.isArray(x)) no()
+  const list = listOf(x, where, what, (n) => {
+    if (n !== 3) no()
+  })
+  const [a, b, c] = [0, 1, 2].map((i) => whole(list[i], where, `${what} ${'xyz'[i]}`, 1))
   return Object.freeze([a, b, c] as const)
 }
 

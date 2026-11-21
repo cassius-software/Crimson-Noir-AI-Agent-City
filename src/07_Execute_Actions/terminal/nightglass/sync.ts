@@ -7,9 +7,10 @@
  * pipelines, arenas, command lists, fences, semaphores and the device itself) stands on Base: its label, the name its
  * refusals use, whether it is destroyed, how many submissions in flight still hold it, and a version that a recorded
  * command list compares to learn that the object changed after the list recorded it. Every public call runs inside
- * guard(), which hands each Fault to the instance's report callback before it is thrown and turns anything else a
- * malformed argument raises into a Fault, so a caller only ever catches Faults. The descriptor readers here give
- * every create call one strict reading and one way of wording a refusal. Fences and semaphores, which say when
+ * guard(), which hands each Fault to the instance's report callback (before it is thrown, or for a call refused
+ * inside another once that one has let go) and turns anything else a malformed argument raises into a Fault, so a
+ * caller only ever catches Faults. The descriptor readers here give every create call one strict reading (each list
+ * copied once) and one way of wording a refusal. Fences and semaphores, which say when
  * queued work is done and order one submission after another, live here too.
  * What breaks if it is removed? Every object would track its own lifetime, refusals would reach the report callback
  * from some calls and not others, a TypeError could escape a public call, and the queue would have nothing to signal.
@@ -22,7 +23,11 @@
  *   of that call's arguments) is refused with code `state`, so nothing an argument runs can destroy, reset, submit or
  *   bind between a call's checks and what it changes. The latch is let go before the report callback runs, and fence
  *   callbacks and the reports of refusals made inside a call run once it has let go (outside()), so app code they
- *   call may call Nightglass again.
+ *   call may call Nightglass again. The latch is let go whatever escapes the call, even a stack overflow.
+ * - Held work all runs, each item whatever an earlier one raised, and the first error that counts is thrown once all
+ *   have run, even from a call whose work is done: a fence callback's, or the error of a report whose Fault is the one
+ *   the call throws. A report of a refusal that the app's own code caught inside the call raises into nothing, as it
+ *   would have had it run at the refusal: that code has already had the Fault.
  * - The guard describes whatever an argument raised without letting that value raise again: a revoked Proxy, or an
  *   Error whose name getter throws, becomes a Fault of code `invalid` like any other.
  *
@@ -56,31 +61,46 @@ export function isGenuine(x: unknown): boolean {
 /** The public call running now, by its name in refusals, or null (see guard). */
 let running: string | null = null
 
-/** Work held until the running call lets go: reports of calls refused inside it, and fence callbacks. */
-let held: (() => void)[] = []
+/**
+ * Work held until the running call lets go: fence callbacks (`fault` null), and reports (`fault` the Fault reported)
+ * of calls refused inside it and of its own refusal.
+ */
+type Held = { readonly run: () => void; readonly fault: Fault | null }
+let held: Held[] = []
 
 /**
- * Runs `f` now when no public call is running, else as soon as the running one lets go, so the app code it calls
- * may call Nightglass again. The queue hands it the callbacks of a fence signalled while some call runs.
+ * Runs the callbacks now when no public call is running, else as soon as the running one lets go, so they (the app's
+ * code) may call Nightglass again. Each runs whatever an earlier one raised (see runEach). The queue hands it the
+ * callbacks of a signalled fence.
  */
-export function outside(f: () => void): void {
-  if (running === null) f()
-  else held.push(f)
+export function outside(callbacks: readonly (() => void)[]): void {
+  const due = callbacks.map((run): Held => ({ run, fault: null }))
+  if (running === null) runEach(due, null)
+  else held.push(...due)
 }
 
-/** Runs the work held for the call that just let go, in order; the first error raised is thrown once all have run. */
-function release(): void {
-  const due = held
-  held = []
+/**
+ * Runs held work in order, each item whatever an earlier one raised, then throws the first error that counts: a
+ * fence callback's, or a report's whose Fault is `thrown` (the one the call that let go throws). A report of a
+ * refusal the app's own code caught raises into nothing, as it would have had it run at the refusal.
+ */
+function runEach(due: readonly Held[], thrown: Fault | null): void {
   let raised: { readonly e: unknown } | null = null
-  for (const g of due) {
+  for (const item of due) {
     try {
-      g()
+      item.run()
     } catch (e) {
-      if (raised === null) raised = { e }
+      if (raised === null && (item.fault === null || item.fault === thrown)) raised = { e }
     }
   }
   if (raised !== null) throw raised.e
+}
+
+/** Runs the work held for the call that just let go, which throws `thrown` (null when it succeeded). */
+function release(thrown: Fault | null): void {
+  const due = held
+  held = []
+  runEach(due, thrown)
 }
 
 /** The Fault a caught value becomes. Describing it cannot raise: a value that will not be described gets a plain one. */
@@ -98,14 +118,14 @@ function faultOf(e: unknown, where: string): Fault {
  * getter that throws, a Proxy, a value read as an object that is not one) becomes a Fault of code `invalid` first.
  * A call made while another runs is refused with code `state` (see the head of the file); its report waits until
  * the running call lets go. A report callback that throws replaces the Fault with its own error: the callback is the
- * app's code.
+ * app's code (for a refusal the app caught inside the running call, see runEach).
  */
 export function guard<T>(report: Report, where: string, f: () => T): T {
   if (running !== null) {
     const fault = new Fault('state', `${where}: called from inside another Nightglass call (${running}); calls run one at a time, so a getter, Proxy trap or callback of a call's arguments cannot make one`)
     if (report !== null) {
       reported.add(fault)
-      held.push(() => report(fault))
+      held.push({ run: () => report(fault), fault })
     }
     throw fault
   }
@@ -114,17 +134,22 @@ export function guard<T>(report: Report, where: string, f: () => T): T {
   try {
     out = f()
   } catch (e) {
-    const fault = faultOf(e, where)
-    running = null
+    let fault: Fault
+    try {
+      fault = faultOf(e, where)
+    } finally {
+      // Let go whatever escapes, even a stack overflow while describing the value: else every later call is refused.
+      running = null
+    }
     if (report !== null && !reported.has(fault)) {
       reported.add(fault)
-      held.push(() => report(fault))
+      held.push({ run: () => report(fault), fault })
     }
-    release()
+    release(fault)
     throw fault
   }
   running = null
-  release()
+  release(null)
   return out
 }
 
@@ -367,16 +392,30 @@ export function flag(x: unknown, where: string, what: string, fallback: boolean)
   return x
 }
 
-/** A list. */
-export function listOf(x: unknown, where: string, what: string): readonly unknown[] {
+/**
+ * A list, copied: its length is read once and each entry once (a hole stays a hole), so a Proxy cannot answer the
+ * checks one way and the use another. `bound`, when given, checks the length before any entry is read, so a limit
+ * refuses a long list at once.
+ */
+export function listOf(x: unknown, where: string, what: string, bound?: (length: number) => void): readonly unknown[] {
   if (!Array.isArray(x)) fail('invalid', `${where}: ${what} is a list, not ${say(x)}`)
-  return x
+  const list = x as readonly unknown[]
+  const n: unknown = list.length
+  // Only a Proxy answers anything but a whole number from 0 to 2^32 - 1.
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > 0xffffffff) fail('invalid', `${where}: ${what} has a length of ${say(n)}`)
+  bound?.(n)
+  const out: unknown[] = []
+  for (let i = 0; i < n; i++) if (i in list) out[i] = list[i]
+  out.length = n
+  return out
 }
 
 /** A list of names, each at most once (and at least one unless `empty`), frozen. */
 export function names<T extends string>(list: readonly T[], x: unknown, where: string, what: string, empty = false): readonly T[] {
-  const items = listOf(x, where, what)
-  if (items.length === 0 && !empty) fail('invalid', `${where}: ${what} is empty; it names at least one of ${list.join(', ')}`)
+  const items = listOf(x, where, what, (n) => {
+    if (n === 0 && !empty) fail('invalid', `${where}: ${what} is empty; it names at least one of ${list.join(', ')}`)
+    if (n > list.length) fail('invalid', `${where}: ${what} holds ${n} entries; it names each of ${list.join(', ')} at most once`)
+  })
   const out: T[] = []
   for (const item of items) {
     const n = choice(list, item, where, `${what} entry`)

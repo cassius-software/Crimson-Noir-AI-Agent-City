@@ -306,6 +306,36 @@ test('a render pipeline binds inside a pass whose colour formats, depth and samp
   consistent(copier)
 })
 
+test('bindPipeline refuses a copy or a Proxy of a pipeline before any of its code runs', () => {
+  const s = scene()
+  const { r, list, pipeline } = s
+  const storage = r.device.createBindingLayout({ entries: [{ binding: 0, kind: 'storage', stages: ['compute'] }] })
+  const comp = r.device.createComputePipeline({ layout: r.device.createPipelineLayout({ sets: [storage] }), lens: r.device.createLens(computeLens()) })
+  let traps = 0
+  const counting = <T extends object>(t: T): T =>
+    new Proxy(t, {
+      get: (o, k) => {
+        traps++
+        return Reflect.get(o, k)
+      },
+      getPrototypeOf: (o) => {
+        traps++
+        return Reflect.getPrototypeOf(o)
+      },
+    })
+  list.begin()
+  const not = /bindPipeline: the pipeline is a RenderPipeline or a ComputePipeline, not an object$/
+  refuses(() => list.bindPipeline(counting(comp)), 'invalid', not)
+  refuses(() => list.bindPipeline(Object.create(comp)), 'invalid', not)
+  pass(s)
+  refuses(() => list.bindPipeline(counting(pipeline)), 'invalid', not)
+  refuses(() => list.bindPipeline(Object.create(pipeline)), 'invalid', not)
+  assert.equal(traps, 0)
+  assert.equal(list.commands.filter((c) => c.c === 'pipeline').length, 0)
+  list.bindPipeline(pipeline)
+  assert.deepEqual(lastCommand(list), { c: 'pipeline', pipeline: (pipeline as RenderPipelineImpl).handle, compute: false })
+})
+
 test('bindSets: compatible, complete, living sets, and one aligned offset per dynamic binding that stays inside its buffer', () => {
   const { r, list, layout, set, setLayout, data, pool } = computeScene()
   list.begin()

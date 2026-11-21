@@ -6,7 +6,8 @@
  * of adapters and the checks on what a back end reports, opening a device with features, limits and queues, the
  * device's own calls and its teardown, memory (allocation against limits and heaps, map, flush, invalidate), what
  * a resource needs of memory and binding it there, and the guard every public call runs in (the report callback,
- * no TypeError escaping a call given junk, one call at a time, and only objects the core made taken).
+ * no TypeError escaping a call given junk, one call at a time and its latch let go whatever escapes, only objects
+ * the core made taken, and each list read once).
  * What breaks if it is removed? A change could let a device open with a feature its adapter lacks, overdraw a heap,
  * bind two resources over one byte, or let an error other than a Fault escape a public call, and no test would say.
  */
@@ -14,8 +15,55 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { AdapterReport, Buffer, Device, Image, Limits, Memory } from './api.ts'
 import { isFault } from './fault.ts'
-import { HEAP_DEVICE, HEAP_HOST, KIND, LIMITS, FakeBackend, adapterReport, buffer, refuses, rig } from './harness.test.ts'
+import { CommandListImpl } from './commands.ts'
+import { HEAP_DEVICE, HEAP_HOST, KIND, LIMITS, FakeBackend, adapterReport, buffer, imageView, refuses, rig, vertexLens } from './harness.test.ts'
 import { createInstance } from './instance.ts'
+
+// First in the file, while the guard's code is not yet optimised: once it is, its calls merge into fewer frames and a
+// stack overflow no longer lands inside its catch, so a later place would not test what it says.
+test('the latch is let go whatever escapes a call, even a stack overflow while the guard describes a refusal', () => {
+  const r = rig()
+  const d = r.device
+  const once = (): void => {
+    try {
+      d.createBuffer({ size: 3, use: ['vertex'] })
+    } catch {
+      // Refused, or out of stack.
+    }
+  }
+  const pad = (j: number): void => {
+    if (j > 0) pad(j - 1)
+    else once()
+  }
+  // Down to the end of the stack, then on the way back up the refusal is made from each of the last 1000 levels,
+  // through 0 to 15 frames more, so it runs out of stack at every point of guard() in turn, its catch included.
+  let fromBottom = 0
+  const dive = (): void => {
+    try {
+      dive()
+    } catch {
+      fromBottom = 0
+    }
+    if (fromBottom < 1000) {
+      for (let j = 0; j < 16; j++) {
+        try {
+          pad(j)
+        } catch {
+          // Out of stack.
+        }
+      }
+    }
+    fromBottom++
+  }
+  for (let sweep = 0; sweep < 2; sweep++) {
+    dive()
+    // A plain call afterwards is taken.
+    d.createFence()
+  }
+  // So is one on a new instance.
+  const other = createInstance({ backends: [new FakeBackend('other', [adapterReport()])] })
+  other.open(other.adapters()[0]).createFence()
+})
 
 test('createInstance refuses malformed info, reporting each refusal to the callback', () => {
   const faults: unknown[] = []
@@ -519,6 +567,85 @@ test('the instance\'s app, a back end\'s name and an adapter\'s name are read on
   assert.deepEqual([adapter.name, adapter.backend], ['card', 'mine'])
   assert.deepEqual(adapter.heaps.map((h) => h.index), [0, 1])
   assert.deepEqual(reads, { app: 1, backend: 1, adapter: 1, heap: 1 })
+})
+
+test('a report that raises for a refusal the app caught inside a call leaves that call be: what it made is handed back', () => {
+  const backend = new FakeBackend('fake', [adapterReport()])
+  let rethrow = false
+  const inst = createInstance({
+    backends: [backend],
+    report: (f) => {
+      if (rethrow) throw new Error(`the app's own, for ${f.code}`)
+    },
+  })
+  const d = inst.open(inst.adapters()[0])
+  rethrow = true
+  let inner: unknown = null
+  const b = d.createBuffer({
+    size: 256,
+    use: ['vertex'],
+    get label() {
+      try {
+        d.createFence()
+      } catch (e) {
+        inner = e
+      }
+      return 'made'
+    },
+  })
+  // The getter had the Fault; what the report raised after the call let go goes nowhere.
+  assert.ok(isFault(inner, 'state'))
+  assert.equal(b.label, 'made')
+  b.destroy()
+  // What a report raises still replaces a Fault that comes out of the call: the inner refusal, or the call's own.
+  assert.throws(() => d.createBuffer({ size: 256, use: ['vertex'], get label(): string { d.createFence(); return 'x' } }), /^Error: the app's own, for state$/)
+  assert.throws(() => d.createBuffer({ size: 3, use: ['vertex'] }), /^Error: the app's own, for invalid$/)
+})
+
+test('a list is read once, its length and each entry: a Proxy cannot answer the checks one way and the use another', () => {
+  // A list whose length reads `first` once and its true length after.
+  const lying = <T>(items: T[], first: number): T[] => {
+    let reads = 0
+    return new Proxy(items, { get: (t, k, receiver) => (k === 'length' ? (++reads === 1 ? first : t.length) : Reflect.get(t, k, receiver)) })
+  }
+  const r = rig()
+  const d = r.device
+  // A use that reads as one entry, then none: the one entry read is a hole, and refused.
+  refuses(() => d.createBuffer({ size: 256, use: [] }), 'invalid', /the use is empty/)
+  refuses(() => d.createBuffer({ size: 256, use: lying([], 1) as never }), 'invalid', /the use entry undefined is not one of/)
+  const unsized = new Proxy([], { get: (t, k, receiver) => (k === 'length' ? 'two' : Reflect.get(t, k, receiver)) })
+  refuses(() => d.createBuffer({ size: 256, use: unsized as never }), 'invalid', /^device 1 createBuffer: the use has a length of "two"$/)
+  // Nine vertex buffers that first read as one: one is checked, and one is what the back end is handed.
+  const layout = d.createPipelineLayout({ sets: [] })
+  const lens = d.createLens(vertexLens())
+  const most = d.limits.vertexBuffers
+  const many = [{ stride: 24, attributes: [{ slot: 0, format: 'f32x2', offset: 0 }, { slot: 1, format: 'f32x4', offset: 8 }] }, ...Array.from({ length: most }, () => ({ stride: 4, attributes: [] }))]
+  refuses(() => d.createRenderPipeline({ layout, vertex: { lens, buffers: many as never } }), 'limit', new RegExp(`${most + 1} vertex buffers is more than the device allows, ${most}`))
+  d.createRenderPipeline({ layout, vertex: { lens, buffers: lying(many, 1) as never } })
+  const handed = r.fake.last('createRenderPipeline').args[0] as { readonly vertex: { readonly buffers: readonly unknown[] } }
+  assert.equal(handed.vertex.buffers.length, 1)
+  // Colour attachments past the limit that first read as one: one is recorded.
+  const colors = Array.from({ length: d.limits.colorAttachments + 1 }, () => ({ view: imageView(r, { format: 'rgba8', width: 4, height: 4, use: ['color'] }), load: 'clear' as const, store: 'keep' as const }))
+  const list = d.createCommandArena().allocate('l') as CommandListImpl
+  list.begin()
+  refuses(() => list.beginPass({ colors }), 'limit', /colour attachments is more than the device allows/)
+  list.beginPass({ colors: lying(colors, 1) })
+  const pass = list.commands.find((c) => c.c === 'pass') as { readonly colors: readonly unknown[] }
+  assert.equal(pass.colors.length, 1)
+  list.endPass()
+  // A colour of two channels that reads as four, and one with holes, are refused: every channel is read.
+  refuses(() => list.beginPass({ colors: [{ ...colors[0], clear: lying([0, 0], 4) as never }] }), 'invalid', /colors\[0\]: the clear colour channel 2 undefined is not a finite number/)
+  list.beginPass({ colors: [colors[0]] })
+  refuses(() => list.setBlendConstant(lying([1, 1], 4) as never), 'invalid', /the blend constant channel 2 undefined is not a finite number/)
+  const holed: number[] = []
+  holed[0] = 1
+  holed[3] = 1
+  refuses(() => list.setBlendConstant(holed as never), 'invalid', /the blend constant channel 1 undefined is not a finite number/)
+  assert.equal(list.commands.filter((c) => c.c === 'blend-constant').length, 0)
+  // A device's groupSize limit of two axes that reads as three is refused, and never reaches the back end.
+  const opened = r.backend.opened.length
+  refuses(() => r.instance.open(r.instance.adapters()[0], { limits: { groupSize: lying([256, 256], 3) as never } }), 'invalid', /the limit groupSize z undefined is not a whole number/)
+  assert.equal(r.backend.opened.length, opened)
 })
 
 /** A memory info whose label may be a getter. */

@@ -21,10 +21,11 @@
  * - One submit hands the back end all of its lists at once and gets one `done`. When it comes, every list is ready
  *   again (a `once` list invalid), every object they held is let go, and the fence is signalled. `done` called a
  *   second time does nothing.
- * - Callbacks waiting on the fence run after the back end's submit returns when it finishes the work at once (as the
- *   reference renderer does), outside any refusal handling, so whatever an app's callback raises is its own. A back
- *   end that says `done` while some other Nightglass call runs has the callbacks wait until that call lets go
- *   (outside() in sync.ts), so a callback may submit again.
+ * - Callbacks waiting on the fence run once no Nightglass call runs (outside() in sync.ts): at once when the back end
+ *   says `done` outside any call, else when the call it said it in lets go (after the submit, for a back end that
+ *   finishes the work at once, as the reference renderer does), so a callback may submit again. They run outside
+ *   any refusal handling, each whatever an earlier one raised, and the first error one raises is thrown once all
+ *   have run (from that call, even one whose work is done), so whatever an app's callback raises is its own.
  * - A submit runs as one call: a getter or Proxy trap of its submissions that calls Nightglass (to destroy or reset
  *   what a checked list uses, take a semaphore's signal, or submit again) is refused (sync.ts), so what the checks
  *   passed is what the back end is handed.
@@ -59,12 +60,11 @@ export class QueueImpl implements Queue {
 
   submit(submissions: readonly Submission[], fence?: Fence): void {
     const where = `${this.name} submit`
-    const due = guard(this.core.report, where, () => this.run(submissions, fence, where))
-    for (const callback of due) callback()
+    guard(this.core.report, where, () => this.run(submissions, fence, where))
   }
 
-  /** Checks, commits and hands over one submit; returns the fence callbacks to run if the work finished at once. */
-  private run(submissions: unknown, fence: unknown, where: string): (() => void)[] {
+  /** Checks, commits and hands over one submit. */
+  private run(submissions: unknown, fence: unknown, where: string): void {
     const core = this.core
     core.enter(where)
     const subs = listOf(submissions, where, 'the submissions')
@@ -126,8 +126,6 @@ export class QueueImpl implements Queue {
     order?.commit()
     core.inFlight++
     let finished = false
-    let calling = true
-    let due: (() => void)[] = []
     const settle = (ran: boolean): void => {
       finished = true
       for (const l of lists) l.release(ran)
@@ -139,12 +137,7 @@ export class QueueImpl implements Queue {
     const done = (): void => {
       if (finished) return
       settle(true)
-      if (f === null) return
-      const callbacks = f.signal()
-      if (calling) due = callbacks
-      else outside(() => {
-        for (const callback of callbacks) callback()
-      })
+      if (f !== null) outside(f.signal())
     }
     try {
       core.call(where, () => core.backend.submit(lists.map((l) => l.commands), done))
@@ -155,7 +148,5 @@ export class QueueImpl implements Queue {
       }
       throw e
     }
-    calling = false
-    return due
   }
 }
