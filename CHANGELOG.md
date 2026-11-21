@@ -68,8 +68,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `-msse4.2;-mf16c;-mfma;-mbmi2;-mavx;-mavx2`, the arm64 slice kept Metal on. `third_party/llama.cpp/NOTICE`,
   `NOTICE.md`, `docs/ip-audit.md`, the 1.5B model's NOTICE and `siteModel.mjs` name the macOS app, and the model's
   carriers test holds four. No workflow starts the built app: an answer from it would need a WebDriver for WKWebView,
-  which tauri-driver lacks on macOS, or new product code, so the launch is left out. Not verified: the macOS build
-  itself until CI runs it, the app in WKWebView (WebGPU there, the recovery card, the console alone), how fast Metal
+  which tauri-driver lacks on macOS, or new product code, so the launch is left out. The first macOS build in CI
+  failed to link the Apple silicon slice: below macOS 15 ggml's Metal code calls `__isPlatformVersionAtLeast`, which
+  clang's runtime (compiler-rt, `libclang_rt.osx.a`) defines and rustc does not link, so `src-tauri/build.rs` now
+  links that archive on macOS where the runner is compiled, found through `xcrun clang -print-resource-dir`, and stops
+  with a sentence when it is missing (`desktopShell.test.ts` pins it). Not verified: the macOS build itself until CI
+  runs it, the app in WKWebView (WebGPU there, the recovery card, the console alone), how fast Metal
   answers, any run on an Intel Mac, and Gatekeeper with this unsigned app.
 
 - **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which

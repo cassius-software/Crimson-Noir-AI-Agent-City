@@ -213,7 +213,12 @@ same, with the same sources:
   its shader sources embedded in the executable (ggml's default on Apple systems, `GGML_METAL_EMBED_LIBRARY`); the
   Intel slice is built without Metal (`tools/build/macos-slices.cmake`). The macOS app links Apple's own frameworks
   (Metal, MetalKit, Foundation, Accelerate) and `libc++` from the system, which are not redistributed; ggml's BLAS
-  backend is off on Apple systems (llama-cpp-sys-2 sets `GGML_BLAS=OFF` there).
+  backend is off on Apple systems (llama-cpp-sys-2 sets `GGML_BLAS=OFF` there). Since 21 November 2026 the macOS
+  app also links clang's own runtime library from Xcode, compiler-rt's `libclang_rt.osx.a` (Apache-2.0 WITH
+  LLVM-exception, the LLVM project), as clang does for every program it links: ggml's Metal code checks the macOS
+  version below macOS 15 through its `__isPlatformVersionAtLeast`, and rustc does not link that library by itself
+  (`src-tauri/build.rs`). Only the archive members that define what is asked for are linked; the LLVM exception
+  waives the licence's notice conditions for such parts compiled into a program.
 - **The crates the runner adds to the Linux app** (`cargo tree --target x86_64-unknown-linux-gnu`, with the feature
   against without it; each licence from the crate's manifest in the registry cache). Linked: `crimson-noir-llm` (the
   product's own), `llama-cpp-2` and `llama-cpp-sys-2` (MIT OR Apache-2.0), `enumflags2` (MIT OR Apache-2.0), and

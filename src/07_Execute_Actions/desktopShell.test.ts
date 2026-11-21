@@ -267,6 +267,15 @@ test('the shell lends the runner\'s three commands in the design\'s order, under
   assert.match(build, /^const RUNNER_OS: \[&str; 2\] = \["linux", "macos"\];$/m)
   assert.match(build, /println!\("cargo:rustc-check-cfg=cfg\(native_runner\)"\);/)
   assert.match(build, /if feature && RUNNER_OS\.contains\(&os\.as_str\(\)\) \{\n {8}println!\("cargo:rustc-cfg=native_runner"\);/)
+  // Below macOS 15 ggml's Metal code calls __isPlatformVersionAtLeast, which clang's runtime (compiler-rt) defines and
+  // rustc does not link: build.rs links it on macOS where the runner is compiled, from the clang that builds llama.cpp,
+  // and fails with a sentence when it cannot find it (the first macOS build, on PR #165, failed to link without it).
+  assert.match(build, /if os == "macos" \{\n {12}link_clang_runtime\(\);\n {8}\}\n {4}\}\n {4}tauri_build::build\(\)/, 'compiler-rt on macOS where the runner is, and only there')
+  assert.match(build, /\["xcrun", "clang", "-print-resource-dir"\]/)
+  assert.match(build, /\.join\("lib\/darwin\/libclang_rt\.osx\.a"\)/)
+  assert.match(build, /println!\("cargo:rustc-link-lib=static=clang_rt\.osx"\);/)
+  assert.match(build, /println!\("cargo:rerun-if-changed=\{\}", archive\.display\(\)\);/, 'a moved runtime runs the script again')
+  assert.match(build, /panic!\("clang's runtime \(lib\/darwin\/libclang_rt\.osx\.a/, 'a missing runtime is said plainly, not left to the linker')
   for (const file of ['main.rs', 'model_file.rs', 'lib.rs', 'model.rs']) {
     const src = readFileSync(new URL(`../../src-tauri/src/${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /feature = "native-runner"/, `${file} asks the cfg, not the feature and the system`)
