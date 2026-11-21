@@ -21,6 +21,8 @@
  *   passes at most `limits.interStage` values.
  * - A colour output with a write mask other than 0 needs a fragment lens output at its slot whose scalar kind is the
  *   format's (f32 for unorm and float, u32 for uint, i32 for sint) and whose width covers the format's channels.
+ * - The colour outputs (every one, whatever its mask) take at most `limits.colorBytes` bytes per sample, counted slot
+ *   by slot by colorBytes() in formats.ts, as WebGPU counts them (rgba8 and bgra8 cost 8, rgba32f 16).
  * - A blend whose operation is min or max takes the factor `one` on both sides, as WebGPU requires.
  * - A lens resource needs a layout entry at its set and binding that lists the lens's stage and is of the matching
  *   kind: uniform to uniform; writable storage to storage; read-only storage to storage or storage-read; an image to
@@ -38,7 +40,7 @@ import type {
 import { decode, encode } from './binary.ts'
 import { BindingLayoutImpl, PipelineLayoutImpl } from './bindings.ts'
 import { fail, isFault } from './fault.ts'
-import { FORMATS, FORMAT_NAMES, sampleKind } from './formats.ts'
+import { FORMATS, FORMAT_NAMES, colorBytes, sampleKind } from './formats.ts'
 import type { Format } from './formats.ts'
 import { layoutBlock, scalarOf, widthOf } from './lens.ts'
 import type { Block, Inst, LensModule, Stage, ValueType } from './lens.ts'
@@ -245,7 +247,7 @@ function colorOutputs(core: Core, x: unknown, lens: LensImpl, where: string): re
   const list = listOf(x, where, 'the colour outputs', (n) => {
     if (n > core.limits.colorAttachments) fail('limit', `${where}: ${n} colour outputs is more than the device allows, ${core.limits.colorAttachments}`)
   })
-  return Object.freeze(list.map((c, s): ColorOutput | null => {
+  const outputs = list.map((c, s): ColorOutput | null => {
     if (c === null) return null
     const at = `${where}: output ${s}`
     const o = record(c, ['format', 'blend', 'mask'], at, 'the colour output')
@@ -264,7 +266,10 @@ function colorOutputs(core: Core, x: unknown, lens: LensImpl, where: string): re
     if (!f.blend) fail('invalid', `${at}: ${format} cannot be blended into`)
     const b = record(o.blend, ['color', 'alpha'], at, 'the blend')
     return Object.freeze({ format, mask, blend: Object.freeze({ color: blendPart(b.color, at, 'colour blend'), alpha: blendPart(b.alpha, at, 'alpha blend') }) })
-  }))
+  })
+  const bytes = colorBytes(outputs.map((c) => (c === null ? null : c.format)))
+  if (bytes > core.limits.colorBytes) fail('limit', `${where}: the colour outputs take ${bytes} bytes per sample, more than the device allows, ${core.limits.colorBytes}`)
+  return Object.freeze(outputs)
 }
 
 function depthState(core: Core, x: unknown, where: string): DepthState | null {

@@ -12,11 +12,12 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import type { BindingSet, Buffer, Command, PipelineLayout, RenderPipeline, VertexBufferLayout, View, Viewport } from './api.ts'
+import type { BindingSet, Buffer, Command, Image, PipelineLayout, RenderPipeline, VertexBufferLayout, View, Viewport } from './api.ts'
 import { BindingSetImpl } from './bindings.ts'
 import { arrayOf, lens } from './builder.ts'
-import { CommandListImpl } from './commands.ts'
+import { COPY_REGIONS, CommandListImpl } from './commands.ts'
 import type { Recorded } from './commands.ts'
+import type { Format } from './formats.ts'
 import type { LensModule } from './lens.ts'
 import type { MemoryImpl } from './memory.ts'
 import { ComputePipelineImpl, RenderPipelineImpl } from './pipelines.ts'
@@ -193,6 +194,41 @@ test('a pass: at least one attachment, each one level of one layer with the use 
   list.endPass()
   refuses(() => list.endPass(), 'state', /this command sits inside a pass, and no pass is open/)
   consistent(list)
+})
+
+test('a pass\'s colour attachments take at most limits.colorBytes bytes per sample, counted slot by slot as WebGPU counts them', () => {
+  const r = rig()
+  const list = r.device.createCommandArena().allocate('l') as CommandListImpl
+  const keep = (format: Format): unknown => ({ view: imageView(r, { format, width: 4, height: 4, use: ['color'] }), load: 'keep', store: 'keep' })
+  const begin = (colors: readonly unknown[]): void => list.beginPass({ colors } as never)
+  const many = (n: number, format: Format): unknown[] => Array.from({ length: n }, () => keep(format))
+  list.begin()
+  // rgba32f costs 16 bytes, so three take 48; rgba8 and bgra8 cost 8 (WebGPU's cost, not their 4 texel bytes).
+  refuses(() => begin(many(3, 'rgba32f')), 'limit', /^command list "l" beginPass: the colour attachments take 48 bytes per sample, more than the device allows, 32$/)
+  refuses(() => begin(many(5, 'rgba8')), 'limit', /the colour attachments take 40 bytes per sample/)
+  refuses(() => begin(many(8, 'bgra8')), 'limit', /the colour attachments take 64 bytes per sample/)
+  refuses(() => begin(many(5, 'rgba16f')), 'limit', /the colour attachments take 40 bytes per sample/)
+  // The count rounds up to each format's alignment first: r8 then two rgba32f take 4 + 16 + 16.
+  refuses(() => begin([keep('r8'), ...many(2, 'rgba32f')]), 'limit', /the colour attachments take 36 bytes per sample/)
+  assert.equal(list.commands.length, 0)
+  // Exactly 32 fits, and an empty slot adds nothing.
+  begin([keep('rgba32f'), null, keep('rgba32f')])
+  list.endPass()
+  begin([keep('rgba8'), keep('rgba8-srgb'), keep('bgra8'), keep('bgra8-srgb')])
+  list.endPass()
+  begin([keep('rgba32f'), keep('rg32f'), keep('r32u'), keep('r32i')])
+  list.endPass()
+  list.end()
+  consistent(list)
+  // A device may ask for less, and is held to what it asked for; never more than the adapter's.
+  refuses(() => rig({ limits: { colorBytes: 64 } }), 'limit', /the limit colorBytes 64 is more than the adapter allows, 32/)
+  const low = rig({ limits: { colorBytes: 16 } })
+  assert.equal(low.device.limits.colorBytes, 16)
+  const l2 = low.device.createCommandArena().allocate() as CommandListImpl
+  const view = (format: Format): unknown => ({ view: imageView(low, { format, width: 4, height: 4, use: ['color'] }), load: 'keep', store: 'keep' })
+  l2.begin()
+  refuses(() => l2.beginPass({ colors: [view('rgba8'), view('rgba8'), view('r8')] } as never), 'limit', /take 17 bytes per sample, more than the device allows, 16/)
+  l2.beginPass({ colors: [view('rgba8'), view('rgba8')] } as never)
 })
 
 test('depth attachments and resolve views', () => {
@@ -499,16 +535,28 @@ test('viewport, scissor and blend constant sit inside a pass; constants fit the 
   refuses(() => list.setBlendConstant([0, 0, 0, 0]), 'state', /sits inside a pass/)
   pass(s)
   refuses(() => list.setViewport({ x: 0, y: 0, width: 0, height: 10 }), 'invalid', /the viewport is 0 x 10; its size is positive/)
-  refuses(() => list.setViewport({ x: -20000, y: 0, width: 10, height: 10 }), 'invalid', /the viewport runs outside -16384 to 16384, twice the device's largest image/)
-  refuses(() => list.setViewport({ x: 16380, y: 0, width: 10, height: 10 }), 'invalid', /runs outside -16384 to 16384/)
+  refuses(() => list.setViewport({ x: -20000, y: 0, width: 10, height: 10 }), 'invalid', /the viewport runs outside -16384 to 16383, twice the device's largest image/)
+  refuses(() => list.setViewport({ x: 16380, y: 0, width: 10, height: 10 }), 'invalid', /runs outside -16384 to 16383/)
+  // WebGPU's rules: at most the largest image wide and tall, and the far edge at most twice that minus one.
+  refuses(() => list.setViewport({ x: -16000, y: 0, width: 20000, height: 8 }), 'limit', /the viewport is 20000 x 8, larger than the device's largest image, 8192 x 8192/)
+  refuses(() => list.setViewport({ x: 0, y: -8192, width: 8, height: 8192.5 }), 'limit', /the viewport is 8 x 8192.5, larger than the device's largest image/)
+  refuses(() => list.setViewport({ x: 16374, y: 0, width: 10, height: 8 }), 'invalid', /runs outside -16384 to 16383/)
+  refuses(() => list.setViewport({ x: 0, y: 16374, width: 8, height: 10 }), 'invalid', /runs outside -16384 to 16383/)
+  refuses(() => list.setViewport({ x: -16384.5, y: 0, width: 8, height: 8 }), 'invalid', /runs outside -16384 to 16383/)
   refuses(() => list.setViewport({ x: 0, y: 0, width: 10, height: 10, near: 2 }), 'invalid', /the depth range 2 to 1 is outside 0 to 1/)
   refuses(() => list.setViewport({ x: 0, y: 0, width: 10, height: 10, far: -1 }), 'invalid', /the depth range 0 to -1/)
+  refuses(() => list.setViewport({ x: 0, y: 0, width: 64, height: 32, near: 1, far: 0 }), 'invalid', /the depth range 1 to 0 runs backwards; near is at most far/)
+  refuses(() => list.setViewport({ x: 0, y: 0, width: 64, height: 32, near: 0.5, far: 0.25 }), 'invalid', /the depth range 0.5 to 0.25 runs backwards/)
   refuses(() => list.setViewport({ x: Number.NaN, y: 0, width: 10, height: 10 }), 'invalid', /x NaN is not a finite number/)
   refuses(() => list.setViewport({ x: 0, y: 0, width: 10, height: 10, depth: 1 } as never), 'invalid', /the viewport has no field "depth"/)
   list.setViewport({ x: -8, y: 4.5, width: 100, height: 50 })
   assert.deepEqual(lastCommand(list), { c: 'viewport', x: -8, y: 4.5, width: 100, height: 50, near: 0, far: 1 })
-  list.setViewport({ x: 0, y: 0, width: 64, height: 32, near: 1, far: 0 })
-  assert.deepEqual(lastCommand(list), { c: 'viewport', x: 0, y: 0, width: 64, height: 32, near: 1, far: 0 })
+  list.setViewport({ x: 0, y: 0, width: 64, height: 32, near: 0.75 })
+  list.setViewport({ x: 0, y: 0, width: 64, height: 32, near: 0.5, far: 0.5 })
+  assert.deepEqual(lastCommand(list), { c: 'viewport', x: 0, y: 0, width: 64, height: 32, near: 0.5, far: 0.5 })
+  list.setViewport({ x: -16384, y: -16384, width: 8192, height: 8192 })
+  list.setViewport({ x: 16373, y: 8191, width: 10, height: 8192 })
+  assert.deepEqual(lastCommand(list), { c: 'viewport', x: 16373, y: 8191, width: 10, height: 8192, near: 0, far: 1 })
   refuses(() => list.setScissor({ x: 0, y: 0, width: 65, height: 32 }), 'invalid', /the scissor 0,0 65 x 32 runs outside the pass's 64 x 32/)
   refuses(() => list.setScissor({ x: 60, y: 30, width: 4, height: 3 }), 'invalid', /the scissor 60,30 4 x 3/)
   refuses(() => list.setScissor({ x: 0.5, y: 0, width: 1, height: 1 }), 'invalid', /x 0.5 is not a whole number/)
@@ -538,6 +586,20 @@ test('viewport, scissor and blend constant sit inside a pass; constants fit the 
   list.end()
   assert.equal(list.records.length, 2)
   consistent(list)
+})
+
+test('a viewport is held to the device\'s own largest image, as WebGPU holds it to its largest 2D texture', () => {
+  const s = scene({ limits: { imageSize: 64 } })
+  const { list } = s
+  list.begin()
+  pass(s)
+  refuses(() => list.setViewport({ x: 0, y: 0, width: 65, height: 8 }), 'limit', /the viewport is 65 x 8, larger than the device's largest image, 64 x 64/)
+  refuses(() => list.setViewport({ x: 100, y: 0, width: 28, height: 8 }), 'invalid', /the viewport runs outside -128 to 127, twice the device's largest image/)
+  refuses(() => list.setViewport({ x: 0, y: -129, width: 8, height: 8 }), 'invalid', /runs outside -128 to 127/)
+  list.setViewport({ x: 63, y: -128, width: 64, height: 64 })
+  assert.deepEqual(lastCommand(list), { c: 'viewport', x: 63, y: -128, width: 64, height: 64, near: 0, far: 1 })
+  list.endPass()
+  list.end()
 })
 
 /** A compute lens reading a 16-byte uniform block at set 0 binding 1, writing storage at binding 0. */
@@ -745,6 +807,44 @@ test('copyImage keeps the format, refuses depth, and keeps regions inside and ap
   consistent(list)
 })
 
+test('a copy carries at most COPY_REGIONS regions, and its byte checks sort and sweep instead of comparing every pair', () => {
+  const r = rig()
+  const list = r.device.createCommandArena().allocate() as CommandListImpl
+  const a = buffer(r, 65536, ['copy-src', 'copy-dst'])
+  const b = buffer(r, 65536, ['copy-dst'])
+  const img = image(r, { format: 'rgba8', width: 1024, height: 2048, use: ['copy-src', 'copy-dst'] })
+  const each = <T>(n: number, f: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => f(i))
+  list.begin()
+  assert.equal(COPY_REGIONS, 1024)
+  refuses(() => list.copyBuffer(a, b, each(1025, (i) => ({ from: 4 * i, to: 4 * i, size: 4 }))), 'limit', /copyBuffer: 1025 regions is more than one copy carries, 1024/)
+  refuses(() => list.copyBufferToImage(a, img, each(1025, (i) => ({ offset: 0, rowBytes: 4, region: { x: i % 1024, y: i >> 10, width: 1, height: 1 } }))), 'limit', /copyBufferToImage: 1025 regions/)
+  refuses(() => list.copyImageToBuffer(img, b, each(1025, (i) => ({ offset: 4 * i, rowBytes: 4, region: { width: 1, height: 1 } }))), 'limit', /copyImageToBuffer: 1025 regions/)
+  refuses(() => list.copyImage(img, img, each(1025, () => ({ from: { width: 1, height: 1 }, to: { x: 1 } }))), 'limit', /copyImage: 1025 regions/)
+  list.copyBuffer(a, b, each(COPY_REGIONS, (i) => ({ from: 4 * i, to: 4 * i, size: 4 })))
+  // The one clash among many writes is found, the lower region named first (the writes run backwards here).
+  const backwards = each(1023, (i) => ({ from: 0, to: 64 * (1022 - i), size: 4 }))
+  list.copyBuffer(a, b, backwards)
+  refuses(() => list.copyBuffer(a, b, [...backwards, { from: 0, to: 316, size: 8 }]), 'invalid', /copyBuffer: regions\[1017\] and regions\[1023\] write overlapping bytes of buffer \d+/)
+  // Within one buffer, a write that meets another region's read is found too.
+  const halves = each(1023, (i) => ({ from: 32768 + 16 * i, to: 16 * i, size: 16 }))
+  list.copyBuffer(a, a, halves)
+  refuses(() => list.copyBuffer(a, a, [...halves, { from: 49136, to: 32848, size: 16 }]), 'invalid', /regions\[1023\] writes bytes of buffer \d+ that regions\[5\] reads/)
+  refuses(() => list.copyBuffer(a, a, [...halves, { from: 20000, to: 20008, size: 16 }]), 'invalid', /regions\[1023\] reads and writes overlapping bytes of buffer \d+/)
+  // 1024 one-texel columns of 2048 rows whose spans all meet and whose rows interleave: every pair compared row by row
+  // took about a billion steps; the sweep takes about two million.
+  const columns = each(COPY_REGIONS, (i) => ({ offset: 4 * i, rowBytes: 4096, region: { x: i, width: 1, height: 2048 } }))
+  const wide = buffer(r, 4096 * 2048, ['copy-dst'])
+  list.copyImageToBuffer(img, wide, columns)
+  refuses(() => list.copyImageToBuffer(img, wide, [...columns.slice(0, 1023), { offset: 12, rowBytes: 4096, region: { x: 1023, width: 1, height: 2048 } }]), 'invalid', /regions\[3\] and regions\[1023\] write overlapping bytes of buffer \d+/)
+  // A clash past a region in between, and runs of regions whose spans meet apart from each other.
+  const rows = (offset: number, width: number, height: number, rowBytes = 256): unknown => ({ offset, rowBytes, region: { width, height } })
+  list.copyImageToBuffer(img, wide, [rows(0, 16, 4), rows(64, 16, 4), rows(760, 2, 1), rows(8192, 16, 4), rows(8256, 16, 4)] as never)
+  refuses(() => list.copyImageToBuffer(img, wide, [rows(0, 16, 4), rows(64, 16, 4), rows(764, 2, 1)] as never), 'invalid', /regions\[0\] and regions\[2\] write overlapping bytes/)
+  refuses(() => list.copyImageToBuffer(img, wide, [rows(0, 16, 4), rows(8192, 16, 4), rows(64, 16, 4), rows(8240, 16, 4)] as never), 'invalid', /regions\[1\] and regions\[3\] write overlapping bytes/)
+  list.end()
+  consistent(list)
+})
+
 test('updateBuffer carries a few aligned bytes; zeroBuffer clears an aligned range', () => {
   const r = rig({ limits: { updateSize: 16 } })
   const list = r.device.createCommandArena({ group: 1 }).allocate() as CommandListImpl
@@ -817,6 +917,33 @@ test('a barrier: at least one, names it knows, ranges inside their resources, ne
   list.beginPass({ colors: [{ view: canvas, load: 'keep', store: 'keep' }] })
   refuses(() => list.barrier({ buffers: [{ ...step, buffer: buf }] }), 'state', /this command sits outside a pass/)
   list.endPass()
+  list.end()
+  consistent(list)
+})
+
+test('image barriers are kept apart by sorting each image\'s layer ranges level by level, not by comparing every pair', () => {
+  const r = rig()
+  const list = r.device.createCommandArena().allocate() as CommandListImpl
+  const step = { before: { stages: ['copy'] }, after: { stages: ['copy'] } } as const
+  const stack = (): Image => image(r, { format: 'r8', width: 1, height: 1, layers: 256, use: ['copy-src'] })
+  const each = <T>(n: number, f: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => f(i))
+  const stacks = each(128, stack)
+  // One barrier per layer of 128 images of 256 layers: 32,768 barriers, every pair of which was compared (about half
+  // a billion comparisons, seconds); the sweep sorts 128 lists of 256.
+  const layers = stacks.flatMap((img) => each(256, (l) => ({ ...step, image: img, from: 'blank', to: 'copy-src', layers: { base: l, count: 1 } }) as const))
+  list.begin()
+  list.barrier({ images: layers })
+  // The one clash among them is found, the lower barrier named first.
+  refuses(() => list.barrier({ images: [...layers, { ...layers[300], layers: { base: 40, count: 8 } }] }), 'invalid', /^command list \d+ barrier: images\[296\] and images\[32768\] cover the same levels and layers of image \d+$/)
+  refuses(() => list.barrier({ images: [{ ...layers[0], layers: { base: 2, count: 2 } }, { ...layers[0], layers: { base: 0, count: 3 } }] }), 'invalid', /images\[0\] and images\[1\] cover the same levels/)
+  // Levels are swept one by one: a clash is found at the one level two barriers share, and the same layers at other
+  // levels, or of another image, are apart.
+  const mips = image(r, { format: 'rgba8', width: 4, height: 4, levels: 3, layers: 4, use: ['sampled'] })
+  const at = (levels: { base: number; count: number }, layers: { base: number; count: number }) => ({ ...step, image: mips, from: 'blank', to: 'shader-read', levels, layers }) as const
+  list.barrier({ images: [at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 1, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 2, count: 2 }), at({ base: 2, count: 1 }, { base: 0, count: 2 })] })
+  refuses(() => list.barrier({ images: [at({ base: 1, count: 2 }, { base: 0, count: 2 }), at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 1, count: 3 })] }), 'invalid', /images\[0\] and images\[2\] cover the same levels and layers of image \d+/)
+  list.barrier({ images: [at({ base: 1, count: 2 }, { base: 0, count: 2 }), at({ base: 0, count: 1 }, { base: 0, count: 4 }), at({ base: 2, count: 1 }, { base: 2, count: 2 }), { ...layers[0], layers: { base: 0, count: 4 } }] })
+  assert.equal(list.commands.length, 3)
   list.end()
   consistent(list)
 })

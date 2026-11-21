@@ -100,7 +100,13 @@ States: `initial` -> `begin()` -> `recording` -> `end()` -> `ready` -> submit ->
 `invalid` after a `once` list ran, or when an object it used changed or was destroyed). A list that is not `once`
 may be submitted again each time it is `ready`. Binding state lasts until the next `beginPass` or `endPass`
 (**pinned**): draws bind inside a pass, dispatches outside one, and a pass starts with the viewport and scissor
-covering its attachments. Barriers, copies, updates and dispatches are outside passes.
+covering its attachments. Barriers, copies, updates and dispatches are outside passes. A viewport follows WebGPU's
+rules: at most `imageSize` wide and tall, from -2 x `imageSize` to 2 x `imageSize` - 1 on each axis, and
+0 <= near <= far <= 1. One copy carries 1 to 1024 regions (`COPY_REGIONS` in `commands.ts`, **pinned**). Its
+checks on buffer bytes sort and sweep, so they cost about n log n in its regions (and, for a copy into a buffer, in
+the rows of regions whose byte spans meet), while image rectangles are compared pairwise under that cap. Two image
+barriers of one barrier command never cover the same level of the same layer of one image; that check sorts the
+layer ranges level by level, so it costs about n log n in the image barriers times the levels each covers.
 
 The usage scope (**pinned**, checked when the command is recorded, whatever `checks` says): one pass, with its
 attachments and every resource every draw in it sees, is one scope; so is each dispatch. A draw or dispatch sees
@@ -291,7 +297,10 @@ rasterisation rules (**pinned**; the GPU back end's results are to be compared a
 The reference renderer reports the WebGPU defaults, which the GPU back end is to report too, so an app that runs on
 one runs on the other: images up to 8192 pixels and 256 layers, three binding sets of up to 16 bindings, 64 KiB
 uniform and 128 MiB storage bindings at 256-byte offsets, 8 vertex buffers with 16 attributes and strides up to
-2048 bytes, 16 values between stages, 8 colour attachments, 128 bytes of inline constants, 256 invocations per
+2048 bytes, 16 values between stages, 8 colour attachments taking at most 32 bytes per sample together
+(`colorBytes`, counted slot by slot by `colorBytes()` in `formats.ts` with WebGPU's per-format costs and alignments:
+each format first rounds the count up to its channel bytes, then adds its texel bytes, 8 for the four-channel 8-bit
+formats; a render pipeline's colour outputs are held to it too), 128 bytes of inline constants, 256 invocations per
 workgroup (256 x 256 x 64 at most along each axis), 65,535 workgroups per axis, 256 MiB buffers and allocations,
 4096 allocations, 256-byte copy rows, and 64 KiB per `updateBuffer`. Its two heaps hold 1 GiB each unless
 `softBackend({ heap })` says otherwise. A device may ask for lower limits when it opens, except the two alignments

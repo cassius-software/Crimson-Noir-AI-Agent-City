@@ -33,9 +33,12 @@
  * - Binding state is cleared at beginPass and at endPass. A render pipeline, vertex and index buffers, the viewport,
  *   scissor and blend constant bind inside a pass; a compute pipeline outside one; sets and constants either side.
  * - A pass has at least one attachment; each is one level of one layer, attached once in the pass; all have one
- *   size and one sample count. A resolve view belongs to a four-sample colour attachment and is one-sample, of the
- *   same format and size, with color use, of a format that is not an integer one. A read-only depth attachment is
- *   loaded and stored with `keep`.
+ *   size and one sample count. Its colour attachments take at most `limits.colorBytes` bytes per sample, counted
+ *   slot by slot by colorBytes() in formats.ts, as WebGPU counts them. A resolve view belongs to a four-sample colour
+ *   attachment and is one-sample, of the same format and size, with color use, of a format that is not an integer
+ *   one. A read-only depth attachment is loaded and stored with `keep`.
+ * - A viewport (WebGPU's rules) is at most `limits.imageSize` wide and tall, lies within -2 x imageSize to
+ *   2 x imageSize - 1 on each axis, and has 0 <= near <= far <= 1.
  * - A render pipeline binds only to a pass whose colour formats (slot by slot, an empty slot matching an empty one),
  *   depth format and sample count are its own, and one that writes depth never to a read-only depth attachment.
  * - A set binds at index i of a layout only when it was made from a binding layout compatible with the layout's set
@@ -49,11 +52,15 @@
  *   instance range of any draw; an indexed draw's index range is checked against the index buffer.
  * - Copies: buffer offsets and sizes are multiples of 4; a buffer's offset in an image copy is a multiple of the
  *   texel's bytes (and of 4 for a depth image), its rowBytes covers one row and (with more than one row) is a multiple of `limits.copyRowAlign`.
- *   Regions stay inside their resources and never overlap a region the same copy writes, nor (within one buffer or
- *   one image subresource) the region it reads. Four-sample images are never copied. Depth images are copied only
- *   into a buffer.
+ *   A copy holds 1 to COPY_REGIONS (1024) regions. Regions stay inside their resources and never overlap a region the
+ *   same copy writes, nor (within one buffer or one image subresource) the region it reads; the checks on buffer
+ *   bytes sort and sweep, so they cost about n log n in the regions (and in the rows, for a copy into a buffer),
+ *   while image rectangles are compared pairwise under the cap.
+ *   Four-sample images are never copied. Depth images are copied only into a buffer.
  * - A barrier holds at least one barrier; an image barrier never moves into `blank`, and two image barriers of one
- *   command never cover the same subresource.
+ *   command never cover the same subresource. That check sweeps each image's levels in turn, sorting the layer
+ *   ranges of the barriers that cover the level, so it costs about n log n in the image barriers times the levels
+ *   each covers (14 at most, for images up to 8192 pixels), and needs no cap.
  * - Groups nest: one begun inside a pass ends inside it, one begun outside ends outside, and end() needs none open.
  * - Commands that need a queue ability check the arena's group: a pass needs graphics, a compute pipeline compute,
  *   a copy, update or zero any of copy, graphics and compute.
@@ -65,7 +72,7 @@ import type {
 } from './api.ts'
 import { BindingSetImpl, PipelineLayoutImpl, compatible, heldBy } from './bindings.ts'
 import { fail } from './fault.ts'
-import { FORMATS } from './formats.ts'
+import { FORMATS, colorBytes } from './formats.ts'
 import type { Format } from './formats.ts'
 import type { MemoryImpl } from './memory.ts'
 import { ComputePipelineImpl, RenderPipelineImpl } from './pipelines.ts'
@@ -250,34 +257,103 @@ const freshBinding = (): BindState => ({ pipeline: null, sets: [], vertices: [],
 /** Half-open ranges [a0, a1) and [b0, b1) share a point. */
 const overlaps = (a0: number, a1: number, b0: number, b1: number): boolean => a0 < b1 && b0 < a1
 
+/** The most regions one copy command carries (pinned in docs/nightglass.md), so that its checks stay bounded. */
+export const COPY_REGIONS = 1024
+
+/** The positions 0 to n - 1, in order of key (ties in order of position). */
+function order(n: number, key: (i: number) => number): number[] {
+  return Array.from({ length: n }, (_, i) => i).sort((a, b) => key(a) - key(b) || a - b)
+}
+
+/** A pair of positions, the lower first. */
+const pair = (a: number, b: number): readonly [number, number] => (a < b ? [a, b] : [b, a])
+
 /**
- * Two buffer layouts of image rows that share a byte. Rows are checked one by one (only when the whole spans meet), so
- * regions whose rows interleave in the gaps between each other's rows are apart.
+ * Two of the half-open ranges [start(i), end(i)), each holding at least one point, that share a point, or null when
+ * none do. One sweep in order of start: a range that starts before the farthest end so far meets the range that ends
+ * there. It costs n log n.
  */
-function rowsOverlap(a: Rows, b: Rows, texel: number): boolean {
-  const wa = a.region.width * texel
-  const wb = b.region.width * texel
-  const endA = a.offset + a.rowBytes * (a.region.height - 1) + wa
-  const endB = b.offset + b.rowBytes * (b.region.height - 1) + wb
-  if (!overlaps(a.offset, endA, b.offset, endB)) return false
-  const [p, q, wp, wq] = a.region.height <= b.region.height ? [a, b, wa, wb] : [b, a, wb, wa]
-  for (let r = 0; r < p.region.height; r++) {
-    const x0 = p.offset + r * p.rowBytes
-    const x1 = x0 + wp
-    // The rows k of q that start before x1 and end after x0: q.offset + k q.rowBytes < x1 and that + wq > x0.
-    const lo = Math.max(0, Math.floor((x0 - wq - q.offset) / q.rowBytes) + 1)
-    const hi = Math.min(q.region.height - 1, Math.ceil((x1 - q.offset) / q.rowBytes) - 1)
-    if (lo <= hi) return true
+function clash(n: number, start: (i: number) => number, end: (i: number) => number): readonly [number, number] | null {
+  let far = -Infinity
+  let holder = -1
+  for (const i of order(n, start)) {
+    if (start(i) < far) return pair(holder, i)
+    if (end(i) > far) {
+      far = end(i)
+      holder = i
+    }
   }
-  return false
+  return null
+}
+
+/**
+ * Two buffer layouts of image rows (regions of one copy into a buffer) that share a byte, or null. Regions whose
+ * whole spans meet no other's are passed over after one sort; the rows of each run of regions whose spans meet are
+ * merged in order of offset (each region's rows already are) and swept like clash(), so regions whose rows
+ * interleave in the gaps between each other's rows are apart. It costs about n log n in the regions, plus the rows of
+ * regions whose spans meet times log n.
+ */
+function rowsClash(list: readonly Rows[], texel: number): readonly [number, number] | null {
+  const end = (i: number): number => list[i].offset + list[i].rowBytes * (list[i].region.height - 1) + list[i].region.width * texel
+  let run: number[] = []
+  let far = -Infinity
+  for (const i of order(list.length, (i) => list[i].offset)) {
+    if (list[i].offset >= far && run.length > 0) {
+      const hit = runClash(list, run, texel)
+      if (hit !== null) return hit
+      run = []
+    }
+    run.push(i)
+    far = Math.max(far, end(i))
+  }
+  return runClash(list, run, texel)
+}
+
+/** The rows of a run of regions merged through a heap in order of offset, and swept as clash() sweeps. */
+function runClash(list: readonly Rows[], run: readonly number[], texel: number): readonly [number, number] | null {
+  if (run.length < 2) return null
+  /** Per member of the run: the next row to sweep, and that row's first byte (the heap's key). */
+  const next = new Array<number>(run.length).fill(0)
+  const key = run.map((i) => list[i].offset)
+  const before = (a: number, b: number): boolean => key[a] < key[b] || (key[a] === key[b] && a < b)
+  const heap = run.map((_, k) => k)
+  const sink = (from: number): void => {
+    let at = from
+    while (2 * at + 1 < heap.length) {
+      const l = 2 * at + 1
+      const m = l + 1 < heap.length && before(heap[l + 1], heap[l]) ? l + 1 : l
+      if (!before(heap[m], heap[at])) return
+      const held = heap[at]
+      heap[at] = heap[m]
+      heap[m] = held
+      at = m
+    }
+  }
+  for (let at = (heap.length >> 1) - 1; at >= 0; at--) sink(at)
+  let far = -Infinity
+  let holder = -1
+  while (heap.length > 0) {
+    const k = heap[0]
+    const r = list[run[k]]
+    if (key[k] < far) return pair(run[holder], run[k])
+    const e = key[k] + r.region.width * texel
+    if (e > far) {
+      far = e
+      holder = k
+    }
+    if (++next[k] < r.region.height) {
+      key[k] += r.rowBytes
+    } else {
+      heap[0] = heap[heap.length - 1]
+      heap.length -= 1
+    }
+    sink(0)
+  }
+  return null
 }
 
 function rectsOverlap(a: Region, b: Region): boolean {
   return a.level === b.level && a.layer === b.layer && overlaps(a.x, a.x + a.width, b.x, b.x + b.width) && overlaps(a.y, a.y + a.height, b.y, b.y + b.height)
-}
-
-function rangesOverlap(a: Range, b: Range): boolean {
-  return overlaps(a.base, a.base + a.count, b.base, b.base + b.count)
 }
 
 const INDIRECT_BYTES = { draw: 16, indexed: 20, dispatch: 12 } as const
@@ -547,6 +623,8 @@ export class CommandListImpl extends Base implements CommandList {
         take(resolve, `${at} resolve`, false)
         return Object.freeze({ view, load, store, resolve })
       })
+      const bytes = colorBytes(colors.map((c) => (c === null ? null : c.view.image.format)))
+      if (bytes > this.core.limits.colorBytes) fail('limit', `${where}: the colour attachments take ${bytes} bytes per sample, more than the device allows, ${this.core.limits.colorBytes}`)
       let depth: (DepthUse & { readonly view: ViewImpl; readonly clear: number }) | null = null
       if (o.depth !== undefined) {
         const at = `${where}: depth`
@@ -735,11 +813,14 @@ export class CommandListImpl extends Base implements CommandList {
       const width = finite(o.width, where, 'the width')
       const height = finite(o.height, where, 'the height')
       if (width <= 0 || height <= 0) fail('invalid', `${where}: the viewport is ${width} x ${height}; its size is positive`)
-      const reach = 2 * this.core.limits.imageSize
-      if (x < -reach || y < -reach || x + width > reach || y + height > reach) fail('invalid', `${where}: the viewport runs outside -${reach} to ${reach}, twice the device's largest image`)
+      const most = this.core.limits.imageSize
+      if (width > most || height > most) fail('limit', `${where}: the viewport is ${width} x ${height}, larger than the device's largest image, ${most} x ${most}`)
+      const reach = 2 * most
+      if (x < -reach || y < -reach || x + width > reach - 1 || y + height > reach - 1) fail('invalid', `${where}: the viewport runs outside -${reach} to ${reach - 1}, twice the device's largest image`)
       const near = o.near === undefined ? 0 : finite(o.near, where, 'near')
       const far = o.far === undefined ? 1 : finite(o.far, where, 'far')
       if (near < 0 || near > 1 || far < 0 || far > 1) fail('invalid', `${where}: the depth range ${near} to ${far} is outside 0 to 1`)
+      if (near > far) fail('invalid', `${where}: the depth range ${near} to ${far} runs backwards; near is at most far`)
       this.emit({ c: 'viewport', x, y, width, height, near, far })
     })
   }
@@ -868,13 +949,29 @@ export class CommandListImpl extends Base implements CommandList {
         if (to + size > d.size) fail('invalid', `${at}: bytes ${to} to ${to + size - 1} run past the end of ${d.name} (${d.size} bytes)`)
         return Object.freeze({ from, to, size })
       })
-      list.forEach((r, i) => {
-        if (s === d && overlaps(r.from, r.from + r.size, r.to, r.to + r.size)) fail('invalid', `${where}: regions[${i}] reads and writes overlapping bytes of ${s.name}`)
-        list.forEach((q, j) => {
-          if (j > i && overlaps(r.to, r.to + r.size, q.to, q.to + q.size)) fail('invalid', `${where}: regions[${i}] and regions[${j}] write overlapping bytes of ${d.name}`)
-          if (j !== i && s === d && overlaps(r.from, r.from + r.size, q.to, q.to + q.size)) fail('invalid', `${where}: regions[${j}] writes bytes of ${s.name} that regions[${i}] reads`)
+      if (s === d) {
+        list.forEach((r, i) => {
+          if (overlaps(r.from, r.from + r.size, r.to, r.to + r.size)) fail('invalid', `${where}: regions[${i}] reads and writes overlapping bytes of ${s.name}`)
         })
-      })
+      }
+      const met = clash(list.length, (i) => list[i].to, (i) => list[i].to + list[i].size)
+      if (met !== null) fail('invalid', `${where}: regions[${met[0]}] and regions[${met[1]}] write overlapping bytes of ${d.name}`)
+      if (s === d) {
+        // The writes are apart, so in order of offset their ends are in order too: the one write a read could meet
+        // first is the first that ends after the read begins.
+        const writes = order(list.length, (i) => list[i].to)
+        list.forEach((r, i) => {
+          let lo = 0
+          let hi = writes.length
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1
+            const w = list[writes[mid]]
+            if (w.to + w.size <= r.from) lo = mid + 1
+            else hi = mid
+          }
+          if (lo < writes.length && list[writes[lo]].to < r.from + r.size) fail('invalid', `${where}: regions[${writes[lo]}] writes bytes of ${s.name} that regions[${i}] reads`)
+        })
+      }
       this.wrote(d)
       const frozen = Object.freeze(list)
       const at = this.emit({ c: 'copy-buffer', src: s.handle(where), dst: d.handle(where), regions: frozen })
@@ -903,10 +1000,8 @@ export class CommandListImpl extends Base implements CommandList {
       const s = this.image(src, 'copy-src', where, 'the source')
       const d = this.buffer(dst, 'copy-dst', where, 'the destination')
       const list = this.regions(regions, where).map((x, i) => this.rows(s, d, x, `${where}: regions[${i}]`))
-      const texel = FORMATS[s.format].bytes
-      list.forEach((a, i) => list.forEach((b, j) => {
-        if (j > i && rowsOverlap(a, b, texel)) fail('invalid', `${where}: regions[${i}] and regions[${j}] write overlapping bytes of ${d.name}`)
-      }))
+      const met = rowsClash(list, FORMATS[s.format].bytes)
+      if (met !== null) fail('invalid', `${where}: regions[${met[0]}] and regions[${met[1]}] write overlapping bytes of ${d.name}`)
       this.wrote(d)
       const frozen = Object.freeze(list)
       const at = this.emit({ c: 'copy-image-buffer', src: s.handle(where), dst: d.handle(where), regions: frozen })
@@ -1015,9 +1110,23 @@ export class CommandListImpl extends Base implements CommandList {
         this.touch(image)
         return Object.freeze({ before, after, image, from, to, levels, layers })
       })
-      images.forEach((a, i) => images.forEach((b, j) => {
-        if (j > i && a.image === b.image && rangesOverlap(a.levels, b.levels) && rangesOverlap(a.layers, b.layers)) fail('invalid', `${where}: images[${i}] and images[${j}] cover the same levels and layers of ${(a.image as ImageImpl).name}`)
-      }))
+      // Per image and level, the barriers' layer ranges are swept as clash() sweeps, instead of comparing every pair.
+      const covers = new Map<Image, Map<number, number[]>>()
+      images.forEach((b, i) => {
+        const byLevel = covers.get(b.image) ?? new Map<number, number[]>()
+        covers.set(b.image, byLevel)
+        for (let level = b.levels.base; level < b.levels.base + b.levels.count; level++) {
+          const at = byLevel.get(level) ?? []
+          byLevel.set(level, at)
+          at.push(i)
+        }
+      })
+      for (const [image, byLevel] of covers) {
+        for (const at of byLevel.values()) {
+          const hit = clash(at.length, (k) => images[at[k]].layers.base, (k) => images[at[k]].layers.base + images[at[k]].layers.count)
+          if (hit !== null) fail('invalid', `${where}: images[${at[hit[0]]}] and images[${at[hit[1]]}] cover the same levels and layers of ${(image as ImageImpl).name}`)
+        }
+      }
       if (memory.length + buffers.length + images.length === 0) fail('invalid', `${where}: the barrier holds no barrier`)
       const at = this.emit({ c: 'barrier' })
       this.note({ r: 'barrier', at, memory: Object.freeze(memory), buffers: Object.freeze(buffers), images: Object.freeze(images) })
@@ -1149,6 +1258,7 @@ export class CommandListImpl extends Base implements CommandList {
   private regions(x: unknown, where: string): readonly unknown[] {
     const list = listOf(x, where, 'the regions')
     if (list.length === 0) fail('invalid', `${where}: the regions are empty`)
+    if (list.length > COPY_REGIONS) fail('limit', `${where}: ${list.length} regions is more than one copy carries, ${COPY_REGIONS}`)
     return list
   }
 
@@ -1169,7 +1279,7 @@ export class CommandListImpl extends Base implements CommandList {
     return Object.freeze({ offset, rowBytes, region })
   }
 
-  /** Refuses two regions a copy writes that share a texel. */
+  /** Refuses two regions a copy writes that share a texel (pairwise: a copy holds at most COPY_REGIONS regions). */
   private apart(writes: readonly Region[], img: ImageImpl, where: string): void {
     writes.forEach((a, i) => writes.forEach((b, j) => {
       if (j > i && rectsOverlap(a, b)) fail('invalid', `${where}: regions[${i}] and regions[${j}] write overlapping texels of ${img.name}`)

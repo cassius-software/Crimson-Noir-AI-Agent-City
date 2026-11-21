@@ -99,6 +99,24 @@ test('a submit is checked whole: each list ready, once, of the queue\'s group, o
   assert.deepEqual(r.fake.last('submit').args, [[]])
 })
 
+test('a list named twice is found through a set, so a submit of many lists costs about their number to check', () => {
+  const r = rig()
+  const arena = r.device.createCommandArena()
+  // 80,000 empty lists: asking every list whether it was named before took about 3.2 billion steps (seconds).
+  const lists = Array.from({ length: 80000 }, () => {
+    const l = arena.allocate()
+    l.begin()
+    l.end()
+    return l
+  })
+  const queue = r.device.queue(0, 0)
+  refuses(() => queue.submit([{ lists: lists.slice(0, 40000) }, { lists: [...lists.slice(40000), lists[39999]] }]), 'state', /^queue 0\.0 submit: submissions\[1\] lists\[40000\]: command list \d+ is submitted twice$/)
+  assert.equal(r.fake.named('submit').length, 0)
+  queue.submit([{ lists: lists.slice(0, 40000) }, { lists: lists.slice(40000) }])
+  assert.equal((r.fake.last('submit').args[0] as unknown[]).length, 80000)
+  assert.ok(lists.every((l) => l.state === 'ready'))
+})
+
 test('a stale list is refused: lifetime when what it recorded is destroyed, state when a set it recorded is written; a once list runs once', () => {
   const { r, list, queue, set, data, arena } = work()
   set.write([{ binding: 0, buffer: data, size: 512 }])
