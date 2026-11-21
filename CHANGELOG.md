@@ -104,8 +104,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   longer than a quarter of a second is spent (`07_Execute_Actions/xrSession.ts`). Every way out of a car is refused
   above 1.5 m/s, with a buzz on the controller that asked and a short refusal chime in the headset (the toast stays for
   the monitor); a trigger held from opening the door, or as a lone controller takes on the throttle, however lightly,
-  gives no throttle where it is, only past the lowest point it eases back to (no lurch, no creep on a resting finger or
-  a worn trigger). A pad held inside a headset walks where the headset looks and snap-turns. A session
+  gives no throttle where it is, only past a point a little above the lowest it eases back to (no lurch, no creep on a
+  resting finger, a jolted one or a worn trigger). A pad held inside a headset walks where the headset looks and snap-turns. A session
   without a floor-level space runs in a local one with the floor lifted by the eye height instead of being refused.
   Checked by unit suites against fake sources of every registry shape and scripted select events; unverified on any
   real headset.

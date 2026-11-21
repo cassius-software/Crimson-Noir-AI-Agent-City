@@ -17,7 +17,7 @@ import { test } from 'node:test'
 import { createAnalog, PAD_EDGE } from './gamepad.ts'
 import {
   isController, isPointerOnly, neckOf, PINCH, PinchDrag, pinchKindOf, roleOf, shapeOf, XR_AXIS, XR_BUTTON, XR_DEADZONE, XR_HOLD_OUT_MS,
-  XR_PAD_DEADZONE, XR_SECTOR, XR_TURN, XrMapper, type XrPoint,
+  XR_PAD_DEADZONE, XR_SECTOR, XR_TRIGGER_JOLT, XR_TRIGGER_LET_GO_MS, XR_TURN, XrMapper, type XrPoint,
 } from './xrInput.ts'
 import type { XrInputSourceLike } from './web-hardware.d.ts'
 
@@ -83,9 +83,10 @@ test('controllers are xr-standard tracked pointers with axes; hands, styluses, s
 })
 
 /** A rig: a mapper on a clock, with a helper that presses one button for a frame and returns the edges. */
-function rig(sources: Fake[]) {
+/** `step`: ms the clock moves on at every read (0, the default, holds it still between ticks). */
+function rig(sources: Fake[], step = 0) {
   let t = 1000
-  const m = new XrMapper(() => t)
+  const m = new XrMapper(() => (t += step))
   m.sources = sources
   m.read() // first sight: what is held is learned, nothing pressed
   return {
@@ -991,7 +992,7 @@ test('a light pull below a twentieth as a controller takes the throttle is held 
   // Held at a light pull, a finger's tremor around it (under the dead zone's width) gives nothing; a real pull past it
   // drives, a full one fully; let go, it counts from nothing again.
   const lone = ctl('right', 6, 4)
-  const r = rig([lone])
+  const r = rig([lone], 11)
   r.m.read()
   lone.buttons[XR_BUTTON.trigger].value = 0.095
   r.m.driving = true
@@ -1008,8 +1009,10 @@ test('a light pull below a twentieth as a controller takes the throttle is held 
   r.m.read()
   assert.ok(close(r.m.analog.throttle, 1), 'a full pull: full throttle')
   lone.buttons[XR_BUTTON.trigger].value = 0.03
-  r.m.read()
-  assert.equal(r.m.analog.throttle, 0)
+  for (let k = 0; k * 11 <= XR_TRIGGER_LET_GO_MS + 11; k++) {
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0)
+  }
   lone.buttons[XR_BUTTON.trigger].value = 0.3
   r.m.read()
   assert.ok(close(r.m.analog.throttle, (0.3 - 0.04) / 0.96, 1e-9), 'let go, then pulled: the plain throttle')
@@ -1123,8 +1126,9 @@ test('the point a trigger counts from is taken afresh at every car and every tak
   // A worn trigger (resting at 0.06) drives one car, steps out, walks, and opens the next car's door with a press.
   const lone = ctl('none', 6, 4)
   lone.buttons[XR_BUTTON.trigger].value = 0.06
-  const r = rig([lone])
+  const r = rig([lone], 11)
   r.m.driving = true
+  r.m.read()
   r.m.read()
   lone.buttons[XR_BUTTON.trigger].value = 1
   r.m.read()
@@ -1181,20 +1185,31 @@ test('a press held near the stop that wobbles is no lurch: the stretch past the 
   }
 })
 
-test('a jolt that dips a resting finger for a frame or two never lowers the point it counts from; an ease held does', () => {
+test('a jolt that dips a resting finger, even off the trigger for a moment, never lowers the point it counts from', () => {
+  for (const rest of [0.15, 0.1, 0.06]) {
+    const lone = ctl('none', 6, 4)
+    lone.buttons[XR_BUTTON.trigger].value = rest
+    const r = rig([lone])
+    r.m.driving = true
+    const frame = (value: number) => { lone.buttons[XR_BUTTON.trigger].value = value; r.tick(11); r.m.read(); return r.m.analog.throttle }
+    for (let k = 0; k < 3; k++) assert.equal(frame(rest), 0, `a finger resting at ${rest} as it took the wheel: nothing`)
+    for (const dip of [[0.05], [0.03, 0.02], [0.1, 0, 0.06, 0.03, 0, 0.01], [0, 0, 0, 0, 0, 0, 0, 0]]) {
+      for (const v of dip) frame(Math.min(v, rest))
+      for (let k = 0; k < 10; k++) assert.equal(frame(rest), 0, `rest ${rest}, after the jolt ${dip.join(' ')}: still nothing`)
+    }
+  }
+  // A finger resting deeper than a jolt's margin is still kept from a dip within it.
   const lone = ctl('none', 6, 4)
   lone.buttons[XR_BUTTON.trigger].value = 0.3
   const r = rig([lone])
   r.m.driving = true
   const frame = (value: number) => { lone.buttons[XR_BUTTON.trigger].value = value; r.tick(11); r.m.read(); return r.m.analog.throttle }
-  for (let k = 0; k < 3; k++) assert.equal(frame(0.3), 0, 'a finger resting at 0.3 as it took the wheel: nothing')
-  for (const dip of [[0.15], [0.12, 0.1], [0.2, 0.1, 0.15, 0.12]]) {
-    for (const v of dip) frame(v)
-    for (let k = 0; k < 10; k++) assert.equal(frame(0.3), 0, `after a ${dip.length}-frame jolt, back at 0.3: still nothing`)
-  }
-  // Eased back to 0.15 and held there: from there a pull drives.
-  for (let k = 0; k < 20; k++) assert.equal(frame(0.15), 0, 'eased to 0.15: nothing')
-  assert.ok(frame(0.3) > 0.1, 'held there, then pulled back to 0.3: it drives')
+  for (let k = 0; k < 3; k++) frame(0.3)
+  frame(0.3 - XR_TRIGGER_JOLT + 0.01)
+  assert.equal(frame(0.3), 0, 'a dip within the margin: nothing back at the rest')
+  // Let go for longer than a jolt: it counts from nothing again.
+  for (let k = 0; k * 11 <= XR_TRIGGER_LET_GO_MS + 11; k++) frame(0.02)
+  assert.ok(close(frame(0.3), (0.3 - 0.04) / 0.96, 1e-9), 'let go, then pulled: the plain throttle')
 })
 
 test('a press eased back and pulled again drives from where it came to rest, soon after, and a pull is never taken for the rest', () => {
@@ -1217,9 +1232,51 @@ test('a press eased back and pulled again drives from where it came to rest, soo
   assert.ok(close(t[t.length - 1], 1), `eased, held, pulled: full throttle (${t[t.length - 1]})`)
   // Released to a resting finger at 0.1, rested 200 ms, then pulled to 0.6 and held: it drives for as long as it is held.
   t = run([...ramp(1, 0.1, 6), ...hold(0.1, 18), ...ramp(0.1, 0.6, 5), ...hold(0.6, 180)])
-  const at = (0.6 - 0.14) / 0.86
+  const from = 0.1 + XR_TRIGGER_JOLT + 0.04
+  const at = (0.6 - from) / (1 - from)
   for (const v of t.slice(-170)) assert.ok(close(v, at, 1e-9), `pulled to 0.6 from a 0.1 rest: ${at} throughout (${v})`)
   // A slow ease to 0.1 over 300 ms, then a pull to 0.5 held for a second.
   t = run([...ramp(1, 0.1, 27), ...ramp(0.1, 0.5, 5), ...hold(0.5, 90)])
-  assert.ok(t.slice(-80).every((v) => v > 0.3), `after a slow ease, a pull to 0.5 drives (${t[t.length - 1]})`)
+  assert.ok(t.slice(-80).every((v) => close(v, (0.5 - from) / (1 - from), 1e-9)), `after a slow ease, a pull to 0.5 drives (${t[t.length - 1]})`)
+})
+
+test('a door press still travelling as the car is taken is followed to the stop: held there it gives nothing', () => {
+  for (const [hz, lag] of [[60, 1], [72, 2], [90, 1], [120, 2]] as const) {
+    const lone = ctl('none', 6, 4)
+    const r = rig([lone])
+    const dt = 1000 / hz
+    r.m.nearCar = true
+    const b = lone.buttons[XR_BUTTON.trigger]
+    let opened = -1
+    const frames = Math.ceil(150 / dt)
+    for (let k = 1; k <= frames + 30; k++) {
+      b.value = Math.min(1, (k * dt) / 150)
+      b.pressed = b.value > 0.5
+      r.tick(dt)
+      // The engine sees the car taken `lag` frames after the press that opened it.
+      if (opened >= 0 && k === opened + lag) r.m.driving = true
+      const e = r.m.read()
+      if (e === PAD_EDGE.interact && opened < 0) { opened = k; r.m.nearCar = false }
+      if (r.m.driving) assert.equal(r.m.analog.throttle, 0, `${hz} Hz, ${lag} frame(s) late, frame ${k} at ${b.value.toFixed(2)}: nothing`)
+    }
+    assert.ok(opened > 0 && r.m.driving)
+  }
+})
+
+test('a press let go quickly and pulled straight back drives at once from about its rest', () => {
+  for (const hz of [72, 90]) {
+    for (const [rest, to] of [[0.1, 0.6], [0.06, 1]] as const) {
+      const lone = ctl('none', 6, 4)
+      lone.buttons[XR_BUTTON.trigger].value = 1
+      const r = rig([lone])
+      r.m.driving = true
+      const dt = 1000 / hz
+      const path = [1, 1, (1 + rest) / 2, rest, rest + (to - rest) / 3, rest + ((to - rest) * 2) / 3, ...Array.from({ length: 60 }, () => to)]
+      let last = 0
+      for (const v of path) { lone.buttons[XR_BUTTON.trigger].value = v; r.tick(dt); r.m.read(); last = r.m.analog.throttle }
+      const from = rest + XR_TRIGGER_JOLT + 0.04
+      const want = Math.min(1, (to - from) / (1 - from))
+      assert.ok(close(last, want, 1e-9), `${hz} Hz, rest ${rest}, pulled to ${to}: ${want} (${last})`)
+    }
+  }
 })

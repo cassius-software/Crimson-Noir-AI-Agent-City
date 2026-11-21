@@ -989,12 +989,13 @@ not been seen. Where the browser offers no immersive session the whole path is i
     is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
     a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
     still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
-    the throttle (however lightly), gives no throttle where it is: it drives only once pulled past the lowest point it
-    has eased back to since and held for a moment (a jolt that dips it for a frame does not count), and counts from
-    nothing again once let go. From a resting finger or a worn trigger a full pull is still full throttle; from a
-    press eased only a little, a wobble near the stop gives little. That point is taken afresh at each car and each
-    takeover. So the car neither lurches on the way in nor creeps on a resting finger or a worn trigger that rests a
-    little above nothing.
+    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop,
+    and from then on it drives only once pulled past a point 0.15 of its travel above the lowest it has eased back to
+    (so a jolt that dips a finger resting on it, even off it for a moment, does not count). Let go for a tenth of a
+    second, it counts from nothing again. From a resting finger or a worn trigger a full pull is still full throttle;
+    from a press eased only a little, a wobble near the stop gives little. That point is taken afresh at each car and
+    each takeover. So the car neither lurches on the way in nor creeps on a resting finger or a worn trigger that
+    rests a little above nothing.
   - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
     or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
     lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
