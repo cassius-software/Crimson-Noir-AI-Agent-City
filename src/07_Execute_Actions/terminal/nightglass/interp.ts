@@ -62,7 +62,8 @@
  * and is not written. Images go through texture.ts: sample through the view and the sampler, texel as its load (zero
  * outside the view), put as its put (nothing outside; a storage image is written at the first level and the first
  * layer of its view), and extent gives the size of the view's first level, or of the level given counted from there
- * and clamped into the view.
+ * and clamped into the view. compile() lays out each block object once, however many reads and writes reach it, so
+ * compiling stays within the work verify() bounds.
  *
  * BUDGET. A run counts steps: one for each lane it starts, one for each instruction each running lane executes, and
  * one for each loop iteration each lane begins. A run that would pass the budget it is given stops with a Fault of
@@ -74,8 +75,8 @@ import { fail, isFault } from './fault.ts'
 import { sampleKind } from './formats.ts'
 import { BUILTINS, columnOf, componentsOf, isGrid, isScalar, layoutBlock, scalarOf, strideOf, widthOf } from './lens.ts'
 import type {
-  BinaryFn, Builtin, DataType, DerivativeFn, Inst, LensModule, Port, Resource, Scalar, Space, Stage, Step, TernaryFn, UnaryFn,
-  ValueType,
+  BinaryFn, Builtin, DataType, DerivativeFn, Inst, LayoutCache, LensModule, Port, Resource, Scalar, Space, Stage, Step, TernaryFn,
+  UnaryFn, ValueType,
 } from './lens.ts'
 import { ImageStore, load, lodFromRates, put, sample } from './texture.ts'
 import type { SamplerState, ViewRange } from './texture.ts'
@@ -467,6 +468,8 @@ class Compiler {
   readonly builtinCopies = new Map<Builtin, Copy[]>()
   /** A texel's four channels, for the image instructions. */
   readonly rgba = [0, 0, 0, 0]
+  /** Each block's layout, made once per block object and space however many reads and writes reach it. */
+  readonly layouts: { readonly [S in Space]: LayoutCache } = { uniform: new WeakMap(), storage: new WeakMap() }
 
   constructor(m: LensModule) {
     this.m = m
@@ -960,6 +963,7 @@ class Compiler {
   private plan(res: number, path: readonly Step[]): Plan {
     const r = this.m.resources[res] as Extract<Resource, { readonly block: unknown }>
     const space: Space = r.kind === 'storage' ? 'storage' : 'uniform'
+    const cache = this.layouts[space]
     let t: DataType = { struct: r.block }
     let base = 0
     const dynamic: { reg: number; stride: number; last: number }[] = []
@@ -968,11 +972,11 @@ class Compiler {
       if (typeof t === 'string') break
       if ('struct' in t) {
         const i = step as number
-        base += layoutBlock(t.struct, space).offsets[i]
+        base += layoutBlock(t.struct, space, cache).offsets[i]
         t = t.struct.fields[i].type
         continue
       }
-      const stride = strideOf(t.array, space)
+      const stride = strideOf(t.array, space, cache)
       const reg = typeof step === 'number' ? -1 : this.at(step.at)
       if (t.len === 0) runtime = { start: base, stride, reg, index: typeof step === 'number' ? step : 0 }
       else if (typeof step === 'number') base += step * stride

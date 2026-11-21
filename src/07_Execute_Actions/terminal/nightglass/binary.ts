@@ -8,8 +8,11 @@
  * same words. `decode` is strict about structure and nothing else. It refuses, with a Fault of code `lens`, a wrong
  * magic word or version, an unknown opcode or code, a count past the words left or past LENS_LIMITS, nesting past
  * the limits, a reserved bit set, a name that is not printable ASCII, and trailing words; it never reads past the
- * array and its recursion is bounded by the nesting limits. It does not type-check: createLens runs verify() on what
- * it returns.
+ * array and its recursion is bounded by the nesting limits. It reads a private copy of the words, made through the
+ * array's own internal slots, so a subclass's getters, a Proxy or a later change to the caller's array cannot reach
+ * what it decodes, and whatever it is handed, it raises nothing but a lens Fault. It does not type-check: createLens
+ * runs verify() on what it returns. checkedCopy is how createLens and the disassembler take a module from a caller:
+ * carried through the form into a frozen copy that is read once, and that copy verified.
  * What breaks if it is removed? Shaders could exist only as live objects in one page: nothing could store one, send
  * one to another device, or load one an agent wrote.
  *
@@ -77,7 +80,7 @@ import {
 } from './lens.ts'
 import type { Block, Builtin, DataType, Field, Inst, LensModule, Op, Port, Resource, Scalar, Step, ValueType } from './lens.ts'
 import {
-  INST_FIELDS, MAX_INDEX, MAX_OPERANDS, MODULE_FIELDS, RESOURCE_FIELDS, literalRule, say, shapeRule,
+  INST_FIELDS, MAX_INDEX, MAX_OPERANDS, MODULE_FIELDS, RESOURCE_FIELDS, literalRule, say, shapeRule, verify,
 } from './verify.ts'
 import type { Refuse } from './verify.ts'
 
@@ -111,7 +114,8 @@ const f32Bits = new Uint32Array(f32.buffer)
 
 type Obj = { readonly [key: string]: unknown }
 const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x)
-const isWhole = (x: unknown, lo: number, hi: number): x is number => typeof x === 'number' && Number.isInteger(x) && x >= lo && x <= hi
+/** A whole number in range, never -0 (a word cannot tell -0 from 0, and the form keeps a module exactly). */
+const isWhole = (x: unknown, lo: number, hi: number): x is number => typeof x === 'number' && Number.isInteger(x) && x >= lo && x <= hi && !Object.is(x, -0)
 
 /** The lanes word of a pick. */
 function packLanes(lanes: readonly number[]): number {
@@ -372,8 +376,9 @@ function bitsOf(x: number): number {
 /**
  * The words of a module. Refuses (Fault `lens`) a module the form cannot represent: one whose structure is not a
  * module's, or that holds an unknown name or code, a literal component that is not exactly its type's, a field that
- * is not a listed one or is present as undefined, a number past the width the layout gives it, or more of anything
- * than the limits allow. It does not type-check, so it also writes modules verify() would refuse.
+ * is not a listed one or is present as undefined, a number past the width the layout gives it or -0 where it gives a
+ * whole number, or more of anything than the limits allow. It does not type-check, so it also writes modules
+ * verify() would refuse.
  */
 export function encode(m: LensModule): Uint32Array {
   const e = new Encoder()
@@ -701,13 +706,46 @@ class Decoder {
   }
 }
 
+/** A typed array's name and length as its internal slots hold them, read without running any code of its own. */
+const TYPED_ARRAY: object = Object.getPrototypeOf(Uint8Array.prototype)
+const typedArrayName = Object.getOwnPropertyDescriptor(TYPED_ARRAY, Symbol.toStringTag)?.get
+const typedArrayLength = Object.getOwnPropertyDescriptor(TYPED_ARRAY, 'length')?.get
+
 /**
  * The module the words hold: plain frozen data, deep-equal to what `encode` was given. Refuses (Fault `lens`)
- * anything malformed, as the head of the file sets out, without reading past the words.
+ * anything malformed, as the head of the file sets out, without reading past the words. It decodes a private copy
+ * of the words (see the head of the file) and raises nothing but a lens Fault, whatever it is handed.
  */
 export function decode(words: Uint32Array): LensModule {
-  if (!(words instanceof Uint32Array)) fail('lens', `lens: decode: a Lens binary is a Uint32Array, not ${say(words)}`)
-  return new Decoder(words).module()
+  try {
+    // A Proxy, a plain array or another kind of typed array has no Uint32Array in its internal slots.
+    if (typedArrayName?.call(words) !== 'Uint32Array') fail('lens', `lens: decode: a Lens binary is a Uint32Array, not ${say(words)}`)
+    const n = Number(typedArrayLength?.call(words))
+    if (n > LENS_LIMITS.words) fail('lens', `lens: decode: word 0: the binary holds ${n} words; the limit is ${LENS_LIMITS.words}`)
+    // Copied through the internal slots: no length getter, species or element getter of the caller's runs.
+    return new Decoder(new Uint32Array(words)).module()
+  } catch (e) {
+    if (isFault(e)) throw e
+    return fail('lens', 'lens: decode: the words could not be read (reading them raised an error, or their buffer is detached)')
+  }
+}
+
+/**
+ * A caller's module made safe to keep: carried through the binary form into a private, deep-frozen copy (read once,
+ * so no later change to the caller's object reaches it), and that copy checked by verify(). Refuses (Fault `lens`) a
+ * module verify() refuses, with verify()'s message, or one the form cannot carry (more than LENS_LIMITS.words words).
+ */
+export function checkedCopy(m: LensModule): LensModule {
+  let copy: LensModule
+  try {
+    copy = decode(encode(m))
+  } catch (e) {
+    // The checker names a module's mistake more plainly than the codec: its refusal goes first when it has one.
+    verify(m)
+    throw e
+  }
+  verify(copy)
+  return copy
 }
 
 /** True when the words begin as a Lens binary does: long enough for a header and its counts, and LENS_MAGIC first. */

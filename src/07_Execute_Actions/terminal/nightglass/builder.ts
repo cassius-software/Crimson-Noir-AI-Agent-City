@@ -6,7 +6,8 @@
  * methods emit instructions and hand back typed values, so a shader reads like the arithmetic it does instead of a
  * list of ids. It infers every result type from the verifier's own typing table and refuses a mistake the moment it
  * is made, with a Fault of code `lens` whose message names the place the instruction would take
- * (`lens: body[4].then[1] binary: add takes ...`), and `finish()` deep-freezes the module and checks it whole.
+ * (`lens: body[4].then[1] binary: add takes ...`), and `finish()` deep-freezes the module and checks it whole,
+ * binary form included, so every module it hands back can become a lens.
  * What breaks if it is removed? Every shader in the product would be written as raw instruction objects with ids
  * counted by hand, and a type mistake would surface only when the whole module is checked, far from its cause.
  *
@@ -42,6 +43,7 @@
  * by a number or by an i32 or u32 value. Values made inside an `if` or `loop` callback end with it; carry a result
  * out through a variable.
  */
+import { encode } from './binary.ts'
 import { fail, isFault } from './fault.ts'
 import type { Format } from './formats.ts'
 import {
@@ -56,7 +58,7 @@ import {
   MAX_INDEX, MAX_OPERANDS, binaryType, bitsRule, builtinType, castRule, columnType, groupRule, laneType, makeRule, pickType,
   portRule, putType, resourceRule, say, ternaryType, texelType, unaryType, verify,
 } from './verify.ts'
-import type { Refuse } from './verify.ts'
+import type { Layouts, Refuse } from './verify.ts'
 
 /** A value the builder made: its id in the module and its type. */
 export interface Val {
@@ -112,34 +114,52 @@ export interface BlockSpec {
 type Obj = { readonly [key: string]: unknown }
 const isObj = (x: unknown): x is Obj => typeof x === 'object' && x !== null && !Array.isArray(x)
 
-/** Converts a field spec to a block type. Anything it does not recognise passes through for resourceRule to refuse. */
-function toType(spec: unknown, depth: number): unknown {
-  if (!isObj(spec) || depth > LENS_LIMITS.nesting) return spec
-  if (Object.hasOwn(spec, 'array') && typeof spec.len === 'number') return { array: toType(spec.array, depth + 1), len: spec.len }
-  if (Object.hasOwn(spec, 'struct') && isObj(spec.struct) && Array.isArray(spec.struct.fields)) return { struct: toBlock(spec.struct, depth + 1) }
-  return { struct: toBlock(spec, depth + 1) }
+/**
+ * A whole number a module holds (a set, binding, slot, path step, lane, column or array length) with -0 made 0, as
+ * verify() asks.
+ */
+const plain = <T>(x: T): T => (typeof x === 'number' ? ((x + 0) as T) : x)
+
+/** The fields a copy may still make: one spec or Block object shared under many fields is copied once for each. */
+interface Budget {
+  left: number
 }
 
-function toBlock(spec: unknown, depth: number): unknown {
+/** Converts a field spec to a block type. Anything it does not recognise passes through for resourceRule to refuse. */
+function toType(spec: unknown, depth: number, budget: Budget): unknown {
+  if (!isObj(spec) || depth > LENS_LIMITS.nesting) return spec
+  if (Object.hasOwn(spec, 'array') && typeof spec.len === 'number') return { array: toType(spec.array, depth + 1, budget), len: plain(spec.len) }
+  if (Object.hasOwn(spec, 'struct') && isObj(spec.struct) && Array.isArray(spec.struct.fields)) return { struct: toBlock(spec.struct, depth + 1, budget) }
+  return { struct: toBlock(spec, depth + 1, budget) }
+}
+
+function toBlock(spec: unknown, depth: number, budget: Budget): unknown {
   if (!isObj(spec) || depth > LENS_LIMITS.nesting + 1) return spec
-  if (Array.isArray(spec.fields)) {
-    return { fields: (spec.fields as unknown[]).map((f) => (isObj(f) ? { name: f.name, type: toType(f.type, depth) } : f)) }
+  const fields: unknown = spec.fields
+  const names = Array.isArray(fields) ? [] : Object.keys(spec)
+  // Counted before the copy is made, so a small spec that shares itself into a vast tree is refused, not copied.
+  budget.left -= Array.isArray(fields) ? fields.length : names.length
+  if (budget.left < 0) fail('lens', `lens: block: the block holds more than ${LENS_LIMITS.blockFields} fields in all`)
+  if (Array.isArray(fields)) {
+    return { fields: (fields as unknown[]).map((f) => (isObj(f) ? { name: f.name, type: toType(f.type, depth, budget) } : f)) }
   }
-  return { fields: Object.keys(spec).map((name) => ({ name, type: toType(spec[name], depth) })) }
+  return { fields: names.map((name) => ({ name, type: toType(spec[name], depth, budget) })) }
 }
 
 /**
  * A fresh Block from a spec (`{ tint: 'f32x4', lights: arrayOf({ pos: 'f32x3', power: 'f32' }, 4) }`) or a copy of
  * a Block. A spec's keys are its field names in order; a value is a number type, `arrayOf(...)`, a nested spec, or a
- * Block. The result is checked when a resource declares it.
+ * Block. The result is checked when a resource declares it. A spec or Block object reached under several fields is
+ * copied for each, and a copy of more than LENS_LIMITS.blockFields fields in all is refused (Fault `lens`) before it
+ * is made, as verify() refuses such a module.
  */
 export function block(spec: BlockSpec | Block): Block {
-  return toBlock(spec, 0) as Block
+  return toBlock(spec, 0, { left: LENS_LIMITS.blockFields }) as Block
 }
 
-/** An array type for a block spec: `len` elements, or (0, the default) as many as the bound buffer holds. */
+/** An array type for a block spec: `len` elements, or (0, the default; -0 is 0) as many as the bound buffer holds. */
 export function arrayOf(element: FieldSpec, len = 0): ArrayType {
-  return { array: toType(element, 1) as DataType, len }
+  return { array: toType(element, 1, { left: LENS_LIMITS.blockFields }) as DataType, len: plain(len) }
 }
 
 /** Freezes an object and everything in it. */
@@ -181,6 +201,8 @@ export class LensBuilder {
   private readonly values: (Val | Var)[] = []
   private readonly live: boolean[] = []
   private readonly budget = { left: LENS_LIMITS.blockFields }
+  /** The layouts of the blocks the builder declared (its own copies, frozen once declared), laid out once each. */
+  private readonly layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }
   private count = 0
   private returned = false
   private done = false
@@ -510,7 +532,7 @@ export class LensBuilder {
     const list: unknown[] = typeof lanes === 'string' ? [...lanes].map((ch) => {
       const at = LANE_NAMES.indexOf(ch)
       return at < 0 ? no(`${say(ch)} is not a lane name (x y z w, or r g b a)`) : at % 4
-    }) : Array.isArray(lanes) ? [...(lanes as unknown[])] : no('the lanes are a string such as "xyz" or a list of lane numbers')
+    }) : Array.isArray(lanes) ? (lanes as unknown[]).map(plain) : no('the lanes are a string such as "xyz" or a list of lane numbers')
     const t = pickType(V.t, list, no)
     return this.def({ op: 'pick', id: this.next(no), t, a: V.id, lanes: list as number[] }, no)
   }
@@ -528,8 +550,8 @@ export class LensBuilder {
   column(g: Operand, i: number): Val {
     const no: Refuse = this.begin('column')
     const G = this.take(g, guess(g), 'the grid', no)
-    const t = columnType(G.t, i, no)
-    return this.def({ op: 'column', id: this.next(no), t, a: G.id, i }, no)
+    const t = columnType(G.t, plain(i), no)
+    return this.def({ op: 'column', id: this.next(no), t, a: G.id, i: plain(i) }, no)
   }
 
   /**
@@ -564,9 +586,10 @@ export class LensBuilder {
     const flat: unknown = (opts ?? {}).flat
     const between = (this.stage === 'vertex' && side === 'outputs') || (this.stage === 'fragment' && side === 'inputs')
     const integer = isValueType(t) && !isGrid(t) && (scalarOf(t) === 'i32' || scalarOf(t) === 'u32')
-    const port = flat !== undefined ? { slot, type: t, flat } : between && integer ? { slot, type: t, flat: true } : { slot, type: t }
+    const at = plain(slot)
+    const port = flat !== undefined ? { slot: at, type: t, flat } : between && integer ? { slot: at, type: t, flat: true } : { slot: at, type: t }
     portRule(this.stage, side, port, no)
-    if (list.some((p) => p.slot === slot)) no(`slot ${slot} is declared twice`)
+    if (list.some((p) => p.slot === at)) no(`slot ${at} is declared twice`)
     if (list.length >= LENS_LIMITS.ports) no(`a stage has at most ${LENS_LIMITS.ports} ${side}`)
     return Object.freeze(port)
   }
@@ -588,7 +611,7 @@ export class LensBuilder {
     const no: Refuse = this.begin('in')
     const port = this.inputs.find((p) => p.slot === slot)
     if (port === undefined) no(`no input is declared at slot ${say(slot)}`)
-    return this.def({ op: 'in', id: this.next(no), t: port.type, slot }, no)
+    return this.def({ op: 'in', id: this.next(no), t: port.type, slot: port.slot }, no)
   }
 
   /** Declares an output port; write it with `out`. An integer passed to the fragment stage is flat without being asked. */
@@ -631,7 +654,7 @@ export class LensBuilder {
     const no: Refuse = (rule) => fail('lens', `lens: resources[${index}] ${r.kind}: ${rule}`)
     if (this.done) no('the builder has finished its module')
     if (index >= LENS_LIMITS.resources) no(`a module declares at most ${LENS_LIMITS.resources} resources`)
-    resourceRule(r, no, this.budget)
+    resourceRule(r, no, this.budget, this.layouts)
     if (r.kind === 'constants') {
       if (this.resources.some((x) => x.kind === 'constants')) no('a module declares at most one constants resource')
     } else if (this.resources.some((x) => x.kind !== 'constants' && x.set === r.set && x.binding === r.binding)) {
@@ -647,14 +670,14 @@ export class LensBuilder {
   /** A uniform block at a set and binding. */
   uniform(set: number, binding: number, spec: BlockSpec | Block): BlockRes {
     const b = block(spec)
-    return this.addResource({ kind: 'uniform', set, binding, block: b }, (res) => ({ res, kind: 'uniform', block: b, writable: false }))
+    return this.addResource({ kind: 'uniform', set: plain(set), binding: plain(binding), block: b }, (res) => ({ res, kind: 'uniform', block: b, writable: false }))
   }
 
   /** A storage block at a set and binding; read-only unless `writable`. Its last field may be `arrayOf(t)` (no length). */
   storage(set: number, binding: number, spec: BlockSpec | Block, opts?: { readonly writable?: boolean }): BlockRes {
     const b = block(spec)
     const writable = (opts ?? {}).writable ?? false
-    return this.addResource({ kind: 'storage', set, binding, block: b, writable }, (res) => ({ res, kind: 'storage', block: b, writable }))
+    return this.addResource({ kind: 'storage', set: plain(set), binding: plain(binding), block: b, writable }, (res) => ({ res, kind: 'storage', block: b, writable }))
   }
 
   /** The inline constants (at most one block, of at most LENS_LIMITS.constants bytes). */
@@ -667,18 +690,21 @@ export class LensBuilder {
   image(set: number, binding: number, opts?: { readonly sample?: SampleKind; readonly dims?: ImageDims }): ImageRes {
     const sample = (opts ?? {}).sample ?? 'float'
     const dims = (opts ?? {}).dims ?? '2d'
-    return this.addResource({ kind: 'image', set, binding, sample, dims }, (res) => ({ res, kind: 'image', sample, dims }))
+    return this.addResource({ kind: 'image', set: plain(set), binding: plain(binding), sample, dims }, (res) => ({ res, kind: 'image', sample, dims }))
   }
 
   sampler(set: number, binding: number): SamplerRes {
-    return this.addResource({ kind: 'sampler', set, binding }, (res) => ({ res, kind: 'sampler' }))
+    return this.addResource({ kind: 'sampler', set: plain(set), binding: plain(binding) }, (res) => ({ res, kind: 'sampler' }))
   }
 
   storageImage(set: number, binding: number, format: Format): StorageImageRes {
-    return this.addResource({ kind: 'storage-image', set, binding, format }, (res) => ({ res, kind: 'storage-image', format }))
+    return this.addResource({ kind: 'storage-image', set: plain(set), binding: plain(binding), format }, (res) => ({ res, kind: 'storage-image', format }))
   }
 
-  /** Resolves a path: field names to indices, values to `{ at }` steps; walk() then finds the leaf. */
+  /**
+   * Resolves a path: field names to indices, values to `{ at }` steps; walk() then finds the leaf, through the
+   * builder's layouts, so a read or write does not lay its block out again.
+   */
   private path(r: BlockRes, path: readonly unknown[], no: Refuse): { readonly steps: Step[]; readonly t: ValueType } {
     if (path.length > LENS_LIMITS.path) no(`a path has at most ${LENS_LIMITS.path} steps, not ${path.length}`)
     let at: DataType | undefined = { struct: r.block }
@@ -691,7 +717,7 @@ export class LensBuilder {
         step = index
       } else if (typeof s === 'number') {
         if (!Number.isInteger(s) || s < 0 || s > MAX_INDEX) no(`step ${n} (${s}) is not a constant index from 0 to ${MAX_INDEX}`)
-        step = s
+        step = s + 0
       } else {
         const v = this.need(s, 'u32', `step ${n}`, ['i32', 'u32'], no)
         step = Object.freeze({ at: v.id })
@@ -700,7 +726,8 @@ export class LensBuilder {
       return step
     })
     try {
-      return { steps, t: walk(r.block, r.kind === 'storage' ? 'storage' : 'uniform', steps).type }
+      const space = r.kind === 'storage' ? 'storage' : 'uniform'
+      return { steps, t: walk(r.block, space, steps, this.layouts[space]).type }
     } catch (e) {
       if (isFault(e)) no(e.message)
       throw e
@@ -889,7 +916,10 @@ export class LensBuilder {
     this.returned = true
   }
 
-  /** The finished module, deep-frozen and checked by verify(). A builder makes one module. */
+  /**
+   * The finished module, deep-frozen and checked by verify(), and refused (Fault `lens`) when its binary form would
+   * take more than LENS_LIMITS.words words, as createLens would refuse it. A builder makes one module.
+   */
   finish(): LensModule {
     const no: Refuse = (rule) => fail('lens', `lens: finish: ${rule}`)
     if (this.done) no('the builder has already finished its module')
@@ -905,6 +935,12 @@ export class LensBuilder {
       ids: this.values.length,
     })
     verify(m)
+    try {
+      encode(m)
+    } catch (e) {
+      if (isFault(e, 'lens')) no(`the binary form cannot carry the module (${e.message})`)
+      throw e
+    }
     return m
   }
 }

@@ -118,8 +118,9 @@ export interface Block {
 
 /**
  * The rules a block is laid out by. `uniform` also governs inline constants (the GPU back end carries them in a
- * uniform buffer): an array element and a nested block start on 16-byte boundaries there, and a block that would
- * need otherwise is refused. `storage` uses each type's natural alignment.
+ * uniform buffer): as in WGSL's uniform address space, an array and a nested block start on 16-byte boundaries
+ * there, a nested block ends on one, and every array steps 16 bytes or a multiple, so each element starts on one too;
+ * a block that would need otherwise is refused. `storage` uses each type's natural alignment.
  */
 export type Space = 'uniform' | 'storage'
 
@@ -145,21 +146,29 @@ export function placeValue(t: Exclude<DataType, ArrayType | StructType>): Placem
   return { size: n * 4, align: 16 }
 }
 
+/**
+ * Layouts already made in one space, by block object. A caller passes one only while the blocks it lays out cannot
+ * change: a decoded module's blocks are frozen data, the builder's are its own copies (frozen once declared), and
+ * verify() keeps one per space for one check. Each block object is then laid out once, however often it is reached
+ * and however many paths walk it.
+ */
+export type LayoutCache = WeakMap<Block, BlockLayout>
+
 /** The size and alignment of any block type in a space. A runtime-sized array reports the size of one element. */
-export function place(t: DataType, space: Space): Placement {
+export function place(t: DataType, space: Space, cache?: LayoutCache): Placement {
   if (typeof t === 'string') return placeValue(t)
   if ('array' in t) {
-    const e = place(t.array, space)
+    const e = place(t.array, space, cache)
     const stride = roundUp(e.align, e.size)
     return { size: (t.len === 0 ? 1 : t.len) * stride, align: e.align }
   }
-  const fields = layoutBlock(t.struct, space)
+  const fields = layoutBlock(t.struct, space, cache)
   return { size: fields.size, align: fields.align }
 }
 
 /** The stride between two elements of an array of `t`. */
-export function strideOf(t: DataType, space: Space): number {
-  const e = place(t, space)
+export function strideOf(t: DataType, space: Space, cache?: LayoutCache): number {
+  const e = place(t, space, cache)
   return roundUp(e.align, e.size)
 }
 
@@ -171,29 +180,37 @@ export interface BlockLayout {
   readonly offsets: readonly number[]
 }
 
-/** Lays out a block by the rules of a space. Refuses a block the space cannot hold (see Space). */
-export function layoutBlock(block: Block, space: Space): BlockLayout {
+/**
+ * Lays out a block by the rules of a space. Refuses a block the space cannot hold (see Space). With a cache, a block
+ * already in it is not laid out again, and every block laid out goes into it.
+ */
+export function layoutBlock(block: Block, space: Space, cache?: LayoutCache): BlockLayout {
+  const known = cache?.get(block)
+  if (known !== undefined) return known
   let end = 0
   let align = 1
   const offsets: number[] = []
   block.fields.forEach((f, i) => {
-    const p = place(f.type, space)
+    const p = place(f.type, space, cache)
     if (space === 'uniform' && typeof f.type !== 'string') {
       // Every array, at every depth, steps 16 bytes or a multiple (a nested block checks its own fields).
       for (let t: DataType = f.type, name = f.name; typeof t !== 'string' && 'array' in t; t = t.array, name += '[]') {
-        if (strideOf(t.array, space) % 16 !== 0) fail('lens', `field ${name}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
+        if (strideOf(t.array, space, cache) % 16 !== 0) fail('lens', `field ${name}: an array in a uniform block needs elements 16 bytes apart (use f32x4, i32x4 or u32x4 elements)`)
       }
       if ('array' in f.type && f.type.len === 0) fail('lens', `field ${f.name}: a uniform block cannot end in an array without a length`)
     }
     if (typeof f.type !== 'string' && 'array' in f.type && f.type.len === 0 && i !== block.fields.length - 1) fail('lens', `field ${f.name}: only the last field may be an array without a length`)
-    const a = space === 'uniform' && typeof f.type !== 'string' && 'struct' in f.type ? roundUp(16, p.align) : p.align
+    // In a uniform block an array and a nested block start on a 16-byte boundary (WGSL's roundUp(16, align) there).
+    const a = space === 'uniform' && typeof f.type !== 'string' ? roundUp(16, p.align) : p.align
     const offset = roundUp(a, end)
     offsets.push(offset)
     // A field after a nested block starts past the block's 16-byte-rounded end in a uniform block.
     end = offset + (space === 'uniform' && typeof f.type !== 'string' && 'struct' in f.type ? roundUp(16, p.size) : p.size)
     align = Math.max(align, a)
   })
-  return { size: roundUp(align, end), align, offsets }
+  const layout: BlockLayout = { size: roundUp(align, end), align, offsets }
+  cache?.set(block, layout)
+  return layout
 }
 
 /** One step of a path into a block: a constant field or element index, or an element index held by a value. */
@@ -210,9 +227,10 @@ export interface Leaf {
 
 /**
  * Follows a path from the top of a block to a number type. Refuses a path that is too short (ends at a block or an
- * array), too long, or indexes out of a fixed array with a constant.
+ * array), too long, or indexes out of a fixed array with a constant. With a cache (see LayoutCache), the blocks it
+ * passes through are laid out once across every walk that shares it, so a walk costs its steps, not its blocks.
  */
-export function walk(block: Block, space: Space, path: readonly Step[]): Leaf {
+export function walk(block: Block, space: Space, path: readonly Step[], cache?: LayoutCache): Leaf {
   let t: DataType = { struct: block }
   let offset = 0
   const dynamic: { stride: number; len: number }[] = []
@@ -222,10 +240,10 @@ export function walk(block: Block, space: Space, path: readonly Step[]): Leaf {
       if (typeof step !== 'number') fail('lens', 'a block field is picked by a constant index')
       const s: Block = t.struct
       if (!Number.isInteger(step) || step < 0 || step >= s.fields.length) fail('lens', `the block has no field ${step}`)
-      offset += layoutBlock(s, space).offsets[step]
+      offset += layoutBlock(s, space, cache).offsets[step]
       t = s.fields[step].type
     } else {
-      const stride = strideOf(t.array, space)
+      const stride = strideOf(t.array, space, cache)
       if (typeof step === 'number') {
         if (!Number.isInteger(step) || step < 0 || (t.len !== 0 && step >= t.len)) fail('lens', `element ${step} is outside the array`)
         offset += step * stride

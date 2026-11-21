@@ -14,7 +14,7 @@
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { decode, encode, looksLikeLens } from './binary.ts'
+import { checkedCopy, decode, encode, looksLikeLens } from './binary.ts'
 import { LensBuilder, arrayOf, lens } from './builder.ts'
 import type { BlockRes, ImageRes, Out, PathStep, SamplerRes, StorageImageRes, Val, Var } from './builder.ts'
 import { disassemble } from './disasm.ts'
@@ -707,4 +707,129 @@ test('a random module round-trips through the disassembler deterministically', (
   const formats: Format[] = MODULES.flatMap((m) => m.resources.flatMap((r) => (r.kind === 'storage-image' ? [r.format] : [])))
   assert.ok(new Set(formats).size > 3)
   assert.ok(formats.every((f) => FORMATS[f].storage))
+})
+
+test('decode reads a private copy of real Uint32Array words, and gives nothing but a lens Fault for anything else', () => {
+  const w = encode(small())
+  // A subclass whose length getter lies: decode reads the words the array really holds, never past them.
+  class Liar extends Uint32Array {
+    override get length(): number {
+      return w.length
+    }
+  }
+  const short = new Liar(w.length - 1)
+  short.set(w.subarray(0, w.length - 1))
+  refused(() => decode(short), /^lens: decode: word \d+: /)
+  const whole = new Liar(w.length)
+  whole.set(w)
+  assert.deepEqual(decode(whole), small())
+  // Its species is never consulted either: no code of the caller's runs while the words are copied.
+  class Sly extends Uint32Array {
+    static get [Symbol.species](): never {
+      throw new Error('species')
+    }
+  }
+  const sly = new Sly(w.length)
+  sly.set(w)
+  assert.deepEqual(decode(sly), small())
+  // A Proxy passes instanceof but holds no Uint32Array of its own: refused, whatever its traps would answer.
+  refused(() => decode(new Proxy(w, {})), /^lens: decode: a Lens binary is a Uint32Array, not an object/)
+  refused(() => decode(new Proxy(w, { get: (t, k) => (k === '6' ? '1' : Reflect.get(t, k)) })), /a Lens binary is a Uint32Array/)
+  refused(() => decode(new Proxy(w, { get() { throw new Error('no') }, getPrototypeOf() { throw new Error('no') } })), /a Lens binary is a Uint32Array/)
+  const { proxy, revoke } = Proxy.revocable(w, {})
+  revoke()
+  refused(() => decode(proxy), /^lens: decode: /)
+  refused(() => decode(new Float32Array(w.length) as never), /a Lens binary is a Uint32Array/)
+  // Words whose buffer has been handed away hold nothing to read.
+  const gone = encode(small())
+  ;(gone.buffer as unknown as { transfer(): ArrayBuffer }).transfer()
+  refused(() => decode(gone), /^lens: decode: /)
+})
+
+test('encode refuses -0 in every whole-number field, so every module it writes decodes deep-equal to itself', () => {
+  const m: Loose = {
+    stage: 'compute', group: [1, 1, 1], inputs: [], outputs: [],
+    resources: [{ kind: 'storage', set: 0, binding: 0, block: { fields: [{ name: 'a', type: { array: 'f32x4', len: 4 } }] }, writable: true }],
+    body: [
+      { op: 'lit', id: 0, t: 'u32', v: [1] },
+      { op: 'read', id: 1, t: 'f32x4', res: 0, path: [0, { at: 0 }] },
+      { op: 'pick', id: 2, t: 'f32', a: 1, lanes: [0] },
+    ],
+    ids: 3,
+  }
+  verify(m)
+  assert.deepEqual(decode(encode(m)), m)
+  const bad = (change: (c: Loose) => void, re: RegExp): void => {
+    const c = JSON.parse(JSON.stringify(m)) as Loose
+    change(c)
+    refused(() => encode(c), re)
+    refused(() => verify(c), /-0/)
+  }
+  bad((c) => { c.resources[0].set = -0 }, /lens: encode: resources\[0\] storage: the set is a whole number from 0 to 255 in the binary form, not -0/)
+  bad((c) => { c.resources[0].binding = -0 }, /the binding is a whole number from 0 to 255 in the binary form, not -0/)
+  bad((c) => { c.resources[0].block.fields[0].type.len = -0 }, /field 0: an array holds 0 to 65536 elements, not -0/)
+  bad((c) => { c.ids = -0 }, /lens: encode: module: ids is a whole number from 0 to 65536, not -0/)
+  bad((c) => { c.body[1].id = -0 }, /lens: encode: body\[1\] read: the id is a whole number from 0 to 4294967295, not -0/)
+  bad((c) => { c.body[1].res = -0 }, /body\[1\] read: the resource is a whole number from 0 to 4294967295, not -0/)
+  bad((c) => { c.body[1].path[0] = -0 }, /body\[1\] read: step 0 \(-0\) is not a constant index from 0 to 2147483647/)
+  bad((c) => { c.body[1].path[1] = { at: -0 } }, /body\[1\] read: step 1: the id -0 does not fit the binary form/)
+  bad((c) => { c.body[2].lanes = [-0] }, /body\[2\] pick: -0 is not a lane from 0 to 3/)
+  bad((c) => { c.body[2].a = -0 }, /body\[2\] pick: the vector is a whole number from 0 to 4294967295, not -0/)
+  const f: Loose = { ...JSON.parse(JSON.stringify(m)), stage: 'fragment', resources: [], body: [], ids: 0, inputs: [{ slot: -0, type: 'f32' }] }
+  refused(() => encode(f), /lens: encode: inputs\[0\] port: the slot is a whole number from 0 to 255 in the binary form, not -0/)
+  refused(() => encode({ ...m, group: [1, -0, 1] }), /a group size is a whole number from 0 to 4294967295, not -0/)
+})
+
+test('checkedCopy keeps a module as it read it once, frozen and verified, and refuses with the checker\'s message first', () => {
+  const m = small()
+  const frozen = (x: unknown): void => {
+    if (typeof x !== 'object' || x === null) return
+    assert.ok(Object.isFrozen(x))
+    for (const v of Object.values(x)) frozen(v)
+  }
+  const same = (a: unknown, b: unknown): boolean => {
+    try {
+      assert.deepEqual(a, b)
+      return true
+    } catch {
+      return false
+    }
+  }
+  // A module whose field reads right some number of times and then wrong: the copy is the module as one reading
+  // found it, frozen, and it is the copy that is checked, so what is kept is always what verify accepted.
+  const seen = new Set<string>()
+  for (const key of ['ids', 'body', 'outputs']) {
+    for (let good = 0; good <= 8; good++) {
+      let reads = 0
+      const right = (m as Loose)[key]
+      const wrong = key === 'ids' ? 0 : []
+      const shifty: Loose = { ...m }
+      Object.defineProperty(shifty, key, { enumerable: true, get: () => (reads++ < good ? right : wrong) })
+      let copy: LensModule
+      try {
+        copy = checkedCopy(shifty)
+      } catch (e) {
+        assert.ok(isFault(e, 'lens'), String(e))
+        seen.add('refused')
+        continue
+      }
+      assert.ok(same(copy, m) || same(copy, { ...m, [key]: wrong }), `${key} after ${good} good reads`)
+      frozen(copy)
+      verify(copy)
+      seen.add(same(copy, m) ? 'kept' : 'changed')
+    }
+  }
+  assert.deepEqual([...seen].sort(), ['changed', 'kept', 'refused'])
+  // What verify refuses is refused with verify's message, even where the codec refuses it first.
+  refused(() => checkedCopy({ ...m, ids: 2 }), /^lens: body\[\d\] \w+: /)
+  refused(() => checkedCopy(null as never), /^lens: module: a module is an object, not null/)
+  refused(() => checkedCopy({ ...m, ids: -0 }), /^lens: module: ids is a whole number from 0 to 65536, not -0/)
+  refused(() => checkedCopy(new Proxy({}, { getOwnPropertyDescriptor() { throw new Error('no') } }) as never), /^lens: module: the module is not plain data/)
+  // A module verify accepts but the binary form cannot carry is refused by the codec.
+  const lits: Loose[] = Array.from({ length: 16 }, (_, id) => ({ op: 'lit', id, t: 'f32', v: [id] }))
+  const n = Math.ceil(LENS_LIMITS.words / 19)
+  const makes: Loose[] = Array.from({ length: n }, (_, k) => ({ op: 'make', id: 16 + k, t: 'm4', args: Array.from({ length: 16 }, (_, i) => i) }))
+  const big: Loose = { stage: 'compute', group: [1, 1, 1], inputs: [], outputs: [], resources: [], body: [...lits, ...makes], ids: 16 + n }
+  verify(big)
+  refused(() => checkedCopy(big), /^lens: encode: module: the module takes more than 1048576 words/)
 })

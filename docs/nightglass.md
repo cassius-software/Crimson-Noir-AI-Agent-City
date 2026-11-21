@@ -54,7 +54,7 @@ were used. The product claims no conformance to, or compatibility with, any othe
 | `BindingLayout` | `device.createBindingLayout({ entries })` | The kinds of resource bound at each binding number of a set, and the stages that use them. |
 | `PipelineLayout` | `device.createPipelineLayout({ sets, constants? })` | Up to three binding layouts and an inline-constant block. |
 | `BindingPool`, `BindingSet` | `device.createBindingPool({ sets })`, `pool.allocate(layout)` | Sets of resources bound together; `set.write([...])` fills them. |
-| `Lens` | `device.createLens(words or module)` | A checked shader. |
+| `Lens` | `device.createLens(words or module)` | A checked shader: a private, frozen copy of what it was handed (the words copied and decoded, a module carried through the binary form), verified; no later change to the caller's object reaches it. |
 | `RenderPipeline`, `ComputePipeline` | `device.createRenderPipeline/createComputePipeline` | Every fixed state of a draw or a dispatch. |
 | `CommandArena`, `CommandList` | `device.createCommandArena()`, `arena.allocate()` | Recorded work. |
 | `Fence`, `Semaphore` | `device.createFence/createSemaphore` | Host-side and device-side completion. |
@@ -182,8 +182,9 @@ once and used only after, in its block or a block nested in it. Mutable state li
 number types (no `bool`), fixed arrays, a final array without a length (storage only), and nested blocks; their byte
 layout is `layoutBlock` (WGSL's host-shareable rules: scalars align 4, `x2` 8, `x3` and `x4` 16; grids as padded
 columns; arrays at a stride of their element rounded to its alignment; in a uniform block, and in the inline
-constants, arrays need a stride that is a multiple of 16 and a nested block starts and ends on 16-byte boundaries).
-An app filling a buffer uses the same function.
+constants, as in WGSL's uniform address space, an array starts on a 16-byte boundary and needs a stride that is a
+multiple of 16, and a nested block starts and ends on 16-byte boundaries). An app filling a buffer uses the same
+function.
 
 ### Instructions and their typing
 
@@ -219,7 +220,10 @@ An app filling a buffer uses the same function.
 The checker (`verify`) also refuses (**pinned**): an empty block; `flat` on a port that is not passed between
 stages (a vertex input or a fragment output), and an integer value passed between stages that is not `flat`; a
 `cast` or `bits` to the kind it already has; a key a module object does not have, or one that holds `undefined`;
+-0 in any whole-number field (an id, an index, a set or binding, a slot, a path step, a lane, a column, a length);
 and a module whose blocks, each counted every time it is reached, hold more than `LENS_LIMITS.blockFields` fields.
+The builder copies a block spec within that same bound, and its `finish()` also refuses a module whose binary form
+would take more than `LENS_LIMITS.words` words.
 
 Semantics shared by every back end (**pinned**, and the GPU back end is to emit code that makes them hold):
 
@@ -251,9 +255,12 @@ Semantics shared by every back end (**pinned**, and the GPU back end is to emit 
 ### The binary form (`binary.ts`)
 
 Little-endian 32-bit words, beginning with `LENS_MAGIC` and `LENS_VERSION`. `encode(module)` and `decode(words)`
-are exact inverses for every valid module, and `decode` refuses anything malformed with a Fault of code `lens`
-without reading past the words it was given. `decode` checks the form, not the types: `verify` checks those, and
-`createLens` runs it on every module it is handed. The word layout is set out in the head comment of `binary.ts`.
+are exact inverses for every valid module that fits in `LENS_LIMITS.words` words (`encode` refuses a larger one, and
+so do `createLens` and the builder's `finish()`), and `decode` refuses anything malformed with a Fault of code `lens`
+without reading past the words it was given. `decode` reads a private copy of the words, and `decode` and
+`disassemble` raise nothing but a Fault of code `lens`, whatever they are handed. `decode` checks the form, not the
+types: `verify` checks those, and `createLens` runs it on every module it is handed (on its private copy, as
+`disassemble` lists only a checked private copy). The word layout is set out in the head comment of `binary.ts`.
 Stages, value types, functions, builtins, formats, resource kinds, sample kinds and image shapes are numbered by
 their place in the lists that name them (`STAGES`, `VALUE_TYPES`, `UNARY`, `BINARY`, `TERNARY`, `DERIVATIVES`,
 `BUILTINS`, `FORMAT_NAMES`, `RESOURCE_KINDS`, `SAMPLE_KINDS` and `IMAGE_DIMS`, all in `lens.ts` but the formats), so

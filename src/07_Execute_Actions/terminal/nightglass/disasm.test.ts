@@ -289,3 +289,36 @@ test('an invalid module is refused with a lens Fault, not printed', () => {
   refused(() => disassemble({ ...m, resources: [] }), /^lens: body\[1\] read: /)
   refused(() => disassemble(null as never), /^lens: module: /)
 })
+
+test('the listing is of a private copy read once: a module that changes as it is read is listed as read, or refused', () => {
+  const m = tint()
+  const text = disassemble(m)
+  const outcome = (x: unknown): string => {
+    try {
+      return disassemble(x as LensModule)
+    } catch (e) {
+      assert.ok(isFault(e, 'lens'), `expected a lens Fault, got ${String(e)}`)
+      return 'refused'
+    }
+  }
+  // An operand that reads right some number of times and then not at all: never a listing with %undefined in it.
+  for (let good = 0; good <= 8; good++) {
+    let reads = 0
+    const mul = { ...m.body[3] }
+    Object.defineProperty(mul, 'a', { enumerable: true, get: () => (reads++ < good ? 1 : undefined) })
+    const got = outcome({ ...m, body: [...m.body.slice(0, 3), mul, m.body[4]] })
+    assert.ok(got === text || got === 'refused', got)
+  }
+  // Resources that read as a list some number of times and then as null: never a TypeError.
+  for (let good = 0; good <= 8; good++) {
+    let reads = 0
+    const shifty = { ...m }
+    Object.defineProperty(shifty, 'resources', { enumerable: true, get: () => (reads++ < good ? m.resources : null) })
+    const got = outcome(shifty)
+    assert.ok(got === text || got === 'refused', got)
+  }
+  // Anything at all gives a listing or a lens Fault.
+  for (const junk of [undefined, 7, 'lens', [], new Uint32Array(4), new Proxy({}, { getOwnPropertyDescriptor() { throw new Error('no') } })]) {
+    assert.equal(outcome(junk), 'refused')
+  }
+})

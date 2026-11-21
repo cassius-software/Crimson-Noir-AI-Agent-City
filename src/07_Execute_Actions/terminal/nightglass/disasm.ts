@@ -6,8 +6,10 @@
  * every resource with its block laid out (each field's byte offset, each array's stride), then the body one
  * instruction to a line, `%7 = binary.mul f32x4 %3 %6`, with `if` and `loop` blocks indented and paths into blocks
  * spelled with their field names (`r0.lights[%4].color`). The text is stable, so tests pin it and a change to a
- * shader shows up as a readable diff. The module is checked by verify() first, so the listing is always of a valid
- * module and every name and layout in it is real.
+ * shader shows up as a readable diff. The module is first carried through the binary form into a private, frozen
+ * copy (binary.ts's checkedCopy), which verify() checks and which alone is listed, so the listing is always of a
+ * valid module, read once, and every name and layout in it is real; whatever it is handed, it raises nothing but a
+ * lens Fault.
  * What breaks if it is removed? A shader could be inspected only as nested objects or raw words, and a failing
  * shader test could say only that two modules differ, not where.
  *
@@ -27,9 +29,10 @@
  *     %3 = binary.mul f32x4 %1 %2
  *     out 0 %3
  */
+import { checkedCopy } from './binary.ts'
+import { fail, isFault } from './fault.ts'
 import { layoutBlock, scalarOf, strideOf } from './lens.ts'
 import type { Block, DataType, Field, Inst, LensModule, Resource, Space, Step } from './lens.ts'
-import { verify } from './verify.ts'
 
 const LANES = 'xyzw'
 
@@ -165,13 +168,18 @@ function bodyLines(out: string[], m: LensModule, insts: readonly Inst[], indent:
 }
 
 /** The listing of a module, one line per entry, each ending in a newline. Refuses (Fault `lens`) an invalid module. */
-export function disassemble(m: LensModule): string {
-  verify(m)
-  const out: string[] = [`lens ${m.stage}`, `group ${m.group.join(' ')}`, `ids ${m.ids}`]
-  for (const p of m.inputs) out.push(`input ${p.slot} ${p.type}${p.flat === true ? ' flat' : ''}`)
-  for (const p of m.outputs) out.push(`output ${p.slot} ${p.type}${p.flat === true ? ' flat' : ''}`)
-  m.resources.forEach((r, i) => resourceLines(out, r, i))
-  out.push('body')
-  bodyLines(out, m, m.body, '  ')
-  return `${out.join('\n')}\n`
+export function disassemble(module: LensModule): string {
+  const m = checkedCopy(module)
+  try {
+    const out: string[] = [`lens ${m.stage}`, `group ${m.group.join(' ')}`, `ids ${m.ids}`]
+    for (const p of m.inputs) out.push(`input ${p.slot} ${p.type}${p.flat === true ? ' flat' : ''}`)
+    for (const p of m.outputs) out.push(`output ${p.slot} ${p.type}${p.flat === true ? ' flat' : ''}`)
+    m.resources.forEach((r, i) => resourceLines(out, r, i))
+    out.push('body')
+    bodyLines(out, m, m.body, '  ')
+    return `${out.join('\n')}\n`
+  } catch (e) {
+    if (isFault(e)) throw e
+    return fail('lens', 'lens: module: the module could not be listed (listing it raised an error)')
+  }
 }
