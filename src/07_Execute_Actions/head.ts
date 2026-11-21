@@ -104,12 +104,16 @@ export class HeadRig {
   /** The headset's height above the rig's floor as last composed, m: seated, the eye point is lowered by it. */
   private headHeight = 0
 
+  /** The headset's space has no floor (its origin where the head began): on foot the rig's floor is an eye above the feet. */
+  private floorless = false
+
   /**
    * A headset takes the head (or gives it back with null): from then on the pose is the headset's, composed onto the
-   * rig by `compose`. The next pose snaps.
+   * rig by `compose`; `floorless` when its space has no floor (xrSession.ts floorless). The next pose snaps.
    */
-  setHeadset(compose: HeadCompose | null): void {
+  setHeadset(compose: HeadCompose | null, floorless = false): void {
     this.compose = compose
+    this.floorless = compose !== null && floorless
     this.snap = true
     if (!compose) this.headHeight = 0
   }
@@ -135,8 +139,9 @@ export class HeadRig {
 
   /** Eye `eyeHeight` above the avatar's feet. Vertical steps (curbs) are smoothed; horizontal motion never is. */
   onFoot(camera: PerspectiveCamera, feetX: number, feetY: number, feetZ: number, yaw: number, pitch: number, dt: number): void {
-    // Under a headset the rig's floor is the feet: the headset supplies the eye's height and every step of it.
-    if (this.compose) { this.applyHeadset(camera, feetX, feetY, feetZ, yaw); return }
+    // Under a headset the rig's floor is the feet: the headset supplies the eye's height and every step of it (a
+    // space with no floor starts the head at its origin, so there the floor is this body's eye height above the feet).
+    if (this.compose) { this.applyHeadset(camera, feetX, this.floorless ? feetY + this.eye : feetY, feetZ, yaw); return }
     const target = feetY + this.eye
     if (Number.isFinite(target)) {
       if (this.snap || !(Math.abs(target - this.eyeY) < SNAP)) {
