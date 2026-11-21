@@ -148,6 +148,7 @@ export class QueueImpl implements Queue {
       }
       throw e
     }
+    order?.accepted()
     calling = false
     return due
   }

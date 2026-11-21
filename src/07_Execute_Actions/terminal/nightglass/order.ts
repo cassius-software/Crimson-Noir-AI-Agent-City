@@ -55,22 +55,26 @@
  * For each access of a command its layout is checked, then its hazard. An image attached to a pass and also bound in
  * it never reaches the checker: commands.ts refuses that as a usage-scope conflict when the draw is recorded.
  *
- * HOW THE STATE IS KEPT (its costs pinned by order.test.ts). A unit's state is never changed once made: a command or
- * barrier makes one new state for each state the units it changes were in, so units changed together (the layers of
- * an array one barrier moves) share one. A resource's units are kept as one state and the units that differ from it:
- * a resource never touched costs nothing, and one always touched whole costs one state. Memory barriers and semaphore
- * waits act on every unit, so they are not applied to units at all but kept in a ledger by kind of write and read:
- * for each kind of write (a command's stage and write access, or a stage a move's after names) and each (stage,
- * access), the clock of the last memory barrier that made such a write visible there; for each pair of stages, the
- * clock of the last one that ordered the second after a read at the first; and for each stage, the latest submission
- * a wait made visible to it. Every command simulated takes the next number on the device's clock, so a unit's last
- * write is visible to (stage, access) when its own barriers made it so (the unit's state says), or a memory barrier
- * later on the clock covers its kind, or a wait covers its submission; a read is ordered before a stage likewise.
+ * HOW THE STATE IS KEPT (order.test.ts runs it at scales where a state per unit, or a barrier applied to every unit,
+ * would take minutes to hours). A unit's state is never changed once made: a command or barrier makes one new state for
+ * each state the units it changes were in, so units changed together (the layers of an array one barrier moves) share
+ * one. A resource's units are kept as one state and the units that differ from it: a resource never touched costs
+ * nothing, and one always touched whole costs one state. Memory barriers and semaphore waits act on every unit, so they
+ * are not applied to units at all but kept in a ledger by kind of write and read: for each kind of write (a command's
+ * stage and write access, or a stage a move's after names) and each place (stage, access), the clock of the last memory
+ * barrier that made such a write visible there; for each pair of stages, the clock of the last one that ordered the
+ * second after a read at the first; and for each stage, the latest submission a wait made visible to it. Every command
+ * simulated takes the next number on the device's clock, so a unit's last write is visible to (stage, access) when its
+ * own barriers made it so (the unit's state says), or a memory barrier later on the clock covers its kind, or a wait
+ * covers its submission; a read is ordered before a stage likewise. The clocks of writes are kept in parts (see
+ * Ledger), so a barrier that covers every kind of write, or makes them visible at every place, sets one clock per place
+ * or per kind it names, or one in all, rather than one for each pair of kind and place.
  * A memory barrier or a wait then costs the same however many units the device has state for, a command costs what
  * it touches, and a check of one unit costs the same however many barriers came before it.
  * The state lives per device. A submit is simulated on copies of what it changes (the states of the resources it
- * touches, the ledger); they replace the device's only when the queue commits the submit, and are put back if the
- * back end refuses it.
+ * touches, the parts of the ledger it changes); they replace the device's only when the queue commits the submit, and
+ * are put back if the back end refuses it. Once the back end has taken it, the submit keeps only the buffers it
+ * writes, for invalidate(), until its work is done.
  */
 import type { Access, Buffer, Image, ImageLayout, PipeStage, Range, View } from './api.ts'
 import type { BoundSet, CommandListImpl, FullScope, Recorded } from './commands.ts'
@@ -103,23 +107,20 @@ const WRITE_BITS = EVERY_ACCESS & ~READ_BITS
 const stageAt = (s: PipeStage): number => ORDER_STAGES.indexOf(s)
 const accessAt = (a: Access): number => ACCESS_LIST.indexOf(a)
 
-// The ledger (see the head of the file), one array of clocks and submissions, laid out as these offsets say.
+// The ledger (see the head of the file and Ledger below).
 const NR = READ_ACCESSES.length
 const NA = ACCESS_LIST.length
 /** The marks a move's after leaves: one per stage, then TOP and BOTTOM. */
 const MARKS = N + 2
-const LEDGER_MOVES = N * (NA - NR) * N * NA
-const LEDGER_READS = LEDGER_MOVES + MARKS * N * NA
-const LEDGER_WAITS = LEDGER_READS + N * N
-const LEDGER_SIZE = LEDGER_WAITS + N
-/** A command write at stage w with write access x, made visible to (stage s, access a) by a memory barrier. */
-const writeAt = (w: number, x: number, s: number, a: number): number => ((w * (NA - NR) + x - NR) * N + s) * NA + a
-/** A move whose after carries mark m, made visible to (stage s, access a) by a memory barrier. */
-const moveAt = (m: number, s: number, a: number): number => LEDGER_MOVES + (m * N + s) * NA + a
-/** Stage s ordered after a read at stage r by a memory barrier. */
-const readAt = (r: number, s: number): number => LEDGER_READS + r * N + s
-/** The latest submission a wait made visible to stage s, and whose reads it ordered before s. */
-const waitAt = (s: number): number => LEDGER_WAITS + s
+/** The kinds of write: a command's (stage, write access), then each mark a move's after leaves. */
+const KINDS = N * (NA - NR) + MARKS
+/** The places a write is made visible at: (stage, access). */
+const PLACES = N * NA
+/** The kind of a command's write at stage w with write access x. */
+const kindOf = (w: number, x: number): number => w * (NA - NR) + x - NR
+/** The kind of a move whose after carries mark m. */
+const markKind = (m: number): number => N * (NA - NR) + m
+const placeOf = (s: number, a: number): number => s * NA + a
 
 /** The bits of a mask below bit n, lowest first. */
 function bitsOf(mask: number, n: number): number[] {
@@ -216,6 +217,35 @@ const NO_SEEN: readonly number[] = Object.freeze(new Array<number>(N).fill(0))
 const NO_READS: readonly (Read | null)[] = Object.freeze(new Array<Read | null>(N).fill(null))
 const FRESH: Unit = Object.freeze({ write: null, seen: NO_SEEN, reads: NO_READS, layout: 'blank' as ImageLayout })
 
+/**
+ * What the memory barriers and waits so far did. A memory barrier covers some kinds of write and makes them visible at
+ * some places, and its clock goes into the one part that holds exactly that: `every` when it covers every kind and
+ * every place, `toPlace` when every kind and some places, `ofKind` when some kinds and every place, and otherwise the
+ * rows of `rows`, one per kind, each made when first written. A write of a kind is visible at a place through the
+ * memory barriers when any of the four holds a clock there later than the write's. `reads` holds, for stages r and s
+ * (at r * N + s), the clock of the last memory barrier that ordered s after a read at r, and `waits`, for each stage,
+ * the latest submission a wait made visible to it and whose reads it ordered before it. A ledger a device holds is
+ * never changed: a submit changes copies of the parts it changes.
+ */
+interface Ledger {
+  every: number
+  toPlace: Float64Array
+  ofKind: Float64Array
+  rows: (Float64Array | null)[]
+  reads: Float64Array
+  waits: Float64Array
+}
+
+/** The ledger before any memory barrier or wait; never changed, as no ledger a device holds is. */
+const BLANK: Ledger = Object.freeze({
+  every: 0,
+  toPlace: new Float64Array(PLACES),
+  ofKind: new Float64Array(KINDS),
+  rows: new Array<Float64Array | null>(KINDS).fill(null),
+  reads: new Float64Array(N * N),
+  waits: new Float64Array(N),
+})
+
 /** What a device's queues have been given, as of the last committed submit. */
 class Timeline {
   /** The states of each resource's units; a Spread here is never changed (a submit changes its own copy). */
@@ -227,8 +257,8 @@ class Timeline {
   serial = 0
   /** The clock of the last command simulated. */
   clock = 0
-  /** What the memory barriers and waits so far did, by kind of write and read; never changed (a submit changes a copy). */
-  ledger: Float64Array = new Float64Array(LEDGER_SIZE)
+  /** What the memory barriers and waits so far did, by kind of write and read; never changed (a submit changes copies). */
+  ledger: Ledger = BLANK
 }
 
 const timelines = new WeakMap<Core, Timeline>()
@@ -315,17 +345,27 @@ function widened(u: Unit, e: Edge): Unit {
  * Whether a unit's last write is visible to (stage s, access a): by its own barriers, by a memory barrier later on the
  * clock that covers its kind, or by a wait that covers its submission.
  */
-function visible(ledger: Float64Array, u: Unit, s: number, a: number): boolean {
+function visible(ledger: Ledger, u: Unit, s: number, a: number): boolean {
   const w = u.write
-  if (w === null || (u.seen[s] & (1 << a)) !== 0 || w.by.serial <= ledger[waitAt(s)]) return true
-  if (w.move === null) return ledger[writeAt(w.stage, w.access, s, a)] > w.by.tick
-  for (let m = 0; m < MARKS; m++) if ((w.move.marks & (1 << m)) !== 0 && ledger[moveAt(m, s, a)] > w.by.tick) return true
+  if (w === null || (u.seen[s] & (1 << a)) !== 0 || w.by.serial <= ledger.waits[s]) return true
+  const t = w.by.tick
+  const d = placeOf(s, a)
+  if (ledger.every > t || ledger.toPlace[d] > t) return true
+  if (w.move === null) return later(ledger, kindOf(w.stage, w.access), d, t)
+  for (let m = 0; m < MARKS; m++) if ((w.move.marks & (1 << m)) !== 0 && later(ledger, markKind(m), d, t)) return true
   return false
 }
 
+/** Whether a memory barrier later than clock t made writes of kind k visible at place d, by the parts of that kind. */
+function later(ledger: Ledger, k: number, d: number, t: number): boolean {
+  if (ledger.ofKind[k] > t) return true
+  const row = ledger.rows[k]
+  return row !== null && row[d] > t
+}
+
 /** Whether a read at stage r is ordered before stage s: by its own barriers, a later memory barrier, or a wait. */
-function ordered(ledger: Float64Array, rd: Read, r: number, s: number): boolean {
-  return (rd.after & (1 << s)) !== 0 || rd.by.serial <= ledger[waitAt(s)] || ledger[readAt(r, s)] > rd.by.tick
+function ordered(ledger: Ledger, rd: Read, r: number, s: number): boolean {
+  return (rd.after & (1 << s)) !== 0 || rd.by.serial <= ledger.waits[s] || ledger.reads[r * N + s] > rd.by.tick
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -342,6 +382,8 @@ export interface Step {
 export interface Plan {
   /** Makes the simulated state the device's. */
   commit(): void
+  /** The back end took the submit, so it will not be undone: the plan lets go of all but the buffers it writes. */
+  accepted(): void
   /** The work is done (`ran`), or the back end refused it and the commit is undone. */
   settle(ran: boolean): void
 }
@@ -381,21 +423,23 @@ class Run implements Plan {
   private readonly wrote = new Set<BufferImpl>()
   private serial: number
   private clock: number
-  /** The device's ledger until the submit first changes it, then the submit's own copy. */
-  private ledger: Float64Array
+  /** The device's ledger until the submit first changes it, then the submit's own, sharing the parts it did not change. */
+  private ledger: Ledger
+  /** The parts of the ledger the submit copied, so are its own to change. */
+  private readonly made = new Set<object>()
   /**
    * The clock of the last command that made a write or a read, and the clock each memory barrier (by its scopes) was
    * last put in the ledger at: one put there again with nothing written or read since changes nothing, so is skipped.
    */
   private touched = 0
-  private readonly granted = new Map<string, number>()
+  private readonly granted = new Map<number, number>()
   /** The pass being simulated: a token its commands share. */
   private pass: object | null = null
   /** What commit() replaced, for settle(false) to put back. */
   private saved: {
     readonly serial: number
     readonly clock: number
-    readonly ledger: Float64Array
+    readonly ledger: Ledger
     readonly units: readonly (readonly [Resource, Spread | undefined])[]
     readonly signals: readonly (readonly [SemaphoreImpl, number | undefined])[]
   } | null = null
@@ -425,6 +469,16 @@ class Run implements Plan {
     tl.clock = this.clock
     tl.ledger = this.ledger
     for (const b of this.wrote) tl.writing.set(b, (tl.writing.get(b) ?? 0) + 1)
+  }
+
+  accepted(): void {
+    // Only settle(true) can follow, and it needs only the buffers written: an in-flight submit holds nothing else.
+    this.saved = null
+    this.units.clear()
+    this.signals.clear()
+    this.granted.clear()
+    this.made.clear()
+    this.ledger = BLANK
   }
 
   settle(ran: boolean): void {
@@ -525,37 +579,89 @@ class Run implements Plan {
     if (sp.some?.size === 0) sp.some = null
   }
 
-  /** The ledger, for this submit to change: copied out of the device's the first time. */
-  private mine(): Float64Array {
-    if (this.ledger === this.tl.ledger) this.ledger = this.tl.ledger.slice()
+  /** The ledger, for this submit to change: the device's shell copied the first time, its parts as part() and row() need. */
+  private mine(): Ledger {
+    if (this.ledger === this.tl.ledger) this.ledger = { ...this.tl.ledger }
     return this.ledger
+  }
+
+  /** A part of the ledger, for this submit to change: copied the first time. */
+  private part(name: 'toPlace' | 'ofKind' | 'reads' | 'waits'): Float64Array {
+    const ledger = this.mine()
+    let p = ledger[name]
+    if (!this.made.has(p)) {
+      p = p.slice()
+      ledger[name] = p
+      this.made.add(p)
+    }
+    return p
+  }
+
+  /** The row of a kind, for this submit to change: made or copied the first time, as is the list of rows. */
+  private row(k: number): Float64Array {
+    const ledger = this.mine()
+    if (!this.made.has(ledger.rows)) {
+      ledger.rows = ledger.rows.slice()
+      this.made.add(ledger.rows)
+    }
+    let row = ledger.rows[k]
+    if (row === null || !this.made.has(row)) {
+      row = row === null ? new Float64Array(PLACES) : row.slice()
+      ledger.rows[k] = row
+      this.made.add(row)
+    }
+    return row
   }
 
   /** A wait: the submissions up to its signal made visible to its stages, their reads ordered before them. */
   private wait(sem: SemaphoreImpl, stages: readonly PipeStage[]): void {
     const upTo = this.signals.get(sem) ?? this.tl.signals.get(sem) ?? 0
     const w = covered(stages) & EVERY_STAGE
-    for (let s = 0; s < N; s++) if ((w & (1 << s)) !== 0 && this.ledger[waitAt(s)] < upTo) this.mine()[waitAt(s)] = upTo
+    for (let s = 0; s < N; s++) if ((w & (1 << s)) !== 0 && this.ledger.waits[s] < upTo) this.part('waits')[s] = upTo
   }
 
-  /** A memory barrier: its command's clock, for every kind of write and read its before covers and each place its after names. */
+  /**
+   * A memory barrier: its command's clock, for each pair of a stage its before covers and one its after names, and for
+   * the kinds of write its before covers at the places its after names, in the one part of the ledger that holds them.
+   */
   private grant(e: Edge, tick: number): void {
-    const stages = bitsOf(e.after, N)
-    const key = `${e.before} ${e.beforeAccess} ${e.after} ${e.afterAccess}`
-    if (stages.length === 0 || (this.granted.get(key) ?? 0) > this.touched) return
+    // The four masks as one number: 11 + 14 + 9 + 14 bits, well inside a double's 53.
+    const key = ((e.before * (1 << NA) + e.beforeAccess) * (1 << N) + e.after) * (1 << NA) + e.afterAccess
+    if (e.after === 0 || (this.granted.get(key) ?? 0) > this.touched) return
     this.granted.set(key, tick)
-    const ledger = this.mine()
-    for (let r = 0; r < N; r++) if ((e.before & (1 << r)) !== 0) for (const s of stages) ledger[readAt(r, s)] = tick
-    const access = bitsOf(e.afterAccess, NA)
-    if (access.length === 0) return
-    const mark = (base: number): void => {
-      for (const s of stages) for (const a of access) ledger[base + s * NA + a] = tick
+    const stages = bitsOf(e.after, N)
+    if ((e.before & EVERY_STAGE) !== 0) {
+      const reads = this.part('reads')
+      for (let r = 0; r < N; r++) if ((e.before & (1 << r)) !== 0) for (const s of stages) reads[r * N + s] = tick
     }
-    for (let w = 0; w < N; w++) {
-      if ((e.before & (1 << w)) === 0) continue
-      for (let x = NR; x < NA; x++) if ((e.beforeAccess & (1 << x)) !== 0) mark(writeAt(w, x, 0, 0))
+    if ((e.before & ALL) === 0 || (e.afterAccess & EVERY_ACCESS) === 0) return
+    const everyKind = (e.before & ALL) === ALL && (e.beforeAccess & WRITE_BITS) === WRITE_BITS
+    const everyPlace = e.after === EVERY_STAGE && (e.afterAccess & EVERY_ACCESS) === EVERY_ACCESS
+    if (everyKind && everyPlace) {
+      this.mine().every = tick
+      return
     }
-    for (let m = 0; m < MARKS; m++) if ((e.before & (1 << m)) !== 0) mark(moveAt(m, 0, 0))
+    const places: number[] = []
+    if (!everyPlace) for (const s of stages) for (const a of bitsOf(e.afterAccess, NA)) places.push(placeOf(s, a))
+    const kinds: number[] = []
+    if (!everyKind) {
+      for (let w = 0; w < N; w++) {
+        if ((e.before & (1 << w)) !== 0) for (let x = NR; x < NA; x++) if ((e.beforeAccess & (1 << x)) !== 0) kinds.push(kindOf(w, x))
+      }
+      for (let m = 0; m < MARKS; m++) if ((e.before & (1 << m)) !== 0) kinds.push(markKind(m))
+    }
+    if (everyKind) {
+      const toPlace = this.part('toPlace')
+      for (const d of places) toPlace[d] = tick
+    } else if (everyPlace) {
+      const ofKind = this.part('ofKind')
+      for (const k of kinds) ofKind[k] = tick
+    } else {
+      for (const k of kinds) {
+        const row = this.row(k)
+        for (const d of places) row[d] = tick
+      }
+    }
   }
 
   // -------------------------------------------------------------------------------------------------
