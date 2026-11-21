@@ -1337,10 +1337,12 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
   lines) and comes back when you get out. It names the stage (1 of
   6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
-  controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
-  time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed
-  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
+  controls and the Menu), tells you what it is in words a five-year-old follows, and answers the **five W's** one at
+  a time: its button names the next one (**Who?**, then **What?**, **When?**, **Where?** and **Why?**), and each
+  answer is just as plain and true of the city as it runs (you, a person on the street and not a floating camera;
+  Sloane, the city's concierge; the First Law under every wheel and a parked car that waits for a driver; the sixteen
+  workplaces; the closed business-casual wardrobe; the console at the top of the screen, its own language and the four
+  laws of the Ring-0 kernel).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
   quality governor), with a bar from Lite to Peak; and Sloane as the brain readout has her: *Thinking on this device*

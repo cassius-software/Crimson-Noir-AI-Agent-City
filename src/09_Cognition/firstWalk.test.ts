@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { screen } from '../02_Define_The_Rules/conduct.ts'
-import { FirstWalk, PROGRAM, STAGES, SWARM_ROLE, SWARM_SIZE, WALK, askFor, assistControlsOf, assistLine, assistTargetOf, available, cardFor, eli8Of, hintFor, inWords, passedBanner, passedLine, whysOf, type FirstWalkOptions, type Stage, type WalkReading } from './firstWalk.ts'
+import { FirstWalk, PROGRAM, STAGES, SWARM_ROLE, SWARM_SIZE, WALK, askFor, assistControlsOf, assistLine, assistTargetOf, available, cardFor, eli5Of, FIVE_WS, fiveWsOf, hintFor, inWords, passedBanner, passedLine, type FirstWalkOptions, type Stage, type WalkReading } from './firstWalk.ts'
 
 const S = 1000
 const KEYS: FirstWalkOptions = { family: 'keyboard', words: { move: 'W A S D', look: 'Mouse', interact: 'E', console: '~' }, city: { fleet: true, rooms: true } }
@@ -28,6 +28,8 @@ const shopping = (o: FirstWalkOptions): FirstWalkOptions => ({ ...o, city: { ...
 /** The same devices on a map with homes for sale (the city's seven, Lakefront Metro's), and on one with shops and homes both. */
 const homing = (o: FirstWalkOptions): FirstWalkOptions => ({ ...o, city: { ...o.city, homes: true } })
 const everything = (o: FirstWalkOptions): FirstWalkOptions => shopping(homing(o))
+/** A stage's five W's as the card shows them, one after another. */
+const said = (ws: readonly { w: string; answer: string }[]): string => ws.map((w) => `${w.w}? ${w.answer}`).join(' ')
 const still = (over: Partial<WalkReading> = {}): WalkReading => ({ x: 0, z: 0, yaw: 0, travelled: 0, driving: false, inside: false, consoleOpen: false, ...over })
 
 /** A walk started at 0 with a first reading taken. */
@@ -350,7 +352,7 @@ test('nothing before start, nothing after the pass, and the first reading only a
   assert.equal(w.said, 1, 'start twice is start once')
 })
 
-test('the exit program is the three lines, in order, with the role and the swarm the whys name', () => {
+test('the exit program is the three lines, in order, with the role and the swarm it asks for', () => {
   assert.deepEqual(PROGRAM, ['let seal = verify_ring0();', 'let swarm = spawn_subagents(24, "sim2real_workplaces");', 'unlock_city(seal, swarm);'])
   assert.equal(SWARM_ROLE, 'sim2real_workplaces')
   assert.equal(SWARM_SIZE, 24)
@@ -381,10 +383,11 @@ test('every spoken line is plain words, admissible, true to the device, and neve
       check(ask.text, `${o.family} ${s} ask`)
       check(hint.text, `${o.family} ${s} hint`)
       for (const k of [...ask.keep, ...hint.keep]) assert.ok(ask.text.includes(k) || hint.text.includes(k), `${s}: keeps '${k}'`)
-      check(eli8Of(s, o.city), `${s} eli8`)
-      const whys = whysOf(s, o.city)
-      assert.equal(whys.length, 5, `${s}: five whys`)
-      for (const w of whys) { check(w, `${s} why`); assert.match(w, /^Why .*\? Because /, w) }
+      check(eli5Of(s, o.city), `${s} eli5`)
+      const ws = fiveWsOf(s, o.city)
+      assert.deepEqual(ws.map((w) => w.w), ['Who', 'What', 'When', 'Where', 'Why'], `${s}: the five W's, in order`)
+      for (const w of ws) check(`${w.w}? ${w.answer}`, `${s} ${w.w}`)
+      assert.match(ws[4]!.answer, /^Because /, `${s}: why is answered with a because`)
       const card = cardFor(s, o)
       assert.equal(card.index, STAGES.indexOf(s) + 1)
       assert.equal(card.count, 6)
@@ -415,22 +418,23 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(askFor('style', KEYS).text, /Look at the end of my chip/)
   // The shops, only on a map that has them, in the device's words for opening a shop's card.
   for (const o of [KEYS, PAD, TOUCH]) {
-    assert.doesNotMatch(askFor('style', o).text + hintFor('style', o).text + eli8Of('style', o.city) + whysOf('style', o.city).join(' '), /shop/i, `${o.family}: no shops on a map without them`)
+    assert.doesNotMatch(askFor('style', o).text + hintFor('style', o).text + eli5Of('style', o.city) + said(fiveWsOf('style', o.city)), /shop/i, `${o.family}: no shops on a map without them`)
     assert.deepEqual([...askFor('style', shopping(o)).keep], ['Look', 'Done'], 'the shops add no word the rewording must keep')
   }
   assert.match(askFor('style', shopping(KEYS)).text, /press B to try its lines on; trying on is free/)
   assert.match(askFor('style', shopping(PAD)).text, /press A to try/)
   assert.match(askFor('style', shopping(TOUCH)).text, /tap Browse to try/)
   assert.match(hintFor('style', shopping(TOUCH)).text, /A shop works too: walk in, tap Browse/)
-  assert.match(eli8Of('style', shopping(KEYS).city), /trying them on costs nothing/)
-  assert.match(cardFor('style', shopping(KEYS)).eli8, /shops on the street/)
-  const shopWhys = whysOf('style', shopping(KEYS).city).join(' ')
-  assert.match(shopWhys, /no shared code and no shop can put anyone/)
-  assert.match(shopWhys, /circles you like a mirror \(not in a headset or a shared room\)/)
-  assert.match(whysOf('style').join(' '), /all ten skin tones of the Monk scale, with freckles on some and vitiligo on a few/)
+  assert.match(eli5Of('style', shopping(KEYS).city), /trying them on is free/)
+  assert.match(cardFor('style', shopping(KEYS)).eli5, /Shops on the street sell clothes too/)
+  const shopWs = fiveWsOf('style', shopping(KEYS).city)
+  assert.match(shopWs[4]!.answer, /no typed word, no shared code and no shop can dress anyone in anything else/)
+  assert.match(shopWs[3]!.answer, /circles you like a mirror \(not in a headset or a shared room\)/)
+  assert.match(fiveWsOf('style')[0]!.answer, /all ten skin tones, with freckles on some and vitiligo on a few/)
+  assert.match(fiveWsOf('style')[4]!.answer, /no typed word and no shared code can dress anyone/)
   // The homes, only on a map that has them, in the device's words for opening a home's doorstep card.
   for (const o of [KEYS, PAD, TOUCH, shopping(KEYS), shopping(PAD), shopping(TOUCH)]) {
-    assert.doesNotMatch(askFor('style', o).text + hintFor('style', o).text + eli8Of('style', o.city) + whysOf('style', o.city).join(' '), /\bhomes?\b|deed/i, `${o.family}: no homes on a map without them`)
+    assert.doesNotMatch(askFor('style', o).text + hintFor('style', o).text + eli5Of('style', o.city) + said(fiveWsOf('style', o.city)), /\bhomes?\b|deed/i, `${o.family}: no homes on a map without them`)
   }
   for (const o of [KEYS, PAD, TOUCH]) {
     assert.deepEqual([...askFor('style', homing(o)).keep], ['Look', 'Done'], 'the homes add no word the rewording must keep')
@@ -443,17 +447,22 @@ test('every spoken line is plain words, admissible, true to the device, and neve
   assert.match(hintFor('style', homing(TOUCH)).text, /So does a home: step inside, tap For sale, and press Done when you have read its deed/)
   assert.match(hintFor('style', homing(KEYS)).text, /So does a home: step inside, press B,/)
   assert.match(askFor('style', everything(KEYS)).text, /trying on is free\. Or step into a home for sale/, 'with both, the shops come first and the homes after')
-  assert.match(eli8Of('style', homing(KEYS).city), /homes on the street are for sale, and the smallest costs nothing to claim/)
-  assert.match(cardFor('style', homing(KEYS)).eli8, /A home can be yours as well/)
-  const homeWhys = whysOf('style', homing(KEYS).city)
-  assert.match(homeWhys[4], /its deed is one line of the shops’ catalogue, kept by the one shopkeeper/)
-  assert.doesNotMatch(homeWhys.join(' '), /no shop can put anyone|circles you like a mirror/, 'the homes bring no shop\'s line with them')
+  assert.match(eli5Of('style', homing(KEYS).city), /the homes on the street are for sale, and the smallest one is free/)
+  assert.match(cardFor('style', homing(KEYS)).eli5, /You can even have a home/)
+  const homeWs = fiveWsOf('style', homing(KEYS).city)
+  assert.match(homeWs[3]!.answer, /Inside a home for sale, its doorstep card shows the deed/)
+  assert.match(homeWs[4]!.answer, /its deed is one line in the city’s catalogue, kept in one place/)
+  assert.doesNotMatch(said(homeWs), /shop|circles you like a mirror/i, 'the homes bring no shop\'s line with them')
   assert.match(askFor('move', { ...KEYS, name: 'Dana' }).text, /Welcome in, Dana/)
   assert.match(hintFor('work', { ...KEYS, place: () => ({ name: 'the clinic', metres: 120.4, bearing: 'north' }) }).text, /the clinic, about 120 metres to the north/)
   assert.match(hintFor('work', KEYS).text, /wide open doorway/)
-  // The last stage's whys say what the console is, and where its language lives.
-  assert.match(whysOf('console').join(' '), /four laws in rank order/)
-  assert.match(whysOf('console').join(' '), /type noir and a line to try it/)
+  // The last stage's W's say what the console is, and where its language lives, by its whole name.
+  assert.match(fiveWsOf('console')[4]!.answer, /four laws in rank order/)
+  assert.match(fiveWsOf('console')[1]!.answer, /its own language too, Crimson Noir Script: type noir and a line to try it/)
+  assert.deepEqual([...FIVE_WS], ['Who', 'What', 'When', 'Where', 'Why'])
+  // Sloane's own questions are a few, not a fixed five, and the card asks the five W's, never five whys.
+  assert.match(askFor('voice', KEYS).text, /I may ask a few questions to be sure what you mean/)
+  for (const o of [KEYS, everything(TOUCH)]) for (const s of STAGES) assert.doesNotMatch(eli5Of(s, o.city) + said(fiveWsOf(s, o.city)) + askFor(s, o).text, /five whys|why five times|eight-year-old/i)
   const stages: Stage[] = ['move', 'voice', 'fleet', 'work', 'style', 'console']
   assert.deepEqual([...STAGES], stages)
 })

@@ -2358,6 +2358,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The first walk explains each stage as to a five-year-old, with the five W's.** Each card's plain line is now
+  written for a five-year-old (it was for an eight-year-old), and its button answers **who, what, when, where and why**
+  one at a time, naming the next one (Who?, What?, When?, Where?, Why?), in place of five ever-deeper whys
+  (`src/09_Cognition/firstWalk.ts` `eli5Of`, `fiveWsOf`, `FIVE_WS`; `FirstWalk.tsx`). Every answer keeps to what the
+  city does: the shops and the homes are named only on a map that has them, the console's language is called Crimson
+  Noir Script in full, and the cinema-camera, GGX and microphone details are left out as too deep for the card.
+  Sloane's spoken line on the talk stage now says she may ask a few questions to be sure what you mean (her goal
+  questions are a few, not always five). `firstWalk.test.ts` pins the five W's in order, each answer screened and free of
+  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers.
+
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
   is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
