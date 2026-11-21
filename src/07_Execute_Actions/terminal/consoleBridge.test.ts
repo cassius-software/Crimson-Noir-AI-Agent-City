@@ -13,7 +13,8 @@
  * wait for it; words that start with a setting's name are Sloane's unless they are that setting's exact form, and
  * keep nothing; her framing says no city runs here; the router's "ask file load tries again" can be followed here,
  * while choosing a file and `ask gpu` stay the city's; a kept scripted provider prints SCRIPTED_CHOSEN and no model is
- * asked; the bridge refuses a locked ask itself, behind commands.ts; and everything that needs the city says the
+ * asked; `ask` alone prints the brain readout's row (09_Cognition/brainReadout.ts) once the page binds one, read after
+ * the look; the bridge refuses a locked ask itself, behind commands.ts; and everything that needs the city says the
  * engine is not running, whether the tier is locked or open.
  * What breaks if it is removed? The console could ask Sloane while locked, load the router at its start, hang on a
  * stop, start a download, keep a question as a setting, offer changes to a city that is not there, or print nothing
@@ -30,6 +31,7 @@ import { GUARD_KEY, type InPageRuntime } from '../../09_Cognition/inPage.ts'
 import type { KeptModel, ModelStore } from '../../09_Cognition/modelStore.ts'
 import type { FetchLike } from '../../09_Cognition/localCompute.ts'
 import { askRefusal, type Mind } from '../operator.ts'
+import { bindBrain, createBrainReadout } from '../../09_Cognition/brainReadout.ts'
 import { SCRIPTED_CHOSEN } from '../onboarding/voice.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost', track: 'tty' as const }
@@ -184,6 +186,44 @@ test('ask <words>: Sloane\'s reply from the model the app carries streams in who
   const status = await line(c.bridge, 'ask')
   assert.ok(status.final.some((l) => /^found\s+native: the model this app carries/.test(l)), status.final.join('\n'))
   assert.ok(status.final.some((l) => /^server\s+none: the app runs the model$/.test(l)), status.final.join('\n'))
+})
+
+test('ask alone prints the brain readout\'s line once the page binds it as App.tsx ttyBridge does, read after the look; none before', async () => {
+  const app = appRunner(['Hi.'])
+  const unbound = consoleOver({ runner: app.host })
+  await line(unbound.bridge, 'operator unlock')
+  assert.ok(!(await line(unbound.bridge, 'ask')).final.some((l) => l.startsWith('brain ')), 'no readout bound: no brain row')
+  let unbind = (): void => {}
+  const bridge = consoleBridge(BRAND, {
+    contained: () => true,
+    mind: async () => {
+      const pm = createPageMind({
+        fetch: NO_SERVER, store: memoryStore(), runtime: () => idleRuntime().runtime, models: () => emptyStore().store,
+        device: () => DESKTOP, runner: app.host, gpuMemory: async () => null, vram: null,
+      })
+      unbind = bindBrain(createBrainReadout({ router: pm.router, native: pm.native }))
+      return { router: pm.router, inPage: pm.inPage }
+    },
+  })
+  try {
+    await line(bridge, 'operator unlock')
+    const status = await line(bridge, 'ask')
+    assert.ok(status.final.includes('brain     Sloane answers with the model this app carries (m.gguf), run by the app on this device'), status.final.join('\n'))
+    const nothing = consoleBridge(BRAND, {
+      contained: () => true,
+      mind: async () => {
+        const pm = createPageMind({ fetch: NO_SERVER, store: memoryStore(), runtime: () => idleRuntime().runtime, models: () => emptyStore().store, device: () => DESKTOP, runner: null, gpuMemory: async () => null, vram: null })
+        unbind = bindBrain(createBrainReadout({ router: pm.router, native: pm.native }))
+        return { router: pm.router, inPage: pm.inPage }
+      },
+    })
+    await line(nothing, 'operator unlock')
+    const none = await line(nothing, 'ask')
+    assert.ok(none.final.includes('brain     Sloane answers from the scripted planner: no model answered at the last look on this machine'), none.final.join('\n'))
+    assert.match(none.final.at(-1) ?? '', /^ask: no model is answering on this machine/, 'the router\'s sentence still ends it')
+  } finally {
+    unbind()
+  }
 })
 
 test('ask <words> over a model server on this machine: the router\'s auto order finds it first, and every request stays on this machine', async () => {

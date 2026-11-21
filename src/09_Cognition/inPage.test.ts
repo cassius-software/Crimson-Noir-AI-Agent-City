@@ -20,6 +20,8 @@
  *   than the model's header says it was trained on);
  * - unloading after ten idle minutes and after a minute hidden on a phone, a GPU reset turning the GPU off, a new
  *   choice of model unloading the old, busy said on and off on every path that held the city;
+ * - whether it keeps no file, as last listed (empty, read by the brain readout): null until listed, a keep and a
+ *   forget counting, reading it asking the store nothing;
  * - and its settings, its own slice of the router's store, written without touching any other provider's.
  * What breaks if it is removed? A phone could load a model again and again after it took the tab down, an answer
  * could hang on a dead runtime, or the city stay held after an answer failed, and nothing would say so.
@@ -1310,4 +1312,21 @@ test('cold(): an answer would load first while the file it would run is not in t
   const none = await harness({ models: [], settings: null })
   assert.equal(none.mind.cold(true), false, 'nothing kept')
   assert.equal(none.r.loads.length + unchosen.r.loads.length, 0)
+})
+
+test('empty: whether this page keeps no model file, as last listed, read from memory; null until a listing', async () => {
+  const { runtime } = fakeRuntime()
+  const hang: ModelStore = { ...fakeStore([]).store, list: () => never() }
+  const unlisted = createInPageMind({ runtime: () => runtime, store: hang, kept: slice(null), env: () => CPU_DESKTOP, guard: memory(), locks: null })
+  assert.equal(unlisted.empty(), null, 'not listed yet')
+  const h = await harness({ models: [], settings: null })
+  assert.equal(h.mind.empty(), true, 'listed as it starts: none kept')
+  const calls = h.s.calls.length
+  for (let i = 0; i < 20; i++) h.mind.empty()
+  assert.equal(h.s.calls.length, calls, 'reading it asks the store nothing')
+  await h.mind.keep([new File([new Uint8Array(64)], 'new.gguf')])
+  assert.equal(h.mind.empty(), false, 'a keep counts')
+  await h.mind.forget('new')
+  assert.equal(h.mind.empty(), true, 'a forget lists them again')
+  assert.equal((await harness()).mind.empty(), false)
 })

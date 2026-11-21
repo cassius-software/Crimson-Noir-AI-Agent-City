@@ -19,7 +19,9 @@
  * runner that cannot start is named with its reason, and the runner's own failure keeps its code and its words, but
  * one whose model would not load (or whose file failed its check) after a look found it has failed for good: it says
  * so as there being none ('offline', with its reason), Sloane's card hears why, and every look and answer after it
- * pass it over.
+ * pass it over. What the app last said of its model is kept (status), with whether this page has one to run at all
+ * (present), so the brain readout (brainReadout.ts) reads it without asking the shell anything; each change of either
+ * is told (onStatus), and a load that begins after the file's check is heard as the check done.
  * What breaks if it is removed? An app that runs its model itself has nothing in the page to ask it.
  */
 import type { Answer, AnswerRequest, Mind, Piece } from '../07_Execute_Actions/operator.ts'
@@ -104,9 +106,17 @@ function race<T>(p: Promise<T>, s: AbortSignal): Promise<T> {
 }
 
 /** What `native_model` said, or null for no model (anything without a file and a status is none). */
-function modelOf(m: unknown): { file: string; status: { state?: unknown; reason?: unknown; refused?: unknown } } | null {
-  const o = (typeof m === 'object' && m !== null ? m : {}) as { file?: unknown; status?: unknown }
-  return typeof o.file === 'string' && o.file && typeof o.status === 'object' && o.status !== null ? { file: o.file, status: o.status } : null
+function modelOf(m: unknown): { file: string; bytes: number | null; status: { state?: unknown; reason?: unknown; refused?: unknown; done?: unknown; total?: unknown } } | null {
+  const o = (typeof m === 'object' && m !== null ? m : {}) as { file?: unknown; bytes?: unknown; status?: unknown }
+  return typeof o.file === 'string' && o.file && typeof o.status === 'object' && o.status !== null ? { file: o.file, bytes: num(o.bytes), status: o.status } : null
+}
+
+/** A status as the runner sent it, checked (wire.json "statuses"); null where it is none of them. */
+function statusOf(s: { state?: unknown; reason?: unknown; refused?: unknown; done?: unknown; total?: unknown }): NativeStatus | null {
+  if (s.state === 'ready' || s.state === 'loaded') return { state: s.state }
+  if (s.state === 'preparing') return { state: 'preparing', done: num(s.done) ?? 0, total: num(s.total) ?? 0 }
+  if (s.state === 'failed') return { state: 'failed', reason: typeof s.reason === 'string' && s.reason ? s.reason : 'the app did not say why', refused: s.refused === true }
+  return null
 }
 
 /** The runner's refusal as the router's failure: its own code and words (a RunError), else 'server'. */
@@ -126,6 +136,12 @@ function costOf(r: { [k: string]: unknown }): string | null {
   return `the app itself, ${r.gpu === true ? 'on the GPU' : 'on the processor'}, ${threads} thread${threads === 1 ? '' : 's'}, ${ctx} tokens of context; last answer: ${prompt} prompt tokens (${reused} kept from the one before) read in ${secs(prefill)}, ${tokens} written in ${secs(gen)}${rate}`
 }
 
+/**
+ * What the app last said of the model it carries (NativeMind status): its file, its size (null where it did not say)
+ * and how it stood. Its file's check reported during an answer counts, and an answer that ran says it is loaded.
+ */
+export interface NativeHeard { readonly file: string; readonly bytes: number | null; readonly status: NativeStatus }
+
 /** The native provider: a Mind that can also say whether the app's model is still to be loaded. */
 export interface NativeMind extends Mind {
   /**
@@ -134,6 +150,19 @@ export interface NativeMind extends Mind {
    * Asks nothing.
    */
   cold(): boolean
+  /**
+   * What the app last said of its model (NativeHeard), or null: no runner, no model, or nothing heard yet (no look or
+   * answer has asked the shell). Read from memory: it asks the shell nothing (09_Cognition/brainReadout.ts reads it).
+   */
+  status(): NativeHeard | null
+  /**
+   * Whether this page has the app's model to run, from memory: false in a browser, in a shell without the runner's
+   * commands, or in an app that carries none; null until a look, an answer or the boot's question has asked; true once
+   * the app named one. Asks nothing.
+   */
+  present(): boolean | null
+  /** Calls `listener` after what status() or present() says changed; returns the unsubscribe. Asks nothing. */
+  onStatus(listener: () => void): () => void
 }
 
 /**
@@ -162,6 +191,30 @@ export function createNativeMind(d: NativeDeps): NativeMind {
   // file's name taken out, as everywhere here) and the code a look gives it. The runner refuses every answer from then
   // on (engine.rs fail).
   let gone: { why: string; code: 'refused' | 'model' } | null = null
+  // What the app last said of its model (status()): its file, its size and how it stood; null until it said, and for none.
+  let heard: NativeHeard | null = null
+  const status = (): NativeHeard | null => (d.host === null || runner === false || empty ? null : heard)
+  const present = (): boolean | null => (d.host === null || runner === false || empty ? false : runner === null ? null : true)
+  // Who hears that status() or present() changed (onStatus): the brain readout. Told once per change.
+  const statusListeners = new Set<() => void>()
+  let toldKey = JSON.stringify([status(), present()])
+  const toldStatus = (): void => {
+    const k = JSON.stringify([status(), present()])
+    if (k === toldKey) return
+    toldKey = k
+    for (const l of [...statusListeners]) {
+      try { l() } catch { /* a listener's own failure is not the provider's */ }
+    }
+  }
+  const hear = (at: string, bytes: number | null, status: NativeStatus | null): void => {
+    if (status === null) return
+    // Its file's name taken out of a failure's reason, as in every reason this provider gives.
+    const s: NativeStatus = status.state === 'failed' ? { ...status, reason: unnamed(status.reason, at) } : status
+    heard = Object.freeze({ file: at, bytes: bytes ?? (heard?.file === at ? heard.bytes : null), status: Object.freeze(s) })
+    toldStatus()
+  }
+  /** The app said its file's check is under way, as last heard. */
+  const checking = (): boolean => heard?.status.state === 'preparing'
   const hudLine = (t: string | null): void => {
     if (t === hud) return
     hud = t
@@ -201,13 +254,20 @@ export function createNativeMind(d: NativeDeps): NativeMind {
         if (wait.aborted) throw new CognitionError('offline', `the app did not say within ${span(askMs)} whether the model it carries can start`)
         // A shell built before the runner has no such command: no model, as in a browser.
         runner = false
+        toldStatus()
         return []
       }
       const o = modelOf(m)
       empty = o === null
-      if (o === null) return []
+      if (o === null) {
+        heard = null
+        toldStatus()
+        return []
+      }
       file = o.file
       const s = o.status
+      hear(o.file, o.bytes, statusOf(s))
+      toldStatus()
       warm = s.state === 'loaded'
       // This device cannot ('refused'), or the model cannot ('model'): the runner's own codes, and its sentence.
       if (s.state === 'failed') {
@@ -221,6 +281,15 @@ export function createNativeMind(d: NativeDeps): NativeMind {
 
     cold: (): boolean => d.host !== null && runner !== false && !empty && gone === null && !warm,
 
+    status,
+
+    present,
+
+    onStatus: (listener: () => void) => {
+      statusListeners.add(listener)
+      return () => { statusListeners.delete(listener) }
+    },
+
     answer: async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
       const host = d.host
       if (host === null) throw new CognitionError('offline', NO_RUNNER)
@@ -231,13 +300,19 @@ export function createNativeMind(d: NativeDeps): NativeMind {
       if (runner === null) {
         const wait = AbortSignal.timeout(askMs)
         try {
-          empty = modelOf(await race(Promise.resolve().then(() => host.model()), AbortSignal.any([req.signal, wait]))) === null
+          const o = modelOf(await race(Promise.resolve().then(() => host.model()), AbortSignal.any([req.signal, wait])))
+          empty = o === null
+          if (o !== null) {
+            file = o.file
+            hear(o.file, o.bytes, statusOf(o.status))
+          }
           runner = true
         } catch {
           if (req.signal.aborted) throw reasonOf(req.signal)
           if (wait.aborted) throw new CognitionError('offline', `the app did not say within ${span(askMs)} whether the model it carries can start`)
           runner = false
         }
+        toldStatus()
       }
       if (!runner || empty) throw new CognitionError('offline', NO_RUNNER)
       const own = new AbortController()
@@ -282,6 +357,13 @@ export function createNativeMind(d: NativeDeps): NativeMind {
           phase(WAITING)
           return
         }
+        // The file's check, as status() says it from now on.
+        if (e.kind === 'preparing' && file !== null) {
+          const done = num(e.done), total = num(e.total)
+          if (done !== null && total !== null) hear(file, null, { state: 'preparing', done, total })
+        }
+        // A load begins only after the file's check passed (the runner is ready then, engine.rs worker).
+        if (e.kind === 'loading' && file !== null && checking()) hear(file, null, { state: 'ready' })
         // The file's check while it waits its turn: its share, and once it is done, waiting again; no wait runs.
         if (queued && e.kind === 'preparing') {
           const n = pct(e.done, e.total)
@@ -318,7 +400,10 @@ export function createNativeMind(d: NativeDeps): NativeMind {
         const o = (typeof r === 'object' && r !== null ? r : {}) as { [k: string]: unknown }
         cost = costOf(o) ?? cost
         // A job stopped before any load is answered untouched: only another ending says the model is loaded now.
-        if (o.reason !== 'stopped') warm = true
+        if (o.reason !== 'stopped') {
+          warm = true
+          if (file !== null) hear(file, null, { state: 'loaded' })
+        }
         // A full context cuts the answer as the token cap does: both are 'length', which the operator reads as cut
         // (taskOutcome) and never acts on.
         const reason = o.reason === 'eog' ? 'stop' : o.reason === 'maxTokens' || o.reason === 'context' ? 'length' : typeof o.reason === 'string' && o.reason ? o.reason : 'stop'
@@ -343,6 +428,7 @@ export function createNativeMind(d: NativeDeps): NativeMind {
       const why = unnamed(typeof now.status.reason === 'string' && now.status.reason ? now.status.reason : err.message, now.file)
       file = now.file
       gone = { why, code: now.status.refused === true ? 'refused' : 'model' }
+      hear(now.file, now.bytes, { state: 'failed', reason: why, refused: now.status.refused === true })
       failed(why)
       // As there being none: the script stands in, the card says why, and auto goes on to what answers next.
       throw new CognitionError('offline', why)
