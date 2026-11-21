@@ -18,8 +18,9 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request takes the place of the run before it; main's runs each have their own commit.
 concurrency:
-  group: iphone-${{ github.ref }}
+  group: iphone-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.sha }}
   cancel-in-progress: true
 
 defaults:
