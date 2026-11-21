@@ -784,6 +784,25 @@ test('the scan of a sliver whose box is large is told before it begins: every qu
   faults(() => new Raster(st, 0, null, 'charge' as unknown as () => void))
 })
 
+test('a clipped triangle is scanned, and told, once per triangle of its fan, each with its own box, so overlapping boxes are told twice', () => {
+  // The usual full-screen triangle is clipped to the view square and drawn as a fan of two triangles; each one's box is
+  // the whole attachment, 8 x 8 quads. The quads along their shared diagonal are handed out by both, each covering
+  // different pixels, and every pixel is covered exactly once.
+  const st = state()
+  const quads: number[] = []
+  const counts = new Uint8Array(16 * 16)
+  let emitted = 0
+  const raster = new Raster(st, 0, null, (n) => quads.push(n))
+  const big = [at(st, 0, 16), at(st, 32, 16), at(st, 0, -16)]
+  raster.triangle(big[0], big[1], big[2], big[0], (q) => {
+    emitted++
+    for (let lane = 0; lane < 4; lane++) if (q.mask[lane] !== 0) counts[(q.y + (lane >> 1)) * 16 + q.x + (lane & 1)]++
+  })
+  assert.deepEqual(quads, [64, 64])
+  assert.equal(emitted, 64 + 8)
+  assert.deepEqual(Array.from(counts), new Array(16 * 16).fill(1))
+})
+
 test('the state, the values and the vertices are checked, and the state is kept as a frozen copy', () => {
   const bad: Setup[] = [
     { width: 0 }, { width: 1.5 }, { height: RASTER_BOUND + 1 }, { width: NaN },

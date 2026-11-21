@@ -34,9 +34,10 @@
  * is strictly inside all three edges, or exactly on an edge that is a top edge (horizontal, with the triangle below
  * it) or a left edge (with the triangle to its right). Two triangles that share an edge therefore cover every point
  * on it exactly once between them. Only pixels inside the attachment, the scissor rectangle and the viewport's span
- * are tested: the scan visits every 2 x 2 quad of the triangle's bounding box clipped to them, covered or not, and
- * before it begins it tells the caller how many it will visit (the reference renderer charges its step budget one
- * step for each), so a sliver whose box is large costs what its scan costs.
+ * are tested: the scan of each fan triangle visits every 2 x 2 quad of its bounding box clipped to them, covered or
+ * not (a clipped triangle's fan is scanned piece by piece, so a quad where their boxes overlap is visited once for
+ * each), and before it begins it tells the caller how many it will visit (the reference renderer charges its step
+ * budget for each), so a sliver whose box is large costs what its scan costs.
  *
  * INTERPOLATION. Barycentric weights come from the same exact edge functions, at the pixel centre for the vertex
  * outputs and the fragment coordinate, and at each sample position for the depth tested there. Vertex outputs are

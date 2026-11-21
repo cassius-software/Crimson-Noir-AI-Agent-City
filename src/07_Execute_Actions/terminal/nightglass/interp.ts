@@ -87,7 +87,8 @@ export const LANES = 4
 export const LOOP_ITERATIONS = 65_536
 /**
  * The step budget dispatch() uses when it is given none: about a billion lane-instructions, far beyond any shader
- * the tests run, yet small enough that a shader caught in nested loops is stopped in seconds, not hours.
+ * the tests run, yet small enough that a shader caught in nested loops is stopped in seconds (a minute or so when
+ * every instruction is one of the heaviest, such as a product of two m4 grids), not hours.
  */
 export const DEFAULT_BUDGET = 2 ** 30
 /** The most workgroups along one axis of a dispatch: the limit every Nightglass device reports. */

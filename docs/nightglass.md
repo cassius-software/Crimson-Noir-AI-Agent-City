@@ -218,12 +218,13 @@ Semantics shared by every back end (**pinned**, and the GPU back end is to emit 
   and its outputs are dropped.
 - A `loop` leaves, as if by `break`, after 65,536 iterations of one entry. The reference renderer also stops a
   submission whose work passes its step budget (by default 2^30 steps across all its draws and dispatches: one per
-  invocation started, one per instruction each invocation runs, one per loop iteration, one per 2 x 2 quad the
-  rasteriser scans, covered or not (every quad of each triangle's bounding box within the attachment, the scissor
-  and the viewport), and one per restart index of an indexed strip) with a Fault of code `bound`; the work before
-  the stop stays in memory, no fence is signalled, and the device is lost from then on (as a GPU's watchdog resets a
-  device whose work runs too long). A back end refuses a submit either before any of its work runs, or by losing
-  the device.
+  invocation started, one per instruction each invocation runs, one per loop iteration, one per sample point of each
+  2 x 2 quad the rasteriser scans, covered or not, so 4 a quad or 16 with four samples (it scans every quad of each
+  fan triangle's bounding box within the attachment, the scissor and the viewport, so a clipped triangle is charged
+  once for each triangle of its fan), and one per restart index of an indexed strip) with a Fault of code `bound`;
+  the work before the stop stays in memory, no fence is signalled, and the device is lost from then on (as a GPU's
+  watchdog resets a device whose work runs too long). A back end refuses a submit either before any of its work
+  runs, or by losing the device.
 - Implicit-level `sample` and `deriv` sit at the top level of the body, before any instruction that holds a `return`
   (the rate of change is measured across neighbouring pixels, which must all reach it).
 - Outputs never written are zero; a vertex whose position is never written draws nothing.
