@@ -37,6 +37,48 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   interfaces' names. Nothing in the page uses it yet: slice 2 adds the WebGPU back end and a browser check that
   compares its pictures with the reference renderer's, slice 3 the surfaces and the interface kit every console app
   is to draw with.
+- **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which
+  brain answers Sloane (a model server on this machine, the gateway to the Claude API, which answers from off this
+  machine and is never called local, the model the app carries, the model kept in this page, or the scripted planner)
+  and how the model this build gets by default stands (on its way with its byte count, checked by the app, kept, not
+  decided yet, held back and why, or none where this page is served none). `readBrain()` returns one frozen object
+  (`provider`, `settled`, `brain`, `local`, `gateway`, `server`, `model`, `where`, `downloading`, `default`), the same
+  object until something in it changes; `subscribeBrain(listener)` returns the unsubscribe; App.tsx binds it as the
+  city or the console alone builds its router, and before that `readBrain()` returns `BRAIN_UNKNOWN`. A model chosen
+  with `ask provider` that the page already knows cannot run (the app's runner failed or is absent, this page cannot
+  run a model, or it keeps no model file) reads as the scripted planner, with the reason. Under `auto`, a look that
+  found nothing reads as the scripted planner until the page keeps its default model; from then on, and once
+  `ask model auto` or a look stopped part way has set aside the look before it, it says her next answer looks again. A
+  default model got this visit and then forgotten with `ask file forget` reads as held, not kept. It reads only what
+  the page holds in memory: the router's provider and settings, and two new reads, `lookState()` (whether a look
+  stands, whether one runs, and what it found) and `onChange(listener)`, the router's own change hook; what the app
+  last said of its model (`nativeMind.ts` `status()`, from the boot's question, a look or an answer, and, while the
+  app checks its file, from the city asking the app again from memory about once a second until the check is done),
+  whether this page has the app's model at all (`present()`), each change of either told by `onStatus(listener)`;
+  whether this page keeps no model file as last listed (`inPage.ts` `empty()`); the site model's job; and what the
+  page already noted of that model (whether its source offers it, whether it is kept, read again after a forget, and
+  the line the page's own start ended with, which App.tsx used to write only to the browser's console). It never asks
+  a provider for its models or an answer, never fetches the manifest, never starts the job and never asks the shell.
+  `ask` alone prints its line as a new `brain` row after the provider and `found` rows, in the city's console and in
+  the console alone; every other row is as it was. With `?debug`, `window.__SIM__.brain()` and `onBrain(listener)`
+  read it. Tests: `brainReadout.test.ts` (19, over the real router, native provider and site job, with every fetch,
+  every list and answer, the shell's runner, the job's start and the site's offer throwing once the readout is made,
+  checked after the calls a provider starts a turn later would have arrived: each provider under auto before, during
+  and after a look, and each chosen at the console, maps to its brain and its line; a chosen model known not to run; a
+  default kept since a look found nothing; `ask model auto` and a look stopped part way; every default state; each job
+  change, the app's check reported during an answer, the check done and a forget (through a stand-in for App.tsx's
+  bridge) each tell a subscriber once; unsubscribe; the unbound value; App.tsx's wiring of the keep, the forget and
+  the check, pinned in its source; the module imports types only), `router.auto.test.ts` (`lookState`, `onChange`,
+  `ask model auto`, a look stopped part way), `nativeMind.test.ts` (`status()`, `present()`, `onStatus()`),
+  `inPage.test.ts` (`empty()`), `pageMind.test.ts` (the console alone's wiring), `commands.test.ts` and
+  `consoleBridge.test.ts` (the brain row, and none where no readout is bound), and the browser smoke: in `sitemodel`
+  the readout notes the default model getting with its count rising from 0 to the whole file during the page's own
+  download, then kept, then the model kept in this page answering with the pinned file once Sloane has answered, and
+  `ask` prints the same line; in `desktop`, twenty reads before anyone spoke to Sloane say `auto` has found no model
+  yet and make no request at all, to the page's own origin or anywhere else. Not verified: the readout inside the
+  Windows, Linux and macOS apps (covered by unit tests only, over a fake runner), and the city following the app's
+  check (App.tsx: its source is pinned, no test runs it).
+
 - **The microphone understands what you say, with a recogniser of the page's own.** The document that asked for
   proximity voice said the microphone does not work. It was checked first: the microphone opened, metered the room and
   told speech from noise; what was missing was the words. Speech was turned into text only by the browser's own
@@ -97,6 +139,22 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     sentences exactly. Talking to the people nearby and the agents' shared terminals, which the same document asks
     for, are not in this change.
 
+- **On-screen keys and a menu for the pad.** A keyboard the page draws (`04_Connect_Hardware/ScreenKeys.tsx`, with
+  `keysDesk.ts`, `keyboardSense.ts`, `keyLayout.ts`, `keysPad.ts` and `textEntry.ts`) types into the field with the
+  caret as a real key would, with the Esc, Tab, Ctrl and arrow keys a console needs. No browser says whether a
+  keyboard is plugged in, so it goes by the device last used: after a pad it is offered on any text field and opens on
+  the select button, the pad's menu (Keyboard, or Console) or its chip; on a phone or tablet it opens on a tap on the
+  console's prompt (a chat line keeps the phone's own keyboard, and its keyboard key hands that field back to it while
+  the field keeps the caret); a real keyboard's key puts it away, though on a phone or tablet a key typed into a field
+  the phone's own keyboard may be serving is not taken for one; switch scanning and the dwell click get it on every
+  field; `access keys auto|on|off` and `?keys=` choose. The panels, Sloane's card and the console stand above the keys
+  (and above their chip), and the field with the caret is scrolled into view. The pad's menu button (start; with one
+  hand, select with that shoulder held) opens a menu with the touch Menu's items, the on-screen keys and Sloane, so a
+  pad alone reaches the console, ghost view, the HUD and the text size; hints and the first walk name the pad's own
+  menu button where they named `~`. While either is open it has player 1's pads; a card that must be answered first,
+  the halted city's lock screen or a headset session folds the keys and closes the menu. Checked by unit suites and by the browser smoke
+  test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
+  a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
@@ -139,9 +197,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   The packaged run in `build-matrix.yml`'s `linux-x64` job adds one short console ask, stopped once its first words
   stream, and judges how it ended without the stop's own reply (which comes last when the answer ended first);
   rehearsed here against a tiny-model `.deb` installed with apt, 24 of 24 checks, and with the stop forced after the
-  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). Not verified: a real Linux
-  desktop, the real 1.5B model through the console until CI runs the packaged check (and with it the stop after the
-  first words, which the tiny model never reaches), and phones.
+  answer's end, 24 of 24 (23 of 24 when the last line is taken as the end, as before). CI's packaged run on this
+  change (the Ubuntu 22.04 runner, the installed `.deb` with the real 1.5B model): 24 of 24; the console's `ask hello`
+  began streaming the model's answer, `ask stop` typed after its first words ended it with `ask: stopped by the
+  operator`, and the ask took 3,067 ms. Not verified: a real Linux desktop, and phones.
 
 - **The Linux app carries Sloane's model and runs it in its own process.** The build matrix's `linux-x64` and
   `linux-arm64` jobs now build the app with `--features native-runner` (llama.cpp compiled in, `src-tauri/src/runner.rs`

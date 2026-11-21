@@ -41,6 +41,7 @@ import {
   release as releaseFeature, steer as steerFeature, steeringLines, type FeatureDef, type Steering,
 } from '../09_Cognition/features.ts'
 import { personAbout } from '../09_Cognition/personFeatures.ts'
+import { readBrain } from '../09_Cognition/brainReadout.ts'
 export type { AgentContext } from '../08_Swarm/shortTerm.ts'
 
 /** What the ENGINE provides (engine.ts implements it). Rich enough for scripts and harnesses. */
@@ -548,6 +549,8 @@ export interface MindStatus {
   /** A model run in this page (or by the app itself: runtime only): what runs it and how, and where its file is kept, one line each (absent for a server). */
   readonly runtime?: string
   readonly storage?: string
+  /** Which brain Sloane is using and how her default model stands, one plain line (09_Cognition/brainReadout.ts where; absent until the page binds a readout). */
+  readonly brain?: string
   readonly installed: readonly string[] | null
   readonly error?: string
 }
@@ -1106,12 +1109,16 @@ export type MindKnob = 'model' | 'server' | 'think' | 'api' | 'provider' | 'key'
 
 /**
  * `ask` alone: the settings as they are after the server was asked (the auto provider looks for one as it is asked),
- * and what it has. The operator tier's askStatus and the console alone's (terminal/consoleBridge.ts) are this.
+ * and what it has. The operator tier's askStatus and the console alone's (terminal/consoleBridge.ts) are this. With
+ * them goes the brain readout's line (09_Cognition/brainReadout.ts readBrain), read after the look, so the console
+ * says what the first walk says; where the page has bound no readout (a test, a page without the router), none.
  */
 export function mindStatus(mind: Mind): Promise<MindStatus> {
   const base = () => {
     const { server, model, think, api, provider, key, effort, cache, fallback, scripted, auto, resolved, runtime, storage, fit } = mind.settings()
+    const brain = readBrain()
     return {
+      ...(brain.provider !== null && { brain: brain.where }),
       server, model, ...(think !== undefined && { think }), ...(api !== undefined && { api }),
       ...(provider !== undefined && { provider }), ...(key !== undefined && { key }), ...(effort !== undefined && { effort }), ...(cache !== undefined && { cache }),
       ...(fallback !== undefined && { fallback }), ...(scripted !== undefined && { scripted }), ...(auto !== undefined && { auto }), ...(resolved !== undefined && { resolved }),
