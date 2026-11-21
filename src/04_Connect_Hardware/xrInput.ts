@@ -480,7 +480,8 @@ export class XrMapper {
   private readonly lastRole = new WeakMap<object, XrRole>()
   /**
    * Sources whose trigger was held into the wheel (the press that opened the door, a light finger, a worn trigger's
-   * rest): the lowest raw value it has eased back to since, which its throttle counts from. Gone once it is let go.
+   * rest): the lowest raw value it has eased back to since, which its throttle counts from. Gone once it is let go,
+   * and on foot.
    */
   private readonly triggerBase = new WeakMap<object, number>()
   private wasDriving = false
@@ -571,9 +572,11 @@ export class XrMapper {
       const holding = (b: number) => (bits & (1 << b)) !== 0
       // A trigger held into the wheel (the press that opened the door, held as the controller woke there or as it takes
       // on the throttle; a light finger as much as a press, a worn trigger's rest too) gives no throttle where it is:
-      // it counts only what it is pulled past the lowest it has eased back to since (that plus the dead zone, rescaled
-      // so a full pull is full throttle), so the car never lurches on the way in nor creeps on a resting finger or a
-      // worn trigger. Let go (back inside the dead zone) it counts from nothing again.
+      // it counts only what it is pulled past the lowest it has eased back to since (that plus the dead zone; the travel
+      // left is stretched to full throttle, but never more than twice the plain gain, so a wobble near the stop is no
+      // lurch), so the car never lurches on the way in nor creeps on a resting finger or a worn trigger. The point is
+      // taken afresh at each of those moments (never kept from an earlier car or duty) and dropped on foot; let go
+      // (back inside the dead zone) it counts from nothing again.
       const was = this.lastRole.get(s)
       const takesThrottle = (role === 'right' || role === 'both') && was !== 'right' && was !== 'both'
       this.lastRole.set(s, role)
@@ -581,12 +584,13 @@ export class XrMapper {
       const pull = triggerValue(tb)
       const raw = tb ? (tb.value > 0 ? tb.value : tb.pressed ? 1 : 0) : 0
       let base = this.triggerBase.get(s)
-      if (pull === 0) base = undefined
-      else if (this.driving && (!this.wasDriving || !known || takesThrottle)) base = Math.min(base ?? raw, raw)
+      if (pull === 0 || !this.driving) base = undefined
+      else if (!this.wasDriving || !known || takesThrottle) base = raw
       else if (base !== undefined) base = Math.min(base, raw)
       if (base === undefined) this.triggerBase.delete(s)
       else this.triggerBase.set(s, base)
-      const throttle = base === undefined ? pull : triggerValue(tb, base + PAD_TUNING.triggerDeadzone)
+      const from = base === undefined ? 0 : base + PAD_TUNING.triggerDeadzone
+      const throttle = base === undefined ? pull : Math.min(1, Math.max(0, (raw - from) / Math.max(0.5, 1 - from)))
       // The walking surface: the thumbstick, else the touchpad while touched (and not clicked, on a pad that also acts).
       const d = this.stick
       let sx = 0, sy = 0, rim = false

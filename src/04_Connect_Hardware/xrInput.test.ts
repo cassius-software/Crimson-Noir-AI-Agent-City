@@ -1117,3 +1117,65 @@ test('back from a blink a hand last seen in the dead zone takes the way it lies 
   assert.ok(d.read(o, false))
   assert.ok(Math.abs(o.moveX) < 1e-6 && close(o.moveY, 1, 1e-6), `straight ahead at once (${o.moveX}, ${o.moveY})`)
 })
+
+test('the point a trigger counts from is taken afresh at every car and every takeover, never kept from before', () => {
+  // A worn trigger (resting at 0.06) drives one car, steps out, walks, and opens the next car's door with a press.
+  const lone = ctl('none', 6, 4)
+  lone.buttons[XR_BUTTON.trigger].value = 0.06
+  const r = rig([lone])
+  r.m.driving = true
+  r.m.read()
+  lone.buttons[XR_BUTTON.trigger].value = 1
+  r.m.read()
+  assert.ok(close(r.m.analog.throttle, 1), 'the first car drives')
+  lone.buttons[XR_BUTTON.trigger].value = 0.06
+  r.m.read()
+  r.m.driving = false
+  for (let k = 0; k < 20; k++) r.m.read()
+  lone.buttons[XR_BUTTON.trigger].value = 1
+  r.m.read()
+  r.m.driving = true
+  for (const value of [1, 1, 0.8, 0.5, 0.3, 0.3]) {
+    lone.buttons[XR_BUTTON.trigger].value = value
+    r.m.read()
+    assert.equal(r.m.analog.throttle, 0, `the next car, the door's press easing to ${value}: nothing`)
+  }
+  // A pair whose worn left trigger was taken in at the wheel, held hard as its partner leaves: nothing where it is.
+  const left = ctl('left', 6, 4), right = ctl('right', 6, 4)
+  left.buttons[XR_BUTTON.trigger].value = 0.06
+  const p = rig([left, right])
+  p.m.driving = true
+  for (let k = 0; k < 10; k++) p.m.read()
+  for (const value of [1, 0.6]) {
+    left.buttons[XR_BUTTON.trigger].value = value
+    p.m.sources = [left, right]
+    p.m.read()
+    p.m.sources = [left]
+    for (let k = 0; k < 5; k++) {
+      p.m.read()
+      assert.equal(p.m.analog.throttle, 0, `held at ${value} as it takes on the throttle, frame ${k}: nothing`)
+    }
+    left.buttons[XR_BUTTON.trigger].value = 0
+    p.m.read()
+  }
+})
+
+test('a press held near the stop that wobbles is no lurch: the stretch past the eased point is at most twice the plain gain', () => {
+  const lone = ctl('none', 6, 4)
+  const r = rig([lone])
+  r.m.nearCar = true
+  down(lone, XR_BUTTON.trigger)
+  r.m.read()
+  r.m.nearCar = false
+  r.m.driving = true
+  r.m.read()
+  const b = lone.buttons[XR_BUTTON.trigger]
+  b.pressed = false
+  for (const value of [0.95, 1, 1, 0.9, 0.97, 1]) {
+    b.value = value
+    r.m.read()
+    const plain = (value - 0.04) / 0.96
+    assert.ok(r.m.analog.throttle <= plain + 1e-9, `never more than the plain pull (${value}: ${r.m.analog.throttle})`)
+    assert.ok(r.m.analog.throttle < 0.2, `a wobble near the stop gives little (${value}: ${r.m.analog.throttle})`)
+  }
+})
