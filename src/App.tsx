@@ -604,13 +604,15 @@ function ttyBridge(vram: string | null): TerminalBridge {
 
 /**
  * Reloads the page on `track` (Track B's `boot gui|tty`): the URL keeps every other option. A reload, not a
- * remount: no engine teardown races, and the single file needs no server.
+ * remount: no engine teardown races, and the single file needs no server. The console's disk is saved first
+ * (Terminal.flushAll, LEAVE_MS at most): 'Back to the city' and the cards' way to the console come here straight from
+ * a click, and a save the page's going cuts short is lost.
  */
 function reboot(track: BootTrack): void {
   const url = new URL(window.location.href)
   if (track === 'tty') url.searchParams.set('boot', 'tty')
   else url.searchParams.delete('boot')
-  window.location.assign(url.toString())
+  void Terminal.flushAll().then(() => window.location.assign(url.toString()))
 }
 
 /** The cards' 'Open the console': the ?boot=tty shell, which needs no GPU (the only console route on a touch screen). */

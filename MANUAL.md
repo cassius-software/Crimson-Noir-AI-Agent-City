@@ -2159,39 +2159,51 @@ console hands it. The design, every limit and what is not there yet are in `docs
   `ring0`, `goal`, `agent`, `sloane` and `swarm` at the start of a line still take the whole line. `echo` is the
   shell's. Where a console command and a program share a name (`time`, `uname`, `whoami`), the console's command
   answers and `/bin/time sleep 1` runs the program; `type <name>` says which runs. The shell's messages start `ash:`,
-  and `help` ends with a line that points at `man intro`.
+  and `help` ends with a line that points at `man intro`. A proposal is answered only at the prompt: `act ok` and
+  `act no` typed alone (or `y` and `n`) answer it, and in a pipe, a list, a loop, a job or a script they are refused
+  and decide nothing. The shell runs at most 32 console commands a turn; past that a loop waits for the next turn, so
+  it never floods the city.
 - **First steps.** `man intro`, `ls /bin`, `man ls`, `cat README`, `pwd`, `cd /tmp`, `echo hi > note`, `cat note`,
   `ls /bin | wc -l`, `for f in *.txt; do wc -l < "$f"; done`.
 - **The shell** (`man sh`): quotes, `NAME=value`, `$NAME` and the `${NAME:-word}` forms, `export`, `$(command)`,
   whole-number sums `$((2 + 3 * 4))`, patterns `*`, `?`, `[a-z]`, pipes, `>`, `>>`, `<`, `2>`, `2>&1`, `<< WORD`, `;`,
   `&&`, `||`, `&`, `{ a; b; }`, `if`, `while`, `until`, `for`, `test` and `[ ]`, and `jobs`, `fg`, `wait` and
   `stop %1` for jobs left in the background. A text file that starts `#!/bin/sh` and is made runnable (`chmod +x`)
-  is a script; one in `~/bin` runs by its name. Not there: functions, `case`, `( )` subshells, `set`, arrays,
-  aliases, and backquotes (that key opens and closes the console: use `$( )`).
+  is a script; one in `~/bin` runs by its name. `/etc/profile` and then `~/.profile`, once you make them, run each
+  time the console's shell starts. `exit` closes the console and gives up the rest of the line and of a file read
+  with `source`, so `cd /nowhere || exit; rm -r *` removes nothing. `jobs` lists a job's line as typed: a key or a
+  token on a line sent to the background shows there, though the history keeps it as dots. Not there: functions,
+  `case`, `( )` subshells, `set`, arrays, aliases, and backquotes (that key opens and closes the console: use
+  `$( )`).
 - **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
   forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
-  what you type. On a touch screen, **Stop** and **End input** do the same while a program has the terminal. A line
-  typed while a program reads (`cat > notes`) is that program's, even one that names a console command. The prompt
-  shows the directory (`host:~# `), and `> ` while a command needs more lines.
+  what you type, and on a line with text deletes the character after the cursor. On a touch screen, **Stop** and
+  **End input** do the same while a program has the terminal. A line typed while a program reads (`cat > notes`) is that
+  program's, even one that names a console command. The prompt shows the directory (`host:~# `), and `> ` while a
+  command needs more lines.
 - **The tree** (`man files`): `~` is `/home/operator` (with a `README`); `/etc` and `/mnt`; `/tmp`, scratch space;
   `/bin` and `/usr/share/man`, read-only; `/dev/null`, `zero`, `full`, `random`, `urandom` and `tty`; `/proc`, a
-  directory per running task (`ps -f` lists them); `/proc/city` and `/sys/city`, below. You are root at the prompt.
+  directory per running task (`ps -f` lists them); `/proc/city` and `/sys/city`, below. You are root at the prompt,
+  and still `umount` leaves the system's own `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted.
 - **What is kept.** Everything outside `/tmp`, `/bin`, `/usr`, `/dev`, `/proc` and `/sys` is one disk of 8 MiB, saved in
-  this browser's own storage for the site a moment after it changes (1.5 s) and when the page is hidden, and back the
-  next time the page opens in the same browser; the city's console and the console alone (`?boot=tty`) share it. It is
-  sent nowhere, and another browser or device has its own. `/tmp` (4 MiB) is emptied when the page closes. When the
-  storage cannot be read, a second tab of the site saved a newer disk, or the browser gives the page no storage, the
-  console says once `disk: files are not kept between visits from here on:` with the reason, and files then last until
-  the page closes. A saved disk that fails its check is set aside under another name, never written over, and a new one
-  starts. Clearing the site's data erases the disk. `df` shows how full each part is. A name is at most 255 characters,
-  a path 4,096 characters and 64 names deep.
+  this browser's own storage for the site a moment after it changes (1.5 s, longer for a disk with more than 1 MiB in
+  use, 10 s at most), when the page is hidden, and before `boot`, `map` or **Back to the city** reloads the page, which
+  waits up to 4 s for the save; it is back the next time the page opens in the same browser, and the city's console and
+  the console alone (`?boot=tty`) share it. It is sent nowhere, and another browser or device has its own. `/tmp`
+  (4 MiB) is emptied when the page closes. When the storage cannot be read, a second tab of the site saved a newer disk,
+  or the browser gives the page no storage, the console says once
+  `disk: files are not kept between visits from here on:` with the reason, and files then last until the page closes. A
+  saved disk that fails its check is set aside under another name, never written over, and a new one starts; up to eight
+  are kept aside, and past that the stored one is left alone and files are not kept. Clearing the site's data erases the
+  disk. `df` shows how full each part is. A name is at most 255 characters, a path 4,096 characters and 64 names deep.
 - **The city as files** (`man city`). Readings, each the console command's own lines: `cat /proc/city/stats`, `laws`,
   `kernel`, `hardware`, `rooms`, `lanes`, `version`; rows of numbers in `crowd`, `cars` and `frame`
   (`sort -n /proc/city/crowd | head -n 5`); and `topics/`, the namespace as a tree of files. Knobs:
   `echo 18:30 > /sys/city/time`, `echo off > /sys/city/rain`, and `quality`, `audio`, `ghost`, `render`,
   `captions`, `haptics`; `physics/` and `shaders/`, a file per tuning key, once `operator unlock` has opened the
-  tier. A write runs the command with that value and is refused exactly when the command would be. On the console
-  alone most readings say the city is not there.
+  tier. A write runs the command with that value and is refused exactly when the command would be. Each read or
+  write counts as one of the 32 console commands a turn. On the console alone most readings say the city is not
+  there.
 - **Progression.** A shell line that holds `|`, `;`, `&`, `<` or `>`, or starts with `for`, `while`, `until` or `if`,
   earns a computers check when it is back at the prompt within its first 30 ms without an error; any other line earns
   nothing. The console commands inside a shell line (`rain on | wc -l`, `time 10:00` in a loop), and reading or

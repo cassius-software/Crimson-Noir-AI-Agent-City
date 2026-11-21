@@ -10,15 +10,18 @@
  * reads the terminal is that program's, Ctrl+C gives the prompt back, Tab gives back names the shell reads as typed,
  * and the disk comes back on the next visit, is never written over by a page that fell behind, loses no change to a
  * save that failed or was asked for during another, is said not to be kept as soon as that is so, and is set aside
- * rather than lost when it fails its check.
+ * rather than lost when it fails its check. It also holds that a proposal is answered only at the prompt, that a loop
+ * drives the city no faster than CITY_TURN_MAX commands a turn, that a secret the shell hands a command is recorded for
+ * the history, and that a save is sealed by the host's digest, or at once as the page goes, and never throws.
  * What breaks if it is removed? Any of those could change without a test noticing, and the first to notice would be
  * someone whose files were gone.
  */
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { LINE_MS, completeLine, complete, replSession, run, type CommandResult, type DiskStore, type OsHost, type OsSession, type ReplSession } from './commands.ts'
+import { offlineBridge, type ActEnd, type ActsBridge, type PendingAct, type TerminalBridge } from './bridge.ts'
+import { CITY_TURN_MAX, LINE_MS, completeLine, complete, redactForHistory, replSession, run, scrubSecrets, type CommandResult, type DiskStore, type OsHost, type OsSession, type ReplSession } from './commands.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
@@ -643,4 +646,264 @@ test('wiring: the page hands both consoles the one disk store; the terminal give
   // A touch screen has no Ctrl key: the two buttons stand in for the two chords while a job has the terminal.
   assert.match(term, /<button type="button" onClick=\{endInput\}>End input<\/button>/)
   assert.match(term, />Stop<\/button>/)
+})
+
+/** The city with a queue of proposed actions kept as the tier keeps it: one waits at a time, and who answered it is written down. */
+function proposing(): City & { propose(sentence: string): void; answered: string[] } {
+  const c = city()
+  let waiting: PendingAct | null = null
+  let seq = 0
+  const answered: string[] = []
+  const acts: ActsBridge = {
+    ...c.operator.acts,
+    pending: () => waiting,
+    allow: (by) => {
+      const act = waiting
+      if (act === null) throw new Error('nothing is waiting for your OK')
+      waiting = null
+      answered.push(`allowed ${act.seq} by ${by ?? 'host'}`)
+      const end: ActEnd = { state: 'done', line: `act ${act.seq}: done` }
+      return { act, result: Promise.resolve(end) }
+    },
+    refuse: (by) => {
+      const act = waiting
+      if (act === null) throw new Error('nothing is waiting for your OK')
+      waiting = null
+      answered.push(`refused ${act.seq} by ${by ?? 'host'}`)
+      return act
+    },
+  }
+  return Object.assign(c, {
+    operator: { ...c.operator, acts },
+    answered,
+    propose(sentence: string) {
+      waiting = { seq: ++seq, who: 'agent 17 (Design)', agent: 17, serial: 1, skills: ['design'], verb: 'clock', canonical: 'clock 22:00', sentence, since: 0 }
+    },
+  })
+}
+
+test('a proposal is answered only at the prompt: a job, a pipe or a script that runs act ok or act no is refused, and act ok or n typed alone still answers', () => {
+  const b = proposing()
+  b.unlocked = true
+  const h = host()
+  const s = replSession(h)
+  const os = osOf(s)
+  const refusal = '!act: a proposal is answered at the prompt: type act ok, act no, y or n on its own'
+  // A loop in the background that would allow each proposal as it came, with nothing typed for it.
+  all('while true; do act ok; sleep 1; done &', b, s)
+  b.propose('set the clock to 22:00')
+  let shown: string[] = []
+  for (let i = 0; i < 3; i++) {
+    h.t += 1000
+    os.pump(LINE_MS)
+    for (let r = os.next(); r !== null; r = os.next()) shown = shown.concat(texts(r))
+  }
+  assert.ok(shown.includes(refusal), shown.join('\n'))
+  assert.deepEqual(b.answered, [], 'the job answered nothing')
+  all('stop %1', b, s)
+  all("echo 'act no' > /tmp/no.sh", b, s)
+  assert.deepEqual(all('sh /tmp/no.sh', b, s), [refusal])
+  assert.deepEqual(all('act ok | cat; act no', b, s), [refusal, refusal])
+  assert.deepEqual(b.answered, [])
+  // What only reads still runs from the shell.
+  assert.match(all('act | cat', b, s)[0], /^act 1: waiting for your OK: agent 17 \(Design\) proposes: set the clock to 22:00/)
+  // Typed alone at the prompt, the answer is the person's.
+  assert.deepEqual(texts(run('act ok', b, [], s)), ['act 1: allowed: set the clock to 22:00'])
+  b.propose('turn the rain on')
+  assert.deepEqual(texts(run('n', b, [], s)), ['act 2: refused: turn the rain on (agent 17 is told next time)'])
+  assert.deepEqual(b.answered, ['allowed 1 by console', 'refused 2 by console'])
+})
+
+test('a shell loop drives the city at most CITY_TURN_MAX console commands a turn: the rest wait for the next turn, in order, and a knob written in a loop counts the same', () => {
+  assert.equal(CITY_TURN_MAX, 32)
+  const b = city()
+  const h = host()
+  // The clock moves a millisecond every hundred reads, as a fast page's does: a turn could run thousands of commands
+  // before its deadline.
+  let reads = 0
+  h.clock = () => h.t + Math.floor(++reads / 100)
+  const s = replSession(h)
+  const os = osOf(s)
+  const turns: number[] = []
+  let before = b.calls.length
+  run('while true; do rain on; rain off; done', b, [], s)
+  for (let i = 0; i < 6; i++) {
+    turns.push(b.calls.length - before)
+    before = b.calls.length
+    assert.equal(os.busy, true, 'what is owed keeps the host giving turns')
+    os.pump(4)
+    while (os.next() !== null) { /* shown */ }
+  }
+  assert.ok(turns.every((n) => n > 0 && n <= CITY_TURN_MAX), turns.join(' '))
+  assert.ok(b.calls.every((c, i) => c === (i % 2 === 0 ? 'rain on' : 'rain off')), 'in the order the loop ran them')
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  while (os.next() !== null) { /* shown */ }
+  before = b.calls.length
+  run('while true; do echo on > /sys/city/rain; done', b, [], s)
+  for (let i = 0; i < 4; i++) {
+    const n = b.calls.length - before
+    assert.ok(n > 0 && n <= CITY_TURN_MAX, `a knob written in a loop: ${n} in one turn`)
+    before = b.calls.length
+    os.pump(4)
+    while (os.next() !== null) { /* shown */ }
+  }
+  os.system.interrupt()
+  os.pump(LINE_MS)
+  // A line of more commands than one turn's share: the rest run on the next turn, each once, in order, shown in order.
+  const t = city()
+  const u = replSession(host())
+  const hours = [...Array(24).keys(), ...Array(24).keys()]
+  const printed = texts(run(hours.map((h) => `time ${h}`).join('; '), t, [], u))
+  assert.equal(t.calls.length, CITY_TURN_MAX, 'the first turn runs its share')
+  assert.equal(osOf(u).busy, true)
+  osOf(u).pump(LINE_MS)
+  for (let r = osOf(u).next(); r !== null; r = osOf(u).next()) printed.push(...texts(r))
+  assert.deepEqual(t.calls, hours.map((h) => `setClock ${h}`))
+  assert.deepEqual(printed, hours.map((h) => `${String(h).padStart(2, '0')}:00`))
+})
+
+test('a key, a token or a passphrase that a console command takes from the shell is recorded once, so the console can dot it in its history in whatever form it was typed', () => {
+  const b = city()
+  const s = replSession(host())
+  const os = osOf(s)
+  for (const line of [
+    "sh -c 'ask key sk-SECRET3'",
+    "echo 'ring0 unlock --elite open sesame' | sh",
+    'X=1 ask connect claude http://localhost:8089 sk-ant-4',
+    '"net" join ws://127.0.0.1:9 TOKEN5',
+    "sh -c 'say key k6'",
+    "printf 'ring0 elite set new phrase\\n' | sh",
+    '\\ask connect openai sk-proj-7',
+  ]) all(line, b, s)
+  assert.deepEqual(os.takeSecrets(), ['sk-SECRET3', 'open sesame', 'sk-ant-4', 'TOKEN5', 'k6', 'new phrase', 'sk-proj-7'])
+  assert.deepEqual(os.takeSecrets(), [], 'handed over once')
+  // Nothing that is not a secret is recorded: an address, a setting, a key cleared, a command only echoed.
+  for (const line of [
+    "sh -c 'ask connect ollama http://localhost:11434'", "sh -c 'ask model m'", "sh -c 'ask key none'", "sh -c 'say key NONE'",
+    "sh -c 'net join ws://127.0.0.1:9'", 'echo ask key x | cat',
+  ]) all(line, b, s)
+  assert.deepEqual(os.takeSecrets(), [])
+  // The console dots each one where it stands in a line it kept, with everything after it.
+  const history = ["sh -c 'ask key sk-SECRET3'", 'echo hello', '"net" join ws://127.0.0.1:9 TOKEN5 ; echo ok']
+  scrubSecrets(history, ['sk-SECRET3', 'TOKEN5', ''])
+  assert.deepEqual(history, ["sh -c 'ask key ••••", 'echo hello', '"net" join ws://127.0.0.1:9 ••••'])
+})
+
+test('history run by the shell lists the line as it was typed as its last row, so history | tail and history | grep agree with what the history then holds', () => {
+  const b = city()
+  const s = replSession(host())
+  const shown = (line: string, history: string[]): string[] => {
+    const out = texts(run(line, b, history, s))
+    for (let r = osOf(s).next(); r !== null; r = osOf(s).next()) out.push(...texts(r))
+    return out
+  }
+  assert.deepEqual(shown('history | tail -n 2', ['time', 'laws']), ['    2  laws', '    3  history | tail -n 2'])
+  assert.deepEqual(shown('history | grep tail', ['time', 'laws', 'history | tail -n 2']), ['    3  history | tail -n 2', '    4  history | grep tail'])
+  // A secret typed earlier on the same line is dotted there, as the history keeps it: never printed back.
+  const rows = shown('true; net join wss://r.example TOKEN123; history | cat', []).filter((l) => /^ +\d/.test(l))
+  assert.deepEqual(rows, ['    1  ' + redactForHistory('true; net join wss://r.example TOKEN123; history | cat')])
+  assert.doesNotMatch(rows.join('\n'), /TOKEN123/)
+})
+
+test('Tab asks the system only for the programs that start with the word, so a large directory on the path is not checked file by file', () => {
+  const b = city()
+  const s = replSession(host())
+  const os = osOf(s)
+  all('mkdir -p ~/bin; echo "echo hi" > ~/bin/tool1; chmod 755 ~/bin/tool1', b, s)
+  const asked: string[] = []
+  const commands = os.system.commands.bind(os.system)
+  os.system.commands = (prefix = '') => { asked.push(prefix); return commands(prefix) }
+  assert.deepEqual(completeLine('too', s), ['tool1'])
+  assert.deepEqual(completeLine('ls | gr', s), ['ls | grep'])
+  assert.deepEqual(asked, ['too', 'gr'])
+})
+
+/** SHA-256 as a host's own digest gives it (off the page's thread, in a browser): node's, here. */
+const nodeSha = (bytes: Uint8Array): Uint8Array => new Uint8Array(createHash('sha256').update(bytes).digest())
+
+test('a save is sealed with the host\'s own digest when it has one, and the next visit reads it back', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const h = host(disk.open())
+  const sealed: number[] = []
+  h.digest = async (bytes) => { sealed.push(bytes.length); return nodeSha(bytes) }
+  const s = replSession(h)
+  await settle(s)
+  all('echo sealed > note', b, s)
+  await osOf(s).save()
+  assert.equal(sealed.length, 1, 'the host sealed the image')
+  assert.equal(disk.image?.length, sealed[0] + 32, 'the image is the body and its seal after it')
+  const next = replSession(host(disk.open()))
+  await settle(next)
+  assert.equal(osOf(next).system.state, 'restored')
+  assert.deepEqual(all('cat note', b, next), ['sealed'])
+})
+
+test('a save asked for as the page goes is sealed at once and reaches the store before anything is awaited, even while another waits for its seal', async () => {
+  const b = city()
+  const disk = slowDisk()
+  const h = host(disk)
+  const seals: (() => void)[] = []
+  h.digest = (bytes) => new Promise((resolve) => { seals.push(() => resolve(nodeSha(bytes))) })
+  const s = replSession(h)
+  await settle(s)
+  const os = osOf(s)
+  all('echo one > a', b, s)
+  const quick = os.save({ now: true })
+  assert.equal(disk.asked.length, 1, 'the store was asked before save returned')
+  assert.equal(seals.length, 0, 'sealed here, not by the host')
+  disk.answer('kept')
+  await quick
+  // A save on the timer waits for the host's seal; the page goes meanwhile, and the quick save takes it over.
+  all('echo two > b', b, s)
+  const timed = os.save()
+  await ticks()
+  assert.equal(seals.length, 1)
+  assert.equal(disk.asked.length, 1, 'the timer\'s save still waits for its seal')
+  all('echo three > c', b, s)
+  const going = os.save({ now: true })
+  assert.equal(disk.asked.length, 2, 'asked at once, with what the timer\'s save held and the change since')
+  seals[0]()
+  await ticks()
+  assert.equal(disk.asked.length, 2, 'the seal that came late asks nothing more')
+  disk.answer('kept')
+  await going
+  await timed
+  assert.equal(os.unsavedChanges, false)
+  const next = replSession(host(disk))
+  await settle(next)
+  assert.deepEqual(all('cat a b c', b, next), ['one', 'two', 'three'])
+})
+
+test('a save whose image cannot be made never throws: it counts as a failed save, the change stays owed and the next try keeps it, and three lose the disk', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const s = replSession(host(disk.open()))
+  await settle(s)
+  const os = osOf(s)
+  const system = os.system
+  all('echo the-only-copy > notes', b, s)
+  // The browser refuses the memory for the image.
+  const refuse = (): never => { throw new RangeError('Array buffer allocation failed') }
+  const refusing = () => { system.snapshot = refuse; system.snapshotBody = refuse }
+  const giving = () => { Reflect.deleteProperty(system, 'snapshot'); Reflect.deleteProperty(system, 'snapshotBody') }
+  refusing()
+  let saving: Promise<void> = Promise.resolve()
+  assert.doesNotThrow(() => { saving = os.save() })
+  await saving
+  assert.equal(os.unsavedChanges, true, 'still owed')
+  giving()
+  await os.save()
+  assert.equal(os.unsavedChanges, false)
+  const next = replSession(host(disk.open()))
+  await settle(next)
+  assert.deepEqual(all('cat notes', b, next), ['the-only-copy'])
+  refusing()
+  for (let i = 0; i < 3; i++) {
+    all(`echo ${i} > more`, b, s)
+    await os.save()
+  }
+  giving()
+  assert.match((await settle(s)).join('\n'), /disk: files are not kept between visits from here on: the browser refused to store them/)
 })

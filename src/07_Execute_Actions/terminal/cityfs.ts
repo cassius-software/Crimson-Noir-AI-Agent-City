@@ -9,14 +9,16 @@
  * key). Nothing here is a second way into the city: a reading is the console command's own lines, made when the
  * file is read, and a write runs the same command with the value written, through the same handler, the same checks
  * and the same tier locks, so `echo 18:30 > /sys/city/time` is `time 18:30` and is refused exactly when that is. A
- * file read or written earns no check (the progression counts commands typed, not files touched). It imports the
- * bridge as a type only and reaches the city through what commands.ts hands it.
+ * file read or written earns no check (the progression counts commands typed, not files touched), and each one counts
+ * against the same share of the city per turn as a console command the shell runs: past it, the file answers on a later
+ * turn, so a loop that writes a knob drives the city no faster than one that runs the command. It imports the bridge as
+ * a type only and reaches the city through what commands.ts hands it.
  * What breaks if it is removed? /proc/city and /sys/city are gone: the shell's programs can no longer read the city
  * (`grep`, `sort` and `head` over its readings) and a script can no longer set a knob by writing a file.
  */
 import type { SoaBridge, TerminalBridge } from './bridge.ts'
 import { OsError, dir, knob, text } from './os/index.ts'
-import type { SynthDir, SynthNode } from './os/index.ts'
+import type { Later, SynthDir, SynthFile, SynthNode } from './os/index.ts'
 
 /** What this file needs of the console (commands.ts builds it over its own command table). */
 export interface CityConsole {
@@ -26,6 +28,11 @@ export interface CityConsole {
   command(name: string, args: readonly string[]): readonly { readonly kind: string; readonly text: string }[]
   /** The tuning keys (`physics.<key>`, `shaders.<key>`) with their values while the operator tier is unlocked; null while it is locked or the tables do not read. */
   tuning(): readonly (readonly [string, string])[] | null
+  /**
+   * Runs `job` (one file read or written) now while this turn's share of the city lasts, else on a later turn: what it
+   * gives, or a Later that holds it (or its refusal) then.
+   */
+  paced<T>(job: () => T | Later<T>): T | Later<T>
 }
 
 /** The manual page for these files (`man city`): the console adds it to the layer's own pages. */
@@ -77,7 +84,9 @@ KNOBS (/sys/city, read and write)
 NOTES
     On the console alone (boot tty) there is no city: most readings
     then say so when read. A reading is made at the moment it is read;
-    two reads can differ.
+    two reads can differ. Each read or write counts as one of the 32
+    console commands the shell may run in one turn; past that, it is
+    answered on the next turn, so a loop goes no faster than that.
 
 EXAMPLE
     sort -n /proc/city/crowd | head -n 5
@@ -98,18 +107,26 @@ function said(c: CityConsole, errno: 'EIO' | 'EINVAL', name: string, args: reado
   return out
 }
 
+/** The same file, each read and each write of it counted against the turn's share of the city (CityConsole.paced). */
+function paced(c: CityConsole, f: SynthFile): SynthFile {
+  const write = f.write
+  const read = (): ReturnType<SynthFile['read']> => c.paced(() => f.read())
+  if (write === undefined) return { kind: 'file', mode: f.mode, read }
+  return { kind: 'file', mode: f.mode, read, write: (data, cred) => c.paced(() => write.call(f, data, cred)) }
+}
+
 /** A read-only file that reads as a console command prints. */
-const reading = (c: CityConsole, name: string, ...args: string[]): SynthNode => text(() => said(c, 'EIO', name, args))
+const reading = (c: CityConsole, name: string, ...args: string[]): SynthNode => paced(c, text(() => said(c, 'EIO', name, args)))
 
 /** A file that reads as the command's status and takes the command's argument when written. */
-const setting = (c: CityConsole, name: string): SynthNode => knob(
+const setting = (c: CityConsole, name: string): SynthNode => paced(c, knob(
   () => said(c, 'EIO', name, []),
   (value) => {
     const args = value.split(/\s+/).filter((w) => w !== '')
     if (args.length === 0) throw new OsError('EINVAL', `${name}: a value is needed`)
     said(c, 'EINVAL', name, args)
   },
-)
+))
 
 /** Why a reading is not there on this host: the console alone keeps no city. */
 function absent(b: TerminalBridge): never {
@@ -188,11 +205,11 @@ function topicDir(c: CityConsole, prefix: readonly string[]): SynthDir {
       if (more) return topicDir(c, [...prefix, name])
       if (!leaf) return null
       const path = [...prefix, name]
-      return text(() => {
+      return paced(c, text(() => {
         const hit = topics(c).find((t) => t.path.length === path.length && path.every((p, i) => t.path[i] === p))
         if (hit === undefined) throw new OsError('ENOENT')
         return `${hit.value}\n`
-      })
+      }))
     },
   }
 }
@@ -206,14 +223,14 @@ function tuningDir(c: CityConsole, table: 'physics' | 'shaders'): SynthDir {
     names: () => keys().sort(),
     child(key) {
       if (!keys().includes(key)) return null
-      return knob(
+      return paced(c, knob(
         () => {
           const hit = (c.tuning() ?? []).find(([k]) => k === head + key)
           if (hit === undefined) throw new OsError('EACCES', "locked; type 'operator unlock' first")
           return `${hit[1]}\n`
         },
         (value) => { said(c, 'EINVAL', 'set', [head + key, value]) },
-      )
+      ))
     },
   }
 }
@@ -248,18 +265,18 @@ export function cityFiles(c: CityConsole): { readonly proc: Readonly<Record<stri
     rooms: reading(c, 'rooms'),
     lanes: reading(c, 'lanes'),
     version: reading(c, 'version'),
-    crowd: text(() => {
+    crowd: paced(c, text(() => {
       const t = tables(c).crowd
       return rows(t.n, (i) => `${cell(t.x[i])} ${cell(t.z[i])}`)
-    }),
-    cars: text(() => {
+    })),
+    cars: paced(c, text(() => {
       const t = tables(c).cars
       return rows(t.n, (i) => `${cell(t.x[i])} ${cell(t.z[i])} ${cell(t.heading[i])} ${cell(t.speed[i])} ${String(t.mode[i] ?? 0)}`)
-    }),
-    frame: text(() => {
+    })),
+    frame: paced(c, text(() => {
       const f = tables(c).frame
       return `fps ${cell(f.fps)}\nms ${cell(f.ms)}\np95 ${cell(f.p95)}\n`
-    }),
+    })),
     topics: topicDir(c, []),
   })
   const knobs = dir({

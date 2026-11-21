@@ -19,7 +19,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import {
   FEATURE_IDS, HARNESS_NAMES, LOOK_BODY_ARGS, LOOK_BOTTOM_CUT_ARGS, LOOK_BUILD_ARGS, LOOK_CUT_ARGS, LOOK_FACE_ARGS, LOOK_GARMENT_ARGS, LOOK_INK_ARGS, LOOK_PRESET_ARGS, LOOK_SLOT_ARGS, LOOK_TATTOO_ARGS, LOOK_WEAVE_ARGS, PROVIDER_ARGS, SKILL_ARGS, actEventLines, commonPrefix, complete, continuationPrompt, formatHardware, formatRecording, formatStats,
-  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type Line,
+  isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type Line,
 } from './commands.ts'
 import {
   offlineBridge, ring0Stats, type ActEnd, type ActEvent, type ActsBridge, type AskResult, type GatedAsk, type GatedRun, type GatedSay, type HalDevice, type HardwareReport, type LookBridge, type LookChange,
@@ -3123,6 +3123,48 @@ test('redactForHistory: a typed key or token is kept as dots, every other line a
   assert.equal(redactForHistory(''), '')
   const b = fake()
   assert.deepEqual(texts(run('history', b, ['ask key ••••', 'net join wss://room.example ••••'])), ['    1  ask key ••••', '    2  net join wss://room.example ••••', '    3  history'])
+})
+
+test('redactForHistory takes a few milliseconds on a line of thousands of line breaks, and still dots a secret after them', () => {
+  for (const long of [`echo a${'\n'.repeat(8190)}echo b`, `echo a${'\n '.repeat(4090)}echo b`, '\n'.repeat(8192)]) {
+    const t0 = performance.now()
+    assert.equal(redactForHistory(long), long)
+    const ms = performance.now() - t0
+    assert.ok(ms < 50, `${ms.toFixed(1)} ms`)
+  }
+  assert.equal(redactForHistory(`echo a${'\n'.repeat(8000)}ask key sk-1`), `echo a${'\n'.repeat(8000)}ask key ••••`)
+  assert.equal(redactForHistory('true &&\n\n\n  ask key sk-2'), 'true &&\n\n\n  ask key ••••')
+  assert.equal(redactForHistory('if true; then\n\n ask key sk-3; fi'), 'if true; then\n\n ask key ••••')
+  assert.equal(redactForHistory('do\n\n\tsay key k'), 'do\n\n\tsay key ••••')
+  assert.equal(redactForHistory('true |\n \n ask connect openai sk-x'), 'true |\n \n ask connect openai ••••')
+})
+
+test('redactForHistory with whole keeps a line the console takes whole as it always did: only a secret at its start is dotted; runsWhole names those lines', () => {
+  for (const line of [
+    'ask sloane: which is safer; ask key rotation or a vault?', 'ask sloane: if you do say key points, keep them short', 'say sloane: then say key facts first',
+    'noir print(1); net join is not a noir word', 'run sloane: if (x) { ask key }', '  goal tidy up; then ask key holders',
+  ]) {
+    assert.equal(runsWhole(line), true, line)
+    assert.equal(redactForHistory(line, true), line, line)
+    assert.notEqual(redactForHistory(line), line, `without whole the forms later in the line still dot: ${line}`)
+  }
+  assert.equal(redactForHistory('ask key sk-1; echo x', true), 'ask key ••••')
+  assert.equal(redactForHistory('  ring0 unlock --elite open sesame', true), '  ring0 unlock --elite ••••')
+  assert.equal(redactForHistory('ask connect claude http://localhost:8089 sk-ant-x', true), 'ask connect claude http://localhost:8089 ••••')
+  for (const line of ['echo x; ask key sk', 'time', 'act ok', '"ask" key sk', 'X=1 ask key sk', 'asked key sk', '', '   ']) assert.equal(runsWhole(line), false, line)
+})
+
+test('scrubSecrets dots each secret where it first stands in an entry, with everything after it, in place; an empty secret dots nothing', () => {
+  const h = ["sh -c 'ask key sk-1'", 'echo plain', 'a TOK b sk-1 c', '']
+  scrubSecrets(h, ['sk-1', 'TOK', ''])
+  assert.deepEqual(h, ["sh -c 'ask key ••••", 'echo plain', 'a ••••', ''])
+  // Where two secrets overlap, the cut is at the one that starts first, so no part of either is left.
+  const g = ['x ab-cd y']
+  scrubSecrets(g, ['cd y', 'ab-c'])
+  assert.deepEqual(g, ['x ••••'])
+  const none = ['kept as typed']
+  scrubSecrets(none, [])
+  assert.deepEqual(none, ['kept as typed'])
 })
 
 test('say with ElevenLabs: the provider and the masked key are shown, and the chosen voice is marked whether it was named or pasted as its id', async () => {

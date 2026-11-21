@@ -22,8 +22,10 @@
  * and the host's disk store, gives it turns on a timer while it has work (a job in the background, a line that answers
  * later), shows what it prints in order with everything else, shows the shell's own prompt (the directory changes; a
  * line already printed keeps the prompt it was typed at), sends Ctrl+C and Ctrl+D to it (a touch screen gets a Stop
- * and an End input button while a job has the terminal), and saves its disk a moment after it changes and when the
- * page is hidden.
+ * and an End input button while a job has the terminal), dots in the history a secret the shell handed a console
+ * command, and saves its disk a moment after it changes, when the page is hidden, and before the page goes (a boot or
+ * a map here, a reload the host starts through Terminal.flushAll), waiting for the store's answer before it goes.
+ * While the windowed console is closed, what is printed is held instead of rendered and shown when it opens.
  * What breaks if it is removed? Operators lose the live Rapier3D / crowd / kernel readout, the quality,
  * clock, audio and hardware-pairing controls, and the operator tier's scripts, answers and harnesses.
  */
@@ -31,7 +33,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, use
 import { flushSync } from 'react-dom'
 import { BRAND } from '../../brand.ts'
 import { offlineBridge, type TerminalBridge } from './bridge.ts'
-import { actEventLines, commonPrefix, completeLine, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, type CommandResult, type DiskStore, type Line, type LiveFrame, type OsSession, type ReplSession } from './commands.ts'
+import { actEventLines, commonPrefix, completeLine, continuationPrompt, isToggleKey, motd, recallsHistory, redactForHistory, replSession, run, runsWhole, scrubSecrets, type CommandResult, type DiskStore, type Line, type LiveFrame, type OsSession, type ReplSession } from './commands.ts'
 
 const MAX_ROWS = 600
 const MAX_HISTORY = 200
@@ -49,8 +51,25 @@ const OS_TURN_MS = 4
 const OS_TURN_FULL_MS = 12
 /** The disk is saved this long after it last changed (and at once when the page is hidden). */
 const SAVE_MS = 1500
+/** A disk past a MiB waits SAVE_MS for each MiB in use (its image takes that much longer to make), this at most. */
+const SAVE_MAX_MS = 10_000
+const MIB = 1024 * 1024
+/**
+ * The longest the page waits for the disk to be saved before it goes anyway: as long as the store itself waits on the
+ * browser (consoleDisk.ts OPEN_MS, which this file may not import).
+ */
+const LEAVE_MS = 4000
+/** The most names Tab lists in its row; the rest are counted, so one Tab never builds a row of megabytes. */
+const TAB_LIST_MAX = 200
 /** The most random bytes the browser hands out in one call. */
 const ENTROPY_CHUNK = 65536
+/**
+ * The browser's own SHA-256, which seals a saved disk without holding the page up; undefined where the page has none
+ * (an insecure origin), and the layer then seals with its own.
+ */
+const SUBTLE: SubtleCrypto | undefined = globalThis.crypto?.subtle
+/** Each mounted console's save before the page goes (its `leave`), for Terminal.flushAll. */
+const leaving = new Set<() => Promise<void>>()
 
 /** A line to show; an entered line may carry the prompt it was typed at (else the prompt of the moment is shown). */
 interface Shown extends Line { ps?: string }
@@ -149,6 +168,11 @@ export interface TerminalHandle {
    * prompt or the history: the first walk's banner when the city opens (App.tsx, firstWalk.ts passedBanner).
    */
   print(lines: readonly string[]): void
+  /**
+   * Saves the console's disk now if it changed (or waits for a save on its way), for a host about to leave the page:
+   * resolves when the store has answered, or after LEAVE_MS at most.
+   */
+  flush(): Promise<void>
 }
 
 export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onMap, onLine, disk = null, ref }: {
@@ -211,13 +235,31 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   /** The operating layer's next turn, and its next save. */
   const osTimer = useRef<number | null>(null)
   const saveTimer = useRef<number | null>(null)
+  /**
+   * What was printed while the windowed console was closed, newest MAX_ROWS: shown when it opens, so a job printing to
+   * a hidden console costs the page no rendering.
+   */
+  const held = useRef<Shown[]>([])
 
   const append = useCallback((lines: readonly Shown[]) => {
     if (!lines.length) return
+    if (!openRef.current && !fullRef.current) {
+      const h = lines.length >= MAX_ROWS ? lines.slice(lines.length - MAX_ROWS) : held.current.concat(lines)
+      held.current = h.length > MAX_ROWS ? h.slice(h.length - MAX_ROWS) : h
+      return
+    }
     setRows((prev) => {
       const next = prev.concat(lines.map((l) => (l.ps === undefined ? { kind: l.kind, text: l.text, id: nextId.current++ } : { kind: l.kind, text: l.text, ps: l.ps, id: nextId.current++ })))
       return next.length > MAX_ROWS ? next.slice(next.length - MAX_ROWS) : next
     })
+  }, [])
+
+  /** `leave` as of the latest render, for the handle's `flush` and Terminal.flushAll (both set up once). */
+  const leaveRef = useRef<() => Promise<void>>(() => Promise.resolve())
+  useEffect(() => {
+    const flush = () => leaveRef.current()
+    leaving.add(flush)
+    return () => { leaving.delete(flush) }
   }, [])
 
   useImperativeHandle(ref, () => ({
@@ -240,6 +282,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     print(lines) {
       append(lines.map((text): Line => ({ kind: 'sys', text })))
     },
+    flush: () => leaveRef.current(),
   }), [append])
 
   useEffect(() => {
@@ -280,6 +323,12 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   // Open/close side effects: tell the host (it suspends game input), release pointer lock, move focus.
   useEffect(() => {
     openRef.current = open
+    // What was printed while it was closed is shown now: append no longer holds it back.
+    if (open && held.current.length) {
+      const h = held.current
+      held.current = []
+      append(h)
+    }
     if (reported.current !== open) {
       reported.current = open
       onOpenChangeRef.current(open)
@@ -291,7 +340,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     } else if (document.activeElement instanceof HTMLElement && rootRef.current?.contains(document.activeElement)) {
       document.activeElement.blur()
     }
-  }, [open])
+  }, [open, append])
 
   // Toggle key, Esc, and keyboard ownership while open. Window capture runs before any game listener; keyup
   // is left alone on purpose, so a key held when the console opened is still released in the game.
@@ -395,18 +444,51 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       for (let at = 0; at < bytes.length; at += ENTROPY_CHUNK) crypto.getRandomValues(bytes.subarray(at, Math.min(bytes.length, at + ENTROPY_CHUNK)) as Uint8Array<ArrayBuffer>)
     },
     disk: diskRef.current,
+    ...(SUBTLE ? { digest: (bytes: Uint8Array) => SUBTLE.digest('SHA-256', bytes as Uint8Array<ArrayBuffer>).then((d) => new Uint8Array(d)) } : {}),
   }))
 
-  /** Saves the layer's disk if it changed; `soon` waits a moment for more changes first. */
+  /**
+   * Saves the layer's disk. With `soon`, if it changed, after a moment for more changes: SAVE_MS, or for a disk past a
+   * MiB, SAVE_MS for each MiB in use, SAVE_MAX_MS at most. Without (the page hidden or going), now and sealed at once,
+   * and a save still waiting for its seal is taken over (OsSession.save), so it is asked even when nothing is new.
+   */
   const saveDisk = (os: OsSession, soon: boolean) => {
     if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
     saveTimer.current = null
+    if (!soon) { void os.save({ now: true }); return }
     if (!os.unsavedChanges) return
-    if (!soon) { void os.save(); return }
+    const mib = os.system.diskUsed / MIB
     saveTimer.current = window.setTimeout(() => {
       saveTimer.current = null
       void os.save()
-    }, SAVE_MS)
+    }, mib < 1 ? SAVE_MS : Math.min(SAVE_MAX_MS, SAVE_MS * mib))
+  }
+
+  /**
+   * Saves the disk before the page goes (a boot, a map, the host's own way out). A save the page's going cuts short is
+   * lost, so the save timer is dropped, the disk is saved now and sealed at once (a save already on its way is waited
+   * for), and this resolves when the store has answered, or after LEAVE_MS, so a store that never answers cannot keep
+   * the page from going.
+   */
+  const leave = (): Promise<void> => {
+    if (saveTimer.current !== null) window.clearTimeout(saveTimer.current)
+    saveTimer.current = null
+    const os = session.current?.os
+    if (!os) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      const gone = window.setTimeout(resolve, LEAVE_MS)
+      const done = () => {
+        window.clearTimeout(gone)
+        resolve()
+      }
+      os.save({ now: true }).then(done, done)
+    })
+  }
+
+  /** Dots in the history each secret the shell handed a console command since last asked (commands.ts scrubSecrets). */
+  const scrubHistory = () => {
+    const secrets = session.current?.os?.takeSecrets() ?? []
+    if (secrets.length) scrubSecrets(history.current, secrets)
   }
 
   /** Shows what the operating layer printed since last asked, takes its prompt, and books its next turn. */
@@ -416,6 +498,8 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     // What the layer waits for from outside (the saved disk, a city command's later lines) gets a turn as it arrives.
     os.wake ??= () => { if (mounted.current) turn() }
     for (let r = os.next(); r !== null; r = os.next()) applyRef.current(r)
+    // A secret a line ran since (a job, a loop, a command that waited for its turn) is dotted as it is handed over.
+    scrubHistory()
     setPs1(os.prompt)
     setReading(os.system.capturing)
     if (os.unsavedChanges && saveTimer.current === null) saveDisk(os, true)
@@ -457,9 +541,11 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
 
   /** Shows one result: its lines (after `first`, the entered line's own row), then whatever else it asks of the console. */
   const apply = (r: CommandResult, first: readonly Shown[] = []) => {
-    // Lines under a live view would be redrawn over: the view ends first, as it does when a line is entered.
-    if (first.length === 0 && (r.lines.length > 0 || r.live || r.clear)) stopLive()
+    // A result that draws live or clears the screen ends a live view first, as an entered line does. Other lines (a
+    // job's output, the layer's own notes) are added above it: the frame is drawn in its own block below the rows.
+    if (first.length === 0 && (r.live || r.clear)) stopLive()
     if (r.clear) {
+      held.current = []
       setRows([])
       append(r.lines)
     } else append([...first, ...(r.live ? [] : r.lines)])
@@ -487,15 +573,21 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
       r.pending?.then((lines) => { if (mounted.current) append(lines) }, () => {})
     }
     if (r.close && !fullscreen) setOpen(false)
-    if (r.boot) onBoot?.(r.boot)
-    if (r.map) onMap?.(r.map)
+    if (r.boot || r.map) {
+      // Leaving the page: the disk's last change is saved, and answered, first.
+      void leave().then(() => {
+        if (r.boot) onBoot?.(r.boot)
+        if (r.map) onMap?.(r.map)
+      })
+    }
   }
 
   const submit = (raw: string) => {
     // A line typed to something already running (a program's input, the rest of a here-document) is kept as typed,
     // since its blanks are part of it; a command loses the blanks at its ends.
     const system = session.current?.os?.system
-    const line = system?.capturing === true ? raw : raw.trim()
+    const capturing = system?.capturing === true
+    const line = capturing ? raw : raw.trim()
     // A program's input is the program's (a name, a note, maybe a secret): it never enters the history.
     const feeding = system?.feeding === true
     if (!line && liveFrame.current) return // a blank Enter does not end a live view
@@ -505,12 +597,15 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     // Runs synchronously inside the keydown: `hal pair` needs the user activation to open a device picker.
     const r = run(line, bridge ?? OFFLINE, history.current, sessionOf())
     const h = history.current
-    // A key or a token typed on the line is kept as dots, never as typed.
-    const kept = feeding ? '' : redactForHistory(line)
+    // A key or a token typed on the line is kept as dots, never as typed; in a line the console takes whole
+    // (runsWhole), only at its start, since nothing later in it runs as a command.
+    const kept = feeding ? '' : redactForHistory(line, !capturing && runsWhole(line))
     if (kept && h[h.length - 1] !== kept) {
       h.push(kept)
       if (h.length > MAX_HISTORY) h.splice(0, h.length - MAX_HISTORY)
     }
+    // One the shell was handed in a way the line's own dotting cannot see (quoted, after `sh -c`) is dotted now.
+    scrubHistory()
     histPos.current = h.length
     draft.current = ''
     setLine('')
@@ -523,6 +618,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
   useEffect(() => {
     submitRef.current = submit
     applyRef.current = apply
+    leaveRef.current = leave
   })
 
   // The operating layer's disk is saved when the page is hidden or left (a moment after each change otherwise), and
@@ -565,10 +661,16 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         interrupt()
       }
     } else if (chord && (key === 'd' || key === 'D')) {
-      // On an empty line, the end of input for whatever reads it; the browser's own use of the chord stays off the console.
+      // On an empty line, the end of input for whatever reads it; on a line with text, the character after the caret
+      // (or the selection) is deleted, as readline does. Either way the browser's own use of the chord stays off the
+      // console.
       if (session.current?.os) {
         e.preventDefault()
         if (el.value === '') endInput()
+        else {
+          const a = el.selectionStart ?? 0, b = el.selectionEnd ?? a
+          setLine(el.value.slice(0, a) + el.value.slice(b > a ? b : a + 1), a)
+        }
       }
     } else if (chord && (key === 'l' || key === 'L')) {
       e.preventDefault()
@@ -598,7 +700,9 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
         if (common.length > el.value.length) setLine(common)
         else {
           stick.current = true
-          append([{ kind: 'cmd', text: el.value, ps: promptRef.current }, { kind: 'out', text: options.map((o) => o.slice(o.lastIndexOf(' ') + 1)).join('  ') }])
+          const names = options.slice(0, TAB_LIST_MAX).map((o) => o.slice(o.lastIndexOf(' ') + 1))
+          if (options.length > TAB_LIST_MAX) names.push(`... and ${options.length - TAB_LIST_MAX} more`)
+          append([{ kind: 'cmd', text: el.value, ps: promptRef.current }, { kind: 'out', text: names.join('  ') }])
         }
       }
     } else if (key === 'PageUp' || key === 'PageDown') {
@@ -712,3 +816,10 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     </div>
   )
 }
+
+/**
+ * Saves the disk of every mounted console, for a host about to reload the page (App.tsx reboot, which 'Back to the
+ * city' and the cards' way to the console call straight from a click): resolves when each store has answered, or after
+ * LEAVE_MS at most. A save the page's going cuts short is lost, so the page waits for it.
+ */
+Terminal.flushAll = (): Promise<void> => Promise.all([...leaving].map((flush) => flush())).then(() => {})
