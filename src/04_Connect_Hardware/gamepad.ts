@@ -59,13 +59,15 @@ export const PAD_TUNING = {
  * and looks while that side's shoulder (L1 or R1) is held; its trigger is the pedal on that side (the left hand's
  * throttle is the d-pad's up, the right hand's brake the west face button); the centre buttons are shared (select is
  * the run latch, start a ping); that stick's click is the mute. The left hand keeps the d-pad (down enters a car, left
- * and right move the clock) and has no reset or handbrake; the right hand keeps the face buttons (south enters, north
- * resets, east is the handbrake) and has no clock keys.
+ * and right move the clock, up talks to the person near you) and has no reset or handbrake; the right hand keeps the
+ * face buttons (south enters, north resets, east is the handbrake, west talks) and has no clock keys. Up and west are
+ * that hand's pedal only at the wheel, where the engine never takes a talk; on foot they are the talk button. A left
+ * hand on a pad read without its d-pad has no talk button: the HUD's chip and a spoken greeting still start one.
  */
 export type PadHand = 'both' | 'left' | 'right'
 
-/** Edge bits returned by PadMapper.read(). */
-export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16, mute: 32 } as const
+/** Edge bits returned by PadMapper.read(). `talk` is a word with the person near you (07_Execute_Actions/talk.ts). */
+export const PAD_EDGE = { interact: 1, reset: 2, timeForward: 4, timeBack: 8, ping: 16, mute: 32, talk: 64 } as const
 
 /**
  * Where a pad's `paddles` bits (web-hardware.d.ts GamepadLike; a DualSense Edge's Fn keys and back paddles) sit in
@@ -470,6 +472,8 @@ export class PadMapper {
         if (rising & ((1 << PAD.l3) | PADDLE_LEFT)) l3 = true
         // The right stick's click: the microphone's mute, a thumb that never leaves the stick (L3 is the run latch).
         if (rising & (1 << PAD.r3)) edges |= PAD_EDGE.mute
+        // The west face button: a word with the person near you, a thumb's roll from south (which enters a car).
+        if (rising & (1 << PAD.west)) edges |= PAD_EDGE.talk
         if (bits & (1 << PAD.east)) out.handbrake = true
       } else {
         // One hand: the centre buttons are shared, the rest sits on that hand's side (PadHand).
@@ -481,6 +485,8 @@ export class PadMapper {
         if (rising & (1 << PAD.start)) edges |= PAD_EDGE.ping
         if (rising & (1 << PAD.select)) l3 = true
         if (rising & (1 << (hand === 'left' ? PAD.l3 : PAD.r3))) edges |= PAD_EDGE.mute
+        // Talk: the d-pad's up for the left hand, west for the right (that hand's pedal only at the wheel).
+        if (rising & (1 << (hand === 'left' ? PAD.up : PAD.west))) edges |= PAD_EDGE.talk
         if (hand === 'right' && bits & (1 << PAD.east)) out.handbrake = true
       }
       if (bits !== 0 || stick > 0 || look > 0 || throttle > 0 || brake > 0) {

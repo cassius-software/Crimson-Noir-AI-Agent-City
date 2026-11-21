@@ -45,7 +45,7 @@ test('V and the right stick\'s click are the mute (M is rain mode, L3 the run la
   assert.match(INPUT, /^\s+KeyV: 'mute',$/m)
   assert.match(INPUT, /^\s+KeyM: 'matrix',$/m, 'M stays rain mode')
   assert.match(INPUT, /if \(edges & PAD_EDGE\.mute\) this\.queued\.add\('mute'\)/)
-  assert.match(PAD, /mute: 32 \} as const/)
+  assert.match(PAD, /mute: 32, talk: 64 \} as const/, 'the mute\'s bit, and talk\'s after it (07_Execute_Actions/talk.ts)')
   assert.match(PAD, /if \(rising & \(1 << PAD\.r3\)\) edges \|= PAD_EDGE\.mute/)
   assert.match(PAD, /if \(rising & \(\(1 << PAD\.l3\) \| PADDLE_LEFT\)\) l3 = true/, 'L3 stays the run latch')
   assert.match(ENGINE, /^\s+onMute: \(\(\) => void\) \| null = null$/m)

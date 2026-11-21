@@ -4,7 +4,8 @@
 /**
  * Why does this file exist? It proves the standard-gamepad mapping the contract promises: left stick
  * move/steer (steer > 0 = left), right stick look, right trigger throttle, left trigger brake, south button
- * interact, north reset, east handbrake, right shoulder ping, left-stick click run latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
+ * interact, north reset, east handbrake, west talk (the d-pad's up for a left hand), right shoulder ping, left-stick click run
+ * latch, d-pad left/right clock — with dead zones, edge detection, multi-pad merge,
  * pads without the standard mapping read by position (the face button that wakes one doing nothing else; left stick
  * and face buttons always; the Linux kernel's axis
  * order in full once its triggers have sat at rest, and dropped for good when a stick and a hat stand there instead (the
@@ -120,7 +121,9 @@ test('edges fire once per press: A interact, Y reset, right shoulder ping, d-pad
   assert.equal(m.read([pad({ pressed: [PAD.r1, PAD.south] })], a), PAD_EDGE.ping | PAD_EDGE.interact, 'pressed again, with another edge')
   assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), PAD_EDGE.mute, 'right stick click: the microphone')
   assert.equal(m.read([pad({ pressed: [PAD.r3] })], a), 0, 'held: no repeat')
-  assert.equal(m.read([pad({ pressed: [PAD.west, PAD.l1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), PAD_EDGE.talk, 'west face button: talk to the person near you')
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), 0, 'held: no repeat')
+  assert.equal(m.read([pad({ pressed: [PAD.l1, PAD.start, PAD.select] })], a), 0, 'unmapped buttons')
 })
 
 test('L3 latches run while the left stick is deflected; centring or another click clears it', () => {
@@ -613,6 +616,8 @@ test('one hand (PadHand): that stick moves, and looks while its shoulder is held
   assert.equal(m.read([pad({ pressed: [PAD.south, PAD.north, PAD.start, PAD.r3] })], a), PAD_EDGE.interact | PAD_EDGE.reset | PAD_EDGE.ping | PAD_EDGE.mute)
   m.read([], a)
   assert.equal(m.read([pad({ pressed: [PAD.down, PAD.left, PAD.right, PAD.l3, PAD.l1] })], a), 0, 'the left side is silent')
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.up] })], a), 0, 'the d-pad\'s up too: it is the left hand\'s talk, not the right\'s')
 
   // A pad without the standard mapping: one hand only where its layout carries that hand's stick and buttons.
   const fourAxis = (axes: number[], pressed: number[] = []) => pad({ id: 'USB Gamepad', index: 2, mapping: '', axes, pressed })
@@ -652,4 +657,57 @@ test('one hand (PadHand): that stick moves, and looks while its shoulder is held
   assert.equal(a.run, false, 'both hands: the stick home ends it at once')
   m.read([pad({ axes: [0.6, 0, 0, -0.6] })], a)
   assert.ok(a.moveX > 0.5 && a.lookY > 0, 'two sticks again')
+})
+
+test('talk (PAD_EDGE.talk): west with both hands and with the right hand, the d-pad\'s up with the left; once per press, never the other side\'s button', () => {
+  const m = new PadMapper(), a = createAnalog()
+  assert.equal(PAD_EDGE.talk, 64, 'a bit of its own, above the mute')
+  assert.equal(Object.values(PAD_EDGE).filter((b) => b === PAD_EDGE.talk).length, 1)
+  // Both hands: west talks, up is nobody's.
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), PAD_EDGE.talk)
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), 0, 'held: no repeat')
+  m.read([pad()], a)
+  assert.equal(m.read([pad({ pressed: [PAD.up] })], a), 0, 'both hands: the d-pad\'s up is unmapped')
+  assert.equal(m.read([pad({ pressed: [PAD.up, PAD.west, PAD.south] })], a), PAD_EDGE.talk | PAD_EDGE.interact, 'west beside a door press')
+  assert.equal(a.brake, 0, 'both hands: west brakes nothing')
+  m.read([], a)
+
+  // The right hand: west talks (and is its brake, which only the wheel reads); up stays silent.
+  m.hand = 'right'
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), PAD_EDGE.talk)
+  assert.equal(a.brake, 1, 'the same button is the right hand\'s brake at the wheel')
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), 0, 'held: no repeat')
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.up] })], a), 0, 'the right hand has no d-pad')
+  m.read([], a)
+
+  // The left hand: the d-pad's up talks (and is its throttle at the wheel); west is the right side's, so silent.
+  m.hand = 'left'
+  assert.equal(m.read([pad({ pressed: [PAD.up] })], a), PAD_EDGE.talk)
+  assert.equal(a.throttle, 1, 'the same button is the left hand\'s throttle at the wheel')
+  assert.equal(m.read([pad({ pressed: [PAD.up] })], a), 0, 'held: no repeat')
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.west] })], a), 0, 'west is the right side\'s')
+  m.read([], a)
+  // The left hand's other rules hold beside it: down still enters, left and right still move the clock.
+  assert.equal(m.read([pad({ pressed: [PAD.up, PAD.down, PAD.left] })], a), PAD_EDGE.talk | PAD_EDGE.interact | PAD_EDGE.timeBack)
+  m.read([], a)
+  assert.equal(m.read([pad({ pressed: [PAD.south, PAD.north, PAD.r1, PAD.r3, PAD.east, PAD.west] })], a), 0, 'the right side is still silent')
+})
+
+test('talk on a pad without the standard mapping: west is one of the six buttons always copied, so both hands talk with it; a left hand reads up only from a hat', () => {
+  const m = mapper(), a = createAnalog()
+  const generic = (pressed: number[] = []) => pad({ id: 'USB Gamepad', mapping: '', pressed })
+  m.read([generic()], a)
+  assert.equal(m.read([generic([PAD.west])], a) & PAD_EDGE.talk, PAD_EDGE.talk, 'west, read by position')
+  m.read([generic()], a)
+  m.hand = 'left'
+  assert.equal(m.read([generic([PAD.west])], a) & PAD_EDGE.talk, 0, 'a left hand on a pad with no d-pad copied has no talk button')
+  // In the kernel's order with a hat on axes 6 and 7, the hat's up is the left hand's talk.
+  const n = mapper(), b = createAnalog()
+  n.hand = 'left'
+  const kernel = (up = false) => pad({ id: '45e-28e-Generic X-Box pad', index: 1, mapping: '', axes: [0, 0, -1, 0, 0, -1, 0, up ? -1 : 0] })
+  for (let i = 0; i < readsFor(GENERIC_MS.rest); i++) n.read([kernel()], b)
+  assert.equal(n.generic.layoutOf(1), 'evdev')
+  assert.equal(n.read([kernel(true)], b) & PAD_EDGE.talk, PAD_EDGE.talk, 'the hat\'s up talks')
 })

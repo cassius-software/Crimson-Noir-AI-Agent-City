@@ -4,7 +4,7 @@
 /**
  * Why does this file exist? It proves the control glyphs match the hardware in the player's hands: the
  * exact keyboard keys, the position-true face buttons of each controller layout (on the 'bayx' layout the
- * south button is B), the touch control labels, the device → family choice, and the hint lists the HUD and
+ * south button is B and the west one, talk's, is Y), the touch control labels, the device → family choice, and the hint lists the HUD and
  * the Concierge render — with no platform names, logos or button symbols: letters, numbers, positions and
  * arrows only.
  * What breaks if it is removed? A hint telling a controller player to press a key, the wrong face button on a
@@ -16,36 +16,37 @@ import {
   controlHints, familyOf, glyph, glyphKind, isPadFamily, modeGlyph, spokenGlyph, type ControlAction, type GlyphFamily,
 } from './glyphs.ts'
 
-const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping', 'mic']
+const ACTIONS: readonly ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping', 'mic', 'talk']
 const FAMILIES: readonly GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
 const row = (family: GlyphFamily) => Object.fromEntries(ACTIONS.map((a) => [a, glyph(a, family)]))
 
 test('keyboard glyphs are the keys the Input class reads', () => {
   assert.deepEqual(row('keyboard'), {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
-    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q', mic: 'V',
+    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q', mic: 'V', talk: 'T',
   })
 })
 
 test('numbered layout: face buttons by position (no button symbols), shoulders and stick clicks by number', () => {
   assert.deepEqual(row('numbered'), {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1', mic: 'R3',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'R1', mic: 'R3', talk: 'West',
   })
 })
 
-test('abxy layout: A south, B east, Y north', () => {
+test('abxy layout: A south, B east, X west, Y north', () => {
   assert.deepEqual(row('abxy'), {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: '~', hud: 'H', ghost: 'G', ping: 'RB', mic: 'RS', talk: 'X',
   })
 })
 
-test('bayx layout is position-true: south B, east A, north X', () => {
+test('bayx layout is position-true: south B, east A, west Y, north X', () => {
   const n = row('bayx')
   assert.equal(n.interact, 'B')
   assert.equal(n.handbrake, 'A')
   assert.equal(n.reset, 'X')
+  assert.equal(n.talk, 'Y', 'the west button carries Y on this layout')
   assert.equal(n.throttle, 'ZR')
   assert.equal(n.brake, 'ZL')
   assert.equal(n.ping, 'R', 'the right shoulder, by this layout\'s name')
@@ -61,6 +62,7 @@ test('generic pads are named by button position', () => {
   assert.equal(g.move, 'L')
   assert.equal(g.look, 'R')
   assert.equal(g.ping, 'RB')
+  assert.equal(g.talk, 'West')
 })
 
 test('touch glyphs are the on-screen control labels; the keyboard\'s one-key actions are in the Menu', () => {
@@ -77,6 +79,7 @@ test('touch glyphs are the on-screen control labels; the keyboard\'s one-key act
   assert.equal(t.console, 'Menu')
   assert.equal(t.hud, 'Menu')
   assert.equal(t.ghost, 'Menu')
+  assert.equal(t.talk, '', 'touch talks through the HUD\'s chip, which carries its own words')
   // In the car the door button reads Exit car, so the car's toast names that button (engine.ts).
   assert.equal(modeGlyph('interact', 'touch', true), 'Exit car')
   assert.equal(modeGlyph('interact', 'touch', false), 'Enter car')
@@ -132,6 +135,15 @@ test('glyphKind: keycaps, round face buttons, sticks, pills', () => {
   for (const a of ACTIONS) assert.equal(glyphKind(a, 'touch'), 'pill')
 })
 
+test('talk: T on the keyboard and the west face button on a pad, its letter drawn as a round button; nothing on touch', () => {
+  // The west face button is the one gamepad.ts reads for PAD_EDGE.talk: X where A is south, Y where B is south.
+  assert.deepEqual(FAMILIES.map((f) => glyph('talk', f)), ['T', 'X', 'Y', 'West', 'West', ''])
+  assert.deepEqual(FAMILIES.map((f) => glyphKind('talk', f)), ['key', 'button', 'button', 'pill', 'pill', 'pill'])
+  assert.equal(glyph('talk', 'abxy'), glyph('reset', 'bayx'), 'the same letter, at the other layout\'s other position')
+  assert.equal(modeGlyph('talk', 'keyboard', true), 'T', 'no override at the wheel (the engine ignores talk there)')
+  assert.equal(spokenGlyph(glyph('talk', 'numbered')), 'West')
+})
+
 test('spokenGlyph reads the arrows and symbols as words for screen readers', () => {
   assert.equal(spokenGlyph('South'), 'South')
   assert.equal(spokenGlyph('D-pad ◀ ▶'), 'D-pad left right')
@@ -156,8 +168,22 @@ test('Concierge tips: three per family and mode, glyph-aware', () => {
 
 test('all controls: complete per family, unbound ones skipped', () => {
   assert.deepEqual(summary('keyboard', false, 'all'), [
-    'W A S D=Walk', 'Mouse=Look around', 'Shift=Run', 'E=Enter a car', 'Q=Ping a spot or a person', 'V=Microphone on · mute', '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
+    'W A S D=Walk', 'Mouse=Look around', 'Shift=Run', 'E=Enter a car', 'Q=Ping a spot or a person', 'T=Talk to someone near', 'V=Microphone on · mute',
+    '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
+  assert.deepEqual(summary('abxy', false, 'all'), [
+    'L=Walk', 'R=Look around', 'LS=Run', 'A=Enter a car', 'RB=Ping a spot or a person', 'X=Talk to someone near', 'RS=Microphone on · mute',
+    'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
+  ])
+  assert.deepEqual(summary('numbered', false, 'all'), [
+    'L=Walk', 'R=Look around', 'L3=Run', 'South=Enter a car', 'R1=Ping a spot or a person', 'West=Talk to someone near', 'R3=Microphone on · mute',
+    'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
+  ])
+  for (const f of ['bayx', 'generic'] as const) {
+    assert.ok(summary(f, false, 'all').includes(`${glyph('talk', f)}=Talk to someone near`), `${f}: the pad's foot list names talk`)
+  }
+  // At the wheel nobody is talked to (the engine takes no talk while driving): no family's driving list has it.
+  for (const f of FAMILIES) assert.ok(!controlHints(f, true, 'all').some((h) => h.action === 'talk'), `${f}: not at the wheel`)
   assert.deepEqual(summary('keyboard', true, 'all'), [
     'A D=Steer', 'W=Accelerate', 'S=Brake · reverse', 'Space=Handbrake', 'R=Right the car', 'E=Leave the car', 'Q=Ping a spot or a person',
     'Mouse=Look around', 'V=Microphone on · mute', '[ ]=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
@@ -167,6 +193,7 @@ test('all controls: complete per family, unbound ones skipped', () => {
     'R=Look around', 'R3=Microphone on · mute', 'D-pad ◀ ▶=Clock −1 h / +1 h', '~=Ring-0 console', 'H=Hide the HUD', 'G=Ghost view',
   ])
   // Touch's Menu holds five keyboard rows: one row says so, or the list would push a landscape phone's card off the top.
+  // Talk is unbound on touch (its chip carries the words), so the touch list is unchanged by it.
   assert.deepEqual(summary('touch', false, 'all'), [
     'Stick=Walk', 'Drag=Look around', 'Run=Run', 'Enter car=Enter a car', 'Ping=Ping a spot or a person', 'Menu=Microphone, clock, console, HUD, ghost view',
   ])

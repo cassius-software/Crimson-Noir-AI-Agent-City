@@ -157,7 +157,7 @@ export const ACTIVITY = { routine: 0, waiting: 1, crossing: 2, steppingBack: 3, 
 const PATH_STEP = 0.25
 
 /** A 32-bit integer mix (lowbias32): the same index always gives the same skills. */
-function mix(x: number): number {
+export function mix(x: number): number {
   x = Math.imul(x ^ (x >>> 16), 0x7feb352d)
   x = Math.imul(x ^ (x >>> 15), 0x846ca68b)
   return (x ^ (x >>> 16)) >>> 0

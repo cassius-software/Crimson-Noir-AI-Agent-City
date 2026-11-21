@@ -5,12 +5,14 @@
  * Why does this file exist? It is the evidence for what Sloane takes of spoken words (heard.ts): the whole line while
  * a question or the goal prompt is open, else only a line that names Sloane first (or "Sloan"), with the name taken
  * off; the room's talk, a possessive, a name alone and nothing at all are null; a long line is cut to the field's
- * length; nothing is taken while she speaks or just after.
+ * length; nothing is taken while she speaks or just after. And whom a line is for (addressesSloane): a line that names
+ * her first, her name alone included, is hers even while a conversation with a person in the street is open; the
+ * rest of an open conversation's words are the partner's.
  * What breaks if it is removed? Every word near the microphone could become a goal.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { HEARD_MAX, HEARD_QUIET_MS, heardGoal, heardNow } from './heard.ts'
+import { HEARD_MAX, HEARD_QUIET_MS, addressesSloane, heardGoal, heardNow } from './heard.ts'
 
 test('a line that names Sloane first is a goal without the name, open or not; small words before the name and the pause after it are allowed', () => {
   assert.equal(heardGoal('Sloane, make it night', false), 'make it night')
@@ -47,4 +49,26 @@ test('nothing heard is the visitor\'s while Sloane speaks or within the quiet ta
   assert.equal(heardNow(false, 10_000, 10_000 - HEARD_QUIET_MS + 1), false, 'just after her line')
   assert.equal(heardNow(false, 10_000, 10_000 - HEARD_QUIET_MS), true, 'the tail has passed')
   assert.equal(heardNow(false, 10_000, 0), true, 'she has not spoken')
+})
+
+test('addressesSloane: a line that names her first is hers, her name alone included; a possessive, a longer word and plain talk are not', () => {
+  for (const t of ['Sloane', 'Sloane, make it night', 'hey sloan', 'ok Sloane:', 'Sloane?', '  Hey   Sloane   take me home  ', 'please sloane - fewer people']) {
+    assert.equal(addressesSloane(t), true, t)
+  }
+  for (const t of ["Sloane's car", 'Sloane’s car is outside', 'hello there', 'Sloanes', 'tell Sloane I said hi', 'hi', '', '   ']) {
+    assert.equal(addressesSloane(t), false, t)
+  }
+  assert.equal(addressesSloane(undefined as unknown as string), false, 'not a string: nobody\'s')
+})
+
+test('addressesSloane agrees with heardGoal: every line heardGoal reads as an address is hers, and her name alone, which heardGoal takes nothing from, is hers too', () => {
+  for (const t of ['Sloane, make it night', 'sloane make it night', 'Hey Sloane, take me to the harbour.', 'ok so sloane: fewer people please', 'Sloan, make it night', 'hey sloan take me home']) {
+    assert.notEqual(heardGoal(t, false), null, t)
+    assert.equal(addressesSloane(t), true, t)
+  }
+  for (const t of ['is there a problem with the network', "Sloane's going to love this", 'Sloanes']) {
+    assert.equal(heardGoal(t, false), null, t)
+    assert.equal(addressesSloane(t), false, t)
+  }
+  assert.deepEqual([heardGoal('Sloane', false), addressesSloane('Sloane')], [null, true], 'the name alone asks nothing of her, but it is said to her')
 })
