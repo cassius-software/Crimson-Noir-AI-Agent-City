@@ -2492,7 +2492,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   lamp lights and painted pools round each view, the dissolve, a surveyed region with no window and the city
   unchanged), `LampIndex` against `nearestLamps` in `cityLights.test.ts` (3, far foci among them), every tile of a
   kind building one shader with its normal turned in `shadowShaders.test.ts`, and `propReach` in `governor.test.ts`.
-  `dist/index.html` grows by 7,945 bytes, from 12,352,068 to 12,360,013; the limit in `tools/verify/page_dist.mjs`
+  `dist/index.html` grows by 7,948 bytes, from 12,369,342 to 12,377,290; the limit in `tools/verify/page_dist.mjs`
   is unchanged. Boot builds about 46,000 more props: in Node here the metropolis's world took about 25 to 95 ms longer
   to build and the pole index 40 ms. Not there yet: the painted night light is still the window's, so beyond it the
   ground under the lamps has no painted pool (Lite, which lights no real lamp, shows glowing lamp heads over unpainted
