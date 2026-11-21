@@ -101,10 +101,12 @@ function entryOf(core: Core, x: unknown, where: string): BindingEntry {
     case 'sampler':
       return Object.freeze({ binding, kind, stages, filtering: flag(e.filtering, where, 'filtering', true) })
     case 'storage-image': {
-      if (e.format === undefined) fail('invalid', `${where}: a storage-image entry names its format`)
-      if (!isFormat(e.format)) fail('invalid', `${where}: ${say(e.format)} is not a format`)
-      if (!FORMATS[e.format].storage) fail('invalid', `${where}: ${e.format} cannot be a storage image`)
-      return Object.freeze({ binding, kind, stages, format: e.format })
+      // Read once: a getter could hand the checks one format and the entry another.
+      const format = e.format
+      if (format === undefined) fail('invalid', `${where}: a storage-image entry names its format`)
+      if (!isFormat(format)) fail('invalid', `${where}: ${say(format)} is not a format`)
+      if (!FORMATS[format].storage) fail('invalid', `${where}: ${format} cannot be a storage image`)
+      return Object.freeze({ binding, kind, stages, format })
     }
   }
 }

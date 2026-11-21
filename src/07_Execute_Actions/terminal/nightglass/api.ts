@@ -143,7 +143,11 @@ export interface InstanceInfo {
    * being refused.
    */
   readonly checks?: boolean
-  /** Called with each Fault before it is thrown. */
+  /**
+   * Called with each Fault before it is thrown, except a call refused because another was running (made from a
+   * getter of that call's arguments): its Fault is thrown at once and reported once the running call has let go.
+   * What the callback raises replaces the Fault, unless the app's own code caught that Fault inside the running call.
+   */
   readonly report?: (fault: Fault) => void
 }
 

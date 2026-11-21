@@ -70,7 +70,7 @@ import type { Format } from './formats.ts'
 import type { MemoryImpl } from './memory.ts'
 import { ComputePipelineImpl, RenderPipelineImpl } from './pipelines.ts'
 import { BufferImpl, ImageImpl, ViewImpl } from './resources.ts'
-import { Base, choice, every, finite, flag, guard, labelOf, listOf, names, own, record, span, whole, word } from './sync.ts'
+import { Base, choice, every, finite, flag, guard, isGenuine, labelOf, listOf, names, own, record, span, whole, word } from './sync.ts'
 import type { Core } from './sync.ts'
 import { say } from './verify.ts'
 
@@ -510,8 +510,9 @@ export class CommandListImpl extends Base implements CommandList {
       if (this.pass !== null) fail('state', `${where}: a pass is already open; end it first`)
       this.able('graphics', where)
       const o = record(info, ['colors', 'depth', 'label'], where, 'the pass info')
-      const list = listOf(o.colors, where, 'the colour attachments')
-      if (list.length > this.core.limits.colorAttachments) fail('limit', `${where}: ${list.length} colour attachments is more than the device allows, ${this.core.limits.colorAttachments}`)
+      const list = listOf(o.colors, where, 'the colour attachments', (n) => {
+        if (n > this.core.limits.colorAttachments) fail('limit', `${where}: ${n} colour attachments is more than the device allows, ${this.core.limits.colorAttachments}`)
+      })
       const claimed: ViewImpl[] = []
       /** The first attachment's size and sample count, which every other one must share. */
       const fit: { first: ViewImpl | null } = { first: null }
@@ -609,6 +610,8 @@ export class CommandListImpl extends Base implements CommandList {
 
   bindPipeline(pipeline: RenderPipeline | ComputePipeline): void {
     this.rec('bindPipeline', (where) => {
+      // The brand first, so a Proxy's getPrototypeOf trap never runs (see own() in sync.ts).
+      if (!isGenuine(pipeline)) fail('invalid', `${where}: the pipeline is a RenderPipeline or a ComputePipeline, not ${say(pipeline)}`)
       if (pipeline instanceof RenderPipelineImpl) {
         own(this.core, RenderPipelineImpl, pipeline, where, 'the pipeline', 'RenderPipeline')
         const pass = this.pass
@@ -640,9 +643,10 @@ export class CommandListImpl extends Base implements CommandList {
     this.rec('bindSets', (where) => {
       const l = own(this.core, PipelineLayoutImpl, layout, where, 'the layout', 'PipelineLayout')
       const start = whole(first, where, 'the first set')
-      const list = listOf(sets, where, 'the sets')
-      if (list.length === 0) fail('invalid', `${where}: the sets are empty`)
-      if (start + list.length > l.sets.length) fail('invalid', `${where}: sets ${start} to ${start + list.length - 1} run past the ${l.sets.length} set${l.sets.length === 1 ? '' : 's'} of ${l.name}`)
+      const list = listOf(sets, where, 'the sets', (n) => {
+        if (n === 0) fail('invalid', `${where}: the sets are empty`)
+        if (start + n > l.sets.length) fail('invalid', `${where}: sets ${start} to ${start + n - 1} run past the ${l.sets.length} set${l.sets.length === 1 ? '' : 's'} of ${l.name}`)
+      })
       const chosen = list.map((s, i) => {
         const at = `${where}: sets[${i}]`
         const set = own(this.core, BindingSetImpl, s, at, 'the set', 'BindingSet')
@@ -688,9 +692,10 @@ export class CommandListImpl extends Base implements CommandList {
     this.rec('bindVertices', (where) => {
       this.inPass(where)
       const start = whole(first, where, 'the first slot')
-      const list = listOf(buffers, where, 'the buffers')
-      if (list.length === 0) fail('invalid', `${where}: the buffers are empty`)
-      if (start + list.length > this.core.limits.vertexBuffers) fail('limit', `${where}: slots ${start} to ${start + list.length - 1} run past the device's ${this.core.limits.vertexBuffers} vertex buffers`)
+      const list = listOf(buffers, where, 'the buffers', (n) => {
+        if (n === 0) fail('invalid', `${where}: the buffers are empty`)
+        if (start + n > this.core.limits.vertexBuffers) fail('limit', `${where}: slots ${start} to ${start + n - 1} run past the device's ${this.core.limits.vertexBuffers} vertex buffers`)
+      })
       const chosen = list.map((x, i) => {
         const at = `${where}: buffers[${i}]`
         const o = record(x, ['buffer', 'offset'], at, 'the vertex buffer')
@@ -1262,11 +1267,15 @@ export class CommandListImpl extends Base implements CommandList {
 // ---------------------------------------------------------------------------------------------------
 // Shared readers
 
-/** Four finite numbers (transparent black when absent). */
+/** Four finite numbers (transparent black when absent), read once: every channel, a missing one refused. */
 function rgba(x: unknown, where: string, what: string): readonly [number, number, number, number] {
   if (x === undefined) return Object.freeze([0, 0, 0, 0] as const)
-  if (!Array.isArray(x) || x.length !== 4) fail('invalid', `${where}: ${what} is four numbers, not ${say(x)}`)
-  const [r, g, b, a] = (x as unknown[]).map((v, i) => finite(v, where, `${what} channel ${i}`))
+  const no = (): never => fail('invalid', `${where}: ${what} is four numbers, not ${say(x)}`)
+  if (!Array.isArray(x)) no()
+  const list = listOf(x, where, what, (n) => {
+    if (n !== 4) no()
+  })
+  const [r, g, b, a] = [0, 1, 2, 3].map((i) => finite(list[i], where, `${what} channel ${i}`))
   return Object.freeze([r, g, b, a] as const)
 }
 

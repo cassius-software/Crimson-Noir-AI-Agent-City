@@ -21,8 +21,14 @@
  * - One submit hands the back end all of its lists at once and gets one `done`. When it comes, every list is ready
  *   again (a `once` list invalid), every object they held is let go, and the fence is signalled. `done` called a
  *   second time does nothing.
- * - Callbacks waiting on the fence run after the back end's submit returns when it finishes the work at once (as the
- *   reference renderer does), outside any refusal handling, so whatever an app's callback raises is its own.
+ * - Callbacks waiting on the fence run once no Nightglass call runs (outside() in sync.ts): at once when the back end
+ *   says `done` outside any call, else when the call it said it in lets go (after the submit, for a back end that
+ *   finishes the work at once, as the reference renderer does), so a callback may submit again. They run outside
+ *   any refusal handling, each whatever an earlier one raised, and the first error one raises is thrown once all
+ *   have run (from that call, even one whose work is done), so whatever an app's callback raises is its own.
+ * - A submit runs as one call: a getter or Proxy trap of its submissions that calls Nightglass (to destroy or reset
+ *   what a checked list uses, take a semaphore's signal, or submit again) is refused (sync.ts), so what the checks
+ *   passed is what the back end is handed.
  * - A back end that refuses a submit (it raises) gets the submit undone: lists ready, objects let go, semaphores and
  *   fence as they were. A back end that stopped part way has lost the device (see BackendDevice), so every later
  *   call that reaches it is refused with `device`; the undo then only lets the objects go so they can be destroyed.
@@ -36,7 +42,7 @@ import { fail } from './fault.ts'
 import { CommandListImpl, PIPE_STAGES } from './commands.ts'
 import { checkOrder } from './order.ts'
 import type { Step } from './order.ts'
-import { FenceImpl, SemaphoreImpl, guard, listOf, names, own, record } from './sync.ts'
+import { FenceImpl, SemaphoreImpl, guard, listOf, names, outside, own, record } from './sync.ts'
 import type { Core } from './sync.ts'
 
 export class QueueImpl implements Queue {
@@ -54,12 +60,11 @@ export class QueueImpl implements Queue {
 
   submit(submissions: readonly Submission[], fence?: Fence): void {
     const where = `${this.name} submit`
-    const due = guard(this.core.report, where, () => this.run(submissions, fence, where))
-    for (const callback of due) callback()
+    guard(this.core.report, where, () => this.run(submissions, fence, where))
   }
 
-  /** Checks, commits and hands over one submit; returns the fence callbacks to run if the work finished at once. */
-  private run(submissions: unknown, fence: unknown, where: string): (() => void)[] {
+  /** Checks, commits and hands over one submit. */
+  private run(submissions: unknown, fence: unknown, where: string): void {
     const core = this.core
     core.enter(where)
     const subs = listOf(submissions, where, 'the submissions')
@@ -121,8 +126,6 @@ export class QueueImpl implements Queue {
     order?.commit()
     core.inFlight++
     let finished = false
-    let calling = true
-    let due: (() => void)[] = []
     const settle = (ran: boolean): void => {
       finished = true
       for (const l of lists) l.release(ran)
@@ -134,10 +137,7 @@ export class QueueImpl implements Queue {
     const done = (): void => {
       if (finished) return
       settle(true)
-      if (f === null) return
-      const callbacks = f.signal()
-      if (calling) due = callbacks
-      else for (const callback of callbacks) callback()
+      if (f !== null) outside(f.signal())
     }
     try {
       core.call(where, () => core.backend.submit(lists.map((l) => l.commands), done))
@@ -148,7 +148,5 @@ export class QueueImpl implements Queue {
       }
       throw e
     }
-    calling = false
-    return due
   }
 }

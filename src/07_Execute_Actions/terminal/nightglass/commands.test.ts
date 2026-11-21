@@ -306,6 +306,36 @@ test('a render pipeline binds inside a pass whose colour formats, depth and samp
   consistent(copier)
 })
 
+test('bindPipeline refuses a copy or a Proxy of a pipeline before any of its code runs', () => {
+  const s = scene()
+  const { r, list, pipeline } = s
+  const storage = r.device.createBindingLayout({ entries: [{ binding: 0, kind: 'storage', stages: ['compute'] }] })
+  const comp = r.device.createComputePipeline({ layout: r.device.createPipelineLayout({ sets: [storage] }), lens: r.device.createLens(computeLens()) })
+  let traps = 0
+  const counting = <T extends object>(t: T): T =>
+    new Proxy(t, {
+      get: (o, k) => {
+        traps++
+        return Reflect.get(o, k)
+      },
+      getPrototypeOf: (o) => {
+        traps++
+        return Reflect.getPrototypeOf(o)
+      },
+    })
+  list.begin()
+  const not = /bindPipeline: the pipeline is a RenderPipeline or a ComputePipeline, not an object$/
+  refuses(() => list.bindPipeline(counting(comp)), 'invalid', not)
+  refuses(() => list.bindPipeline(Object.create(comp)), 'invalid', not)
+  pass(s)
+  refuses(() => list.bindPipeline(counting(pipeline)), 'invalid', not)
+  refuses(() => list.bindPipeline(Object.create(pipeline)), 'invalid', not)
+  assert.equal(traps, 0)
+  assert.equal(list.commands.filter((c) => c.c === 'pipeline').length, 0)
+  list.bindPipeline(pipeline)
+  assert.deepEqual(lastCommand(list), { c: 'pipeline', pipeline: (pipeline as RenderPipelineImpl).handle, compute: false })
+})
+
 test('bindSets: compatible, complete, living sets, and one aligned offset per dynamic binding that stays inside its buffer', () => {
   const { r, list, layout, set, setLayout, data, pool } = computeScene()
   list.begin()
@@ -875,17 +905,18 @@ test('a getter in a call cannot record into, end, reset or begin the same list, 
     const v = { x: 0, y: 0, width: 8, height: 8, near: 0, far: 1 }
     return new Proxy(v, { get: (t, k) => { if (k === 'width') f(); return Reflect.get(t, k) } })
   }
-  refuses(() => list.setViewport(sneaky(() => list.zeroBuffer(s.vbuf, 0, 4))), 'state', /zeroBuffer: called while another call on the list is still reading its arguments/)
-  refuses(() => list.setViewport(sneaky(() => list.end())), 'state', /end: called while another call/)
-  refuses(() => list.setViewport(sneaky(() => list.reset())), 'state', /reset: called while another call/)
+  // Calls run one at a time (sync.ts): the guard refuses the inner call before the list's own latch is reached.
+  refuses(() => list.setViewport(sneaky(() => list.zeroBuffer(s.vbuf, 0, 4))), 'state', /zeroBuffer: called from inside another Nightglass call \(command list "l" setViewport\)/)
+  refuses(() => list.setViewport(sneaky(() => list.end())), 'state', /end: called from inside another Nightglass call/)
+  refuses(() => list.setViewport(sneaky(() => list.reset())), 'state', /reset: called from inside another Nightglass call/)
   const arena = s.r.device.createCommandArena({ label: 'a' })
   const other = arena.allocate('o') as CommandListImpl
   other.begin()
   other.beginPass({ colors: [{ view: s.canvas, load: 'clear', store: 'keep' }] })
-  refuses(() => other.setViewport(sneaky(() => arena.reset())), 'state', /"o" is in the middle of a call; reset the arena after it returns/)
+  refuses(() => other.setViewport(sneaky(() => arena.reset())), 'state', /command arena "a" reset: called from inside another Nightglass call \(command list "o" setViewport\)/)
   assert.equal(list.held, false)
   assert.equal(other.held, false)
-  refuses(() => other.setViewport(sneaky(() => arena.destroy())), 'state', /"o" is in the middle of a call; destroy the arena after it returns/)
+  refuses(() => other.setViewport(sneaky(() => arena.destroy())), 'state', /command arena "a" destroy: called from inside another Nightglass call/)
   list.setViewport({ x: 0, y: 0, width: 8, height: 8, near: 0, far: 1 })
   list.endPass()
   list.end()

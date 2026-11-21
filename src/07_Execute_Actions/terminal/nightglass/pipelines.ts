@@ -175,8 +175,9 @@ function lensOf(core: Core, x: unknown, stage: Stage, where: string): LensImpl {
 }
 
 function vertexBuffers(core: Core, x: unknown, lens: LensImpl, where: string): readonly VertexLayout[] {
-  const list = x === undefined ? [] : listOf(x, where, 'the vertex buffers')
-  if (list.length > core.limits.vertexBuffers) fail('limit', `${where}: ${list.length} vertex buffers is more than the device allows, ${core.limits.vertexBuffers}`)
+  const list = x === undefined ? [] : listOf(x, where, 'the vertex buffers', (n) => {
+    if (n > core.limits.vertexBuffers) fail('limit', `${where}: ${n} vertex buffers is more than the device allows, ${core.limits.vertexBuffers}`)
+  })
   // Slots are below `limits.vertexAttributes` and fed once, so the attributes in all never pass that limit either.
   const fed = new Map<number, VertexFormat>()
   const layouts = list.map((b, i): VertexLayout => {
@@ -241,8 +242,9 @@ function scalarFor(format: Format): 'f32' | 'u32' | 'i32' {
 }
 
 function colorOutputs(core: Core, x: unknown, lens: LensImpl, where: string): readonly (ColorOutput | null)[] {
-  const list = listOf(x, where, 'the colour outputs')
-  if (list.length > core.limits.colorAttachments) fail('limit', `${where}: ${list.length} colour outputs is more than the device allows, ${core.limits.colorAttachments}`)
+  const list = listOf(x, where, 'the colour outputs', (n) => {
+    if (n > core.limits.colorAttachments) fail('limit', `${where}: ${n} colour outputs is more than the device allows, ${core.limits.colorAttachments}`)
+  })
   return Object.freeze(list.map((c, s): ColorOutput | null => {
     if (c === null) return null
     const at = `${where}: output ${s}`
