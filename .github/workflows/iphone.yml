@@ -1,0 +1,74 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+# Why does this file exist? It opens the web copy in a real Safari on every change: Safari on a Mac, and Safari in the
+# iOS Simulator, which is the iPhone's own WebKit build, user agent, screen and touch (tools/browser/safari.mjs). ci.yml's
+# browser job fakes an iPhone inside Chrome, which proves the page's layout and words for an iPhone and nothing about
+# WebKit itself. Only GitHub's own actions run here.
+# What breaks if it is removed? An iPhone is again something the page is only believed to run on.
+
+name: iphone
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iphone-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  safari:
+    name: safari (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-26, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: This Mac, its Safari, its Xcode, its GPU and its iOS Simulator runtimes
+        run: |
+          sw_vers
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist || true
+          xcodebuild -version || true
+          ls /Applications | grep -i xcode || true
+          system_profiler SPDisplaysDataType || true
+          xcrun simctl list runtimes || true
+          xcrun simctl list devices available | grep -i iphone | head -40 || true
+      - run: npm ci --no-audit --no-fund
+      - name: The web copy (dist-web/), as web.yml builds it
+        run: npm run build:web
+      - name: Safari's remote automation on
+        run: sudo safaridriver --enable
+      - name: The web copy in Safari on this Mac
+        run: |
+          node tools/browser/safari.mjs --web dist-web --target mac --observe --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" \
+            --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
+      - name: The web copy in Safari on an iPhone, in the iOS Simulator
+        run: |
+          node tools/browser/safari.mjs --web dist-web --target iphone --observe --boot-ms 420000 --out "$RUNNER_TEMP/safari/iphone" \
+            --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safari-${{ matrix.runner }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/safari/
+          if-no-files-found: ignore
+          retention-days: 30
