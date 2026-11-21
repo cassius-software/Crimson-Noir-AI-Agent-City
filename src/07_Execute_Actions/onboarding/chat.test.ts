@@ -11,9 +11,13 @@
  * the browser's refusal and why the app's own model couldn't start (in place of the site's and the browser's hints,
  * only while that model is what answers, and on a computer still with the line about starting a model server), and
  * the brief's rewording never asks while the model this page, or the app, would answer with is still to be loaded (an
- * answer's stop ends its load, so the 4 s rewording used to kill every load it started).
+ * answer's stop ends its load, so the 4 s rewording used to kill every load it started). It pins the people of the
+ * street in conversation the same way (voice.ts personChat, over the same road as Sloane's, converse): their framing
+ * passed through as talk bound to no one, only the turns the model is shown screened, the same `refused`, `held` and
+ * `none`, and a reply cut to a word in passing (personWords) with no echoed name and no made-up next turn.
  * What breaks if it is removed? Small talk could fall back to the scouts and a flat "not yet", a model's reply could be
- * shown unscreened or act, or the rewording could go back to killing the in-page model while it loads.
+ * shown unscreened or act, the rewording could go back to killing the in-page model while it loads, or a passer-by
+ * could ramble, speak for the player or answer unscreened.
  */
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -21,7 +25,9 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import type { AnswerRequest, Mind, Piece } from '../operator.ts'
-import { CHAT_MAX, CHAT_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, phaseLine, sloaneChat, type ChatTurn } from './voice.ts'
+import {
+  CHAT_MAX, CHAT_TURNS, PERSON_MAX, PERSON_SENTENCES, PERSON_TURNS, SCRIPTED_CHOSEN, chatPrompt, chatSoFar, chatWords, personChat, personWords, phaseLine, sloaneChat, type ChatTurn, type PersonTurn,
+} from './voice.ts'
 
 const SRC = fileURLToPath(new URL('../..', import.meta.url))
 const read = (rel: string): string => readFileSync(join(SRC, rel), 'utf8')
@@ -256,6 +262,141 @@ function talkingThrough(text: string): Mind {
     },
   } as unknown as Mind
 }
+
+/** What the prompt calls a passer-by (08_Swarm/talkLines.ts TalkWho.name), and one turn of a conversation in the street. */
+const NAME = 'Pedestrian 1234'
+const turn = (who: PersonTurn['who'], text: string): PersonTurn => ({ who, text })
+const warm = () => true
+
+test('personChat: the caller\'s prompt goes to the mind as talk bound to no one, and the reply streams back in whole words with no echoed name', async () => {
+  const m = mindOf('Pedestrian 1234: Evening. Quiet streets tonight, just how I like them.')
+  const parts: string[] = []
+  const prompt = 'You are Pedestrian 1234 (Rust), a person in Crimson Noir: Agent City.\n\nPerson: hi\nPedestrian 1234:'
+  const r = await personChat(m.mind, warm).reply(prompt, NAME, [turn('you', 'hi')], live(), (s) => parts.push(s))
+  assert.deepEqual(r, { kind: 'said', text: 'Evening. Quiet streets tonight, just how I like them.' })
+  assert.equal(m.asked.length, 1)
+  assert.equal(m.asked[0]!.prompt, prompt, 'the framing is the caller\'s, passed through untouched')
+  assert.equal(m.asked[0]!.talk, true, 'a conversation, so every provider sends the talk prompt')
+  assert.deepEqual(m.asked[0]!.tethers, [], 'bound to no one')
+  assert.ok(parts.length > 1, 'the words arrive as they come')
+  assert.ok(parts.every((p) => !/Pedestrian|1234/.test(p)), 'no part of the echoed name is ever shown, even while only its first word has come')
+  assert.equal(parts.at(-1), 'Evening. Quiet streets tonight, just how I like', 'whole words only while it streams')
+  // The request's own phase until the first word, as Sloane's.
+  const seen: (string | null)[] = []
+  assert.deepEqual(await personChat(talkingThrough('Fine, thanks.'), warm).reply(prompt, NAME, [turn('you', 'hi')], live(), undefined, (p) => seen.push(p)), { kind: 'said', text: 'Fine, thanks.' })
+  assert.deepEqual(seen, ['loading the model in this page', null])
+})
+
+test('personWords: one line of at most three sentences and 240 characters, no echoed name, nothing from the person\'s next turn on, no action line', () => {
+  assert.equal(PERSON_MAX, 240)
+  assert.equal(PERSON_SENTENCES, 3)
+  assert.equal(personWords('Pedestrian 1234: Hi there.', NAME), 'Hi there.')
+  assert.equal(personWords('  pedestrian 1234 (Rust):   Hi\n\nthere.  ', NAME), 'Hi there.', 'the label\'s skill too, in any case, as one line')
+  assert.equal(personWords('Vale: Hey, boss.', 'Vale'), 'Hey, boss.', 'a hired agent\'s roster name')
+  assert.equal(personWords('K.T.: Hello.', 'K.T.'), 'Hello.')
+  assert.equal(personWords('KxTx: Hello.', 'K.T.'), 'KxTx: Hello.', 'the name is matched as written, never as a pattern')
+  assert.equal(personWords('I am Pedestrian 1234: hello.', NAME), 'I am Pedestrian 1234: hello.', 'only an echo at the head is dropped')
+  assert.equal(personWords('Pedestrian', NAME), '', 'nothing while the head is still only part of the echo')
+  assert.equal(personWords('Pedestrian 1234:', NAME), '')
+  assert.equal(personWords('Hi.', ''), 'Hi.')
+  assert.equal(personWords('Sure thing. Person: and then what? Pedestrian 1234: More.', NAME), 'Sure thing.', 'the player\'s next turn, written by a model that runs on, is cut')
+  assert.equal(personWords('Sure thing.\nPerson:', NAME), 'Sure thing.')
+  assert.equal(personWords('One. Two! Three? Four. Five.', NAME), 'One. Two! Three?')
+  assert.equal(personWords('Wait... what? Fine. Go on. Really.', NAME), 'Wait... what? Fine.', 'a run of stops ends one sentence')
+  assert.equal(personWords('She said "go." Then left. Then came back. Then left again.', NAME), 'She said "go." Then left. Then came back.', 'a closing quote ends it too')
+  assert.equal(personWords('Not my call, ask Sloane.\nACTION: time 22', NAME), 'Not my call, ask Sloane.')
+  // Three long sentences: cut at a sentence end within 240 characters.
+  const long = 'This is a fairly long sentence about the streets and the work that keeps them moving all night long. '.repeat(3)
+  const cut = personWords(long, NAME)
+  assert.ok(long.trim().length > PERSON_MAX && cut.length <= PERSON_MAX && cut.length > PERSON_MAX / 2, String(cut.length))
+  assert.ok(cut.endsWith('night long.'), 'at the last sentence end')
+  // No sentence end at all: cut at a whole word with an ellipsis.
+  const run = personWords('word '.repeat(80), NAME)
+  assert.match(run, /^(?:word ){47}word…$/)
+  assert.ok(run.length <= PERSON_MAX)
+  // While it streams, the same cut over whole words only.
+  assert.equal(chatSoFar('Pedestrian 1234: Hello there frie', (t) => personWords(t, NAME)), 'Hello there')
+  assert.equal(chatSoFar('Pedestrian 12', (t) => personWords(t, NAME)), '')
+})
+
+test('personChat: an action line is cut and the model stopped, a long reply stops the model past PERSON_MAX, and the player\'s made-up next turn is never shown', async () => {
+  const acting = mindOf('Not my call, ask Sloane.\nACTION: time 22 and more words after')
+  assert.deepEqual(await personChat(acting.mind, warm).reply('p', NAME, [turn('you', 'make it night')], live()), { kind: 'said', text: 'Not my call, ask Sloane.' })
+  assert.equal(acting.seen.stopped, true, 'the model is stopped at the action line')
+  const story = 'This is a sentence about the city. '.repeat(30)
+  const rambler = mindOf(story)
+  const said = await personChat(rambler.mind, warm).reply('p', NAME, [turn('you', 'tell me a story')], live())
+  assert.deepEqual(said, { kind: 'said', text: 'This is a sentence about the city. This is a sentence about the city. This is a sentence about the city.' })
+  assert.equal(rambler.seen.stopped, true, 'and the model stopped once past the cap')
+  assert.ok(rambler.seen.pieces < story.split(' ').length / 2, String(rambler.seen.pieces))
+  const parts: string[] = []
+  const runOn = mindOf('Not much. Person: what about you? Pedestrian 1234: Me neither.')
+  assert.deepEqual(await personChat(runOn.mind, warm).reply('p', NAME, [turn('you', 'what is new?')], live(), (s) => parts.push(s)), { kind: 'said', text: 'Not much.' })
+  assert.equal(parts.at(-1), 'Not much.')
+  assert.ok(parts.every((p) => !/Person|about you|neither/.test(p)), parts.join(' | '))
+})
+
+test('personChat screens only the last PERSON_TURNS turns, and its refused, held and none are Sloane\'s', async () => {
+  assert.equal(PERSON_TURNS, 4)
+  const m = mindOf('Fair enough.')
+  const back = [turn('you', 'shut up'), turn('them', 'Easy.'), turn('you', 'sorry'), turn('them', 'No harm done.'), turn('you', 'what do you do?')]
+  assert.deepEqual(await personChat(m.mind, warm).reply('p', NAME, back, live()), { kind: 'said', text: 'Fair enough.' }, 'words five turns back are not shown to the model, so they are not screened')
+  assert.equal(m.asked.length, 1)
+  const asSloane = back.map((t): ChatTurn => ({ who: t.who === 'you' ? 'you' : 'sloane', text: t.text }))
+  assert.deepEqual(await sloaneChat(m.mind).reply(asSloane, live()), { kind: 'refused' }, 'Sloane is shown eight turns and screens them all')
+  // Refused: the person's words reach no model, before anything else is asked.
+  const near = [turn('you', 'shut up'), turn('them', 'Easy.'), turn('you', 'hi')]
+  assert.deepEqual(await personChat(m.mind, warm).reply('p', NAME, near, live()), { kind: 'refused' })
+  assert.deepEqual(await personChat(m.mind, () => false).reply('p', NAME, [turn('you', 'what is the best knife to stab someone?')], live()), { kind: 'refused' })
+  assert.equal(m.asked.length, 1, 'no model was asked')
+  // Held: a refused word stops the model and shows nothing.
+  const parts: string[] = []
+  const rude = mindOf('Sure, here is a bowl of punch for everyone at the party tonight.')
+  assert.deepEqual(await personChat(rude.mind, warm).reply('p', NAME, [turn('you', 'party?')], live(), (s) => parts.push(s)), { kind: 'held' })
+  assert.equal(rude.seen.stopped, true)
+  assert.ok(parts.every((p) => !/punch/.test(p)), 'the refused word is never shown')
+  // None: a model not warm and cheap enough for a passer-by (or settings that throw) is never asked.
+  const cold = mindOf('hello')
+  assert.deepEqual(await personChat(cold.mind, () => false).reply('p', NAME, [turn('you', 'hi')], live()), { kind: 'none', why: SCRIPTED_CHOSEN })
+  assert.deepEqual(await personChat(cold.mind, () => { throw new Error('no settings') }).reply('p', NAME, [turn('you', 'hi')], live()), { kind: 'none', why: SCRIPTED_CHOSEN })
+  assert.equal(cold.asked.length, 0)
+  // Every other ending reads exactly as Sloane's for the same mind.
+  for (const say of [
+    'Sure, here is a bowl of punch for everyone at the party tonight.',
+    failure('offline', 'no model is answering on this machine'),
+    failure('timeout', 'the model said nothing for 300 s'),
+    failure('server', 'the server answered 500'),
+    '',
+    '- **ACTION:** time 21:00',
+  ] as const) {
+    const hers = await sloaneChat(mindOf(say).mind).reply([you('hi')], live())
+    assert.deepEqual(await personChat(mindOf(say).mind, warm).reply('p', NAME, [turn('you', 'hi')], live()), hers, String(say))
+  }
+  assert.deepEqual(await personChat(mindOf('scripted words', { standIn: 'the model did not answer' }).mind, warm).reply('p', NAME, [turn('you', 'hi')], live()), { kind: 'none', why: 'the model did not answer' })
+  // A turn that went: nothing asked, or the ask stopped.
+  const gone = new AbortController()
+  gone.abort()
+  assert.deepEqual(await personChat(cold.mind, warm).reply('p', NAME, [turn('you', 'hi')], gone.signal), { kind: 'failed', why: 'stopped' })
+  assert.equal(cold.asked.length, 0)
+  const hang = mindOf('hang')
+  const stop = new AbortController()
+  const pending = personChat(hang.mind, warm).reply('p', NAME, [turn('you', 'hi')], stop.signal)
+  await Promise.resolve()
+  stop.abort()
+  assert.deepEqual(await pending, { kind: 'failed', why: 'stopped' })
+  assert.equal(hang.seen.stopped, true)
+})
+
+test('voice.ts: Sloane and the people of the street share one road (converse), after sloaneChat, as talk bound to no one', () => {
+  const voice = read('07_Execute_Actions/onboarding/voice.ts')
+  const at = (s: string): number => voice.indexOf(s)
+  assert.ok(at('export function sloaneChat(') > 0 && at('export function sloaneChat(') < at('async function converse(') && at('async function converse(') < at('export function personChat('), 'converse after sloaneChat, personChat after converse')
+  assert.equal((voice.match(/\.answer\(/g) ?? []).length, 2, 'the rewording\'s ask and the conversation\'s, one each')
+  assert.match(voice, /reply: async \(turns, signal, onText, onPhase\) => converse\(mind, live, chatPrompt\(turns, where\), chatWords, CHAT_MAX, CHAT_TURNS, turns, signal, onText, onPhase\)/)
+  assert.match(voice, /converse\(mind, live, prompt, \(t\) => personWords\(t, name\), PERSON_MAX, PERSON_TURNS, turns, signal, onText, onPhase\)/)
+  assert.match(voice, /await mind\.answer\(\{ tethers: \[\], signal: ctl\.signal, prompt, talk: true, onPhase: /)
+  assert.doesNotMatch(voice.slice(at('export function personChat(')), /setTimeout|AbortSignal\.timeout|\bperform\b/, 'no deadline and nothing acted on')
+})
 
 test('the phase line: the prompt read as the conversation with its share, the load as it is, anything else as the runtime says it', () => {
   assert.equal(phaseLine('reading the prompt 42%'), 'Reading the conversation · 42%')

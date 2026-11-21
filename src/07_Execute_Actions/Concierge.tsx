@@ -144,15 +144,16 @@ const [ORC_BEFORE, ORC_AFTER] = ORC_NOTICE.split(ORC_REGISTRATION)
  *  on a spacer that clears the bottom-centre prompts; in a short window the spacer gives way first (down to
  *  the capture hint, which has its key row only under the HUD's ROOMY query, repeated here), so the card
  *  stays below the centre unless it is taller than the whole column. */
-const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 flex w-[min(38rem,max(22rem,calc(100%_-_30.5rem)))] -translate-x-1/2 flex-col justify-end'
+export const WIDE_COLUMN = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-1/2 flex w-[min(38rem,max(22rem,calc(100%_-_30.5rem)))] -translate-x-1/2 flex-col justify-end'
 /** The same column while the first walk's card stands on the right of a wide screen (onboarding/FirstWalk.tsx AT.wide: 20
  *  rem wide, 1.25 rem in): it spans from the minimap's clearance to 0.75 rem short of that card, centred there up to 38
  *  rem, so the two stand side by side instead of the card lying over the right end of Sloane's (her Continue button
  *  among it) on any window under about 1,300 px across. It applies from 60 rem across (besideRoom, at the text size's zoom), where at least
  *  22.75 rem is left; in a narrower window the walk's card steps aside while this card is open instead. */
-const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
-const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
-const CARD_AT = {
+export const WIDE_BESIDE = 'absolute top-[calc(50%+1rem)] bottom-[max(1.25rem,env(safe-area-inset-bottom))] left-[15.25rem] right-[calc(max(1.25rem,env(safe-area-inset-right))_+_20.75rem)] mx-auto flex w-auto max-w-[38rem] flex-col justify-end'
+export const WIDE_SPACER = 'h-[8.5rem] min-h-[3.25rem] shrink [@media(min-width:1100px)_and_(min-height:600px)]:min-h-[5rem]'
+// oxlint-disable-next-line react/only-export-components -- the conversation's panel (TalkLayer.tsx) stands where this card does
+export const CARD_AT = {
   tall: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_max(0.75rem,env(safe-area-inset-bottom)))] max-w-[28rem] overflow-y-auto overscroll-contain',
   tallTouch: 'top-[calc(max(0.75rem,env(safe-area-inset-top))+7.5rem)] right-[max(0.75rem,env(safe-area-inset-right))] left-[max(0.75rem,env(safe-area-inset-left))] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-top))_-_7.5rem_-_calc(var(--touch-top,0.75rem)_/_var(--ui-zoom,1))_-_0.5rem)] max-w-[28rem] overflow-y-auto overscroll-contain',
   short: 'bottom-[max(0.75rem,env(safe-area-inset-bottom))] left-[max(calc(env(safe-area-inset-left,0px)+0.75rem),min(calc(env(safe-area-inset-left,0px)+12.5rem),calc(100%_-_calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_-_16rem)))] right-[calc(calc(var(--touch-left,12rem)_/_var(--ui-zoom,1))_+_0.5rem)] mx-auto max-h-[calc(calc(100dvh_/_var(--ui-zoom,1))_-_max(0.75rem,env(safe-area-inset-bottom))_-_max(0.75rem,env(safe-area-inset-top)))] max-w-[28rem] overflow-y-auto overscroll-contain',
@@ -196,8 +197,10 @@ function mediaStore(query: string) {
     server: () => false,
   }
 }
-const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
-const SHORT = mediaStore('(max-height: 499px)')
+// oxlint-disable-next-line react/only-export-components -- the conversation's panel (TalkLayer.tsx) follows the same layout
+export const SMALL = mediaStore('(max-width: 639px), (max-height: 499px)')
+// oxlint-disable-next-line react/only-export-components -- as SMALL
+export const SHORT = mediaStore('(max-height: 499px)')
 const LANDSCAPE = mediaStore('(orientation: landscape)')
 /** Wide enough for Sloane's card beside the first walk's: 60 rem at 100 % text (FirstWalk.tsx steps its card aside below it). */
 export const BESIDE_ROOM_PX = 960

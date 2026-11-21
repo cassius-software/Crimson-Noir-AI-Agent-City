@@ -114,7 +114,7 @@ import { clampPlayers, originBottomLeft, splitScreen, type Rect } from './viewpo
 import { buildPost, type AmbientOcclusion, type CinemaPost, type VisionUniform } from './postfx.ts'
 import { visionMatrix, visionWord, type Vision } from './access.ts'
 import { createGhost, type GhostView } from './ghost.ts'
-import { CONTACT, ContactPulse, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
+import { CONTACT, ContactPulse, HIDDEN_Y, PoleIndex, carGap, carsWithin, peopleWithin, peopleWithinBox, personGap, personGapToBox, touching } from './contact.ts'
 import { DISSOLVE, DissolveSet, carsOverlapping, copyDirty, poleSlot, type DissolveBuffer } from './dissolve.ts'
 import { CINEMA, FramePacer, SHUTTER_SECONDS, exposureFor, type CameraMark } from './cinema.ts'
 import { updateVolumetrics, type Volumetrics } from './volumetrics.ts'
@@ -130,8 +130,10 @@ import { roomAt, type Room } from './acoustics.ts'
 import { CaptionTrack, captionText } from './captions.ts'
 import { ring0Stats, type HardwareReport, type TerminalBridge } from './terminal/bridge.ts'
 import { familyOf, modeGlyph, type glyph } from './glyphs.ts'
-import { screenPoint, type ScreenPoint } from './screenPoint.ts'
+import { OFF_SCREEN, screenPoint, type ScreenPoint } from './screenPoint.ts'
 import { PING_KINDS, PING_WORDS, PingBoard, pickPing, pingLine, rallyPlan, type Ping, type Pick, type PingKind, type RallyRequest } from '../08_Swarm/ping.ts'
+import { blankScan, CHEST_AT, HEAD_AT, LABEL_ABOVE, nearestPeople, TALK_JUMP, TALK_POOL, TALK_WALL_CHECKS, talkScore, type TalkEye } from '../08_Swarm/talkLink.ts'
+import type { TalkHost, TalkScan } from './talk.ts'
 
 /** POSE.mode of a parked car (simProtocol.ts MODES): nobody at its wheel, the kind of car a player may take. */
 const PARKED = MODES.indexOf('parked')
@@ -772,6 +774,26 @@ export class Engine {
   private speakerCell = Number.NaN
   /** Sloane is speaking (conciergeOut): the voice is kept at the player's own head. */
   private conciergeVoice = false
+  /**
+   * The person a conversation follows (talk.ts, through talkHost()): their crowd row, −1 for nobody (TalkHost.follow).
+   * talkAt is where they stand as every state has them (x, feet y, z; NaN until read). talkLast is the row the last
+   * scan measured, where and when (performance.now() ms): a move too far for a walk between two scans means someone
+   * else respawned on the row. talkSpot is where the label over them falls, set each presented frame.
+   */
+  private talkRow = -1
+  private readonly talkAt = { x: Number.NaN, y: Number.NaN, z: Number.NaN }
+  private readonly talkLast = { row: -1, x: Number.NaN, z: Number.NaN, at: 0 }
+  private talkSpot: ScreenPoint = OFF_SCREEN
+  /** A partner's own provider voice is the one speaking (talkOut): it follows them, from row talkVoiceRow. */
+  private talkVoice = false
+  private talkVoiceRow = -1
+  /** A scan's scratch, reused so the 4 Hz scan allocates nothing: the nearest rows, their distances and scores, the eye, a speech point, the voice's place. */
+  private readonly talkRows = new Int32Array(TALK_POOL)
+  private readonly talkDists = new Float32Array(TALK_POOL)
+  private readonly talkScores = new Float64Array(TALK_POOL)
+  private readonly talkEye: TalkEye = { x: 0, z: 0, feetY: 0, yaw: 0, speed: 0 }
+  private readonly talkMouth = { x: 0, y: 0, z: 0 }
+  private readonly talkVoiceXZ = { x: Number.NaN, z: Number.NaN }
   /** The soundscape's closed captions (captions.ts), fed by every sound event with the head pose as the listener. */
   private readonly captions = new CaptionTrack()
   private captionsOn: boolean
@@ -839,6 +861,12 @@ export class Engine {
    * right stick's click (R3) or the touch Menu's item. Null: the press goes nowhere. The engine never opens a microphone.
    */
   onMute: (() => void) | null = null
+  /**
+   * The host's conversation key (App.tsx: talk.ts TalkController.press), called once per press of T or the pad's talk
+   * button (West; d-pad up for a left hand) on foot, with how it was pressed. A press at the wheel is taken and goes
+   * nowhere. Null: the press goes nowhere. The engine opens no conversation itself.
+   */
+  onTalk: ((how: 'keyboard' | 'pad') => void) | null = null
   /**
    * The host's: a shop's catalogue asked for (E or B on foot inside shop `index`, with no car in reach to take the E).
    * Null: nothing opens.
@@ -2443,6 +2471,8 @@ export class Engine {
     // The passage pulse's view of the crowd: who is nearest the user's body in this frame (and, for the code dissolve,
     // whose bodies it is inside), a fallen person read at their rig.
     if (s.crowdFrame) this.contactScan(s)
+    // The person a conversation follows (talk.ts), read from every state for the label and a voice at their head.
+    if (s.crowdFrame && this.talkRow >= 0) this.talkFollow(s.crowdFrame)
     // The robots: the bodies' joints out of the joint buffer, the newest frames in, the setpoints out through the gate.
     this.robots.tick()
     // The pedestrians the worker simulated: straight into the render buffers (the copy is only ever drawn).
@@ -2577,14 +2607,15 @@ export class Engine {
         const u = this.audio.speak(buffer, eye.x, eye.z, 0, text, { agent: PLAYER_INDEX, label: CONCIERGE_LABEL })
         this.speakerCell = Number.NaN
         this.conciergeVoice = true
+        this.talkVoice = false
         return u
       },
     })
   }
 
-  /** The pedestrian speaking aloud now (speechOut), or −1. */
+  /** The pedestrian speaking aloud now (speechOut), or −1 (also while a conversation's partner speaks over them: talkOut). */
   get speaking(): number {
-    return this.speaker >= 0 && this.audio.speaking ? this.speaker : -1
+    return this.speaker >= 0 && this.audio.speaking && !this.talkVoice ? this.speaker : -1
   }
 
   /**
@@ -2614,6 +2645,7 @@ export class Engine {
         this.speaker = agent
         this.speakerCell = Number.NaN
         this.conciergeVoice = false
+        this.talkVoice = false
         if (this.views.length === 1) return u
         // Split: the same clip at the same head for every other player, muffled by the walls from their own head; a
         // soundscape that cannot sound (still locked, failed) is skipped. One utterance: its stop stops them all.
@@ -2635,6 +2667,200 @@ export class Engine {
     this.lockReason = reason
     this.halt(reason)
     kernelPanic(reason, () => { void Promise.resolve(this.input.hal.dispose()).catch(() => {}) })
+  }
+
+  /**
+   * The conversation's narrow view of the engine (talk.ts TalkHost), built per call and frozen, as recruitHost is. It
+   * reads this page's own copies alone (the crowd's pose copy, the newest state, the head's camera, the world's boxes)
+   * and sends the physics realm nothing: a person talked with keeps walking, and the label and the voice follow them.
+   * Every member is safe on a halted or disposed engine: blocked says so, a scan finds nobody, place is off the screen,
+   * context is null, a caption is dropped and out's play throws (the speaker then falls back as it does for Sloane).
+   */
+  talkHost(): TalkHost {
+    return Object.freeze({
+      agents: this.options.agents,
+      blocked: () => this.talkBlocked(),
+      eye: () => this.talkEyeNow(),
+      scan: (current: number, out: TalkScan) => this.talkScan(current, out),
+      follow: (row: number) => {
+        const r = Number.isInteger(row) && row > 0 && row < this.options.agents ? row : -1
+        if (r === this.talkRow) return
+        this.talkRow = r
+        this.talkSpot = OFF_SCREEN
+        if (r < 0) return
+        // Seeded from the pose copy, so the label has a place before the next state is read.
+        const o = 4 * r, pose = this.crowdPose, at = this.talkAt, ok = o + 2 < pose.length
+        at.x = ok ? pose[o] : Number.NaN
+        at.y = ok ? pose[o + 1] : Number.NaN
+        at.z = ok ? pose[o + 2] : Number.NaN
+      },
+      // Off while nothing is drawn (setRendering): the check lives here, never in frame().
+      place: () => (this.rendering && !this.halted && !this.disposed ? this.talkSpot : OFF_SCREEN),
+      context: (row: number) => (this.halted || this.disposed ? null : this.awareness().context(row)),
+      out: (row: number, label: string) => this.talkOut(row, label),
+      caption: (row: number, label: string, on: boolean) => this.talkCaption(row, label, on),
+      hour: () => this.hours,
+    })
+  }
+
+  /**
+   * Why talking is not possible now: the city stopped, the player at a wheel, or somewhere a conversation cannot
+   * follow (a headset, a surveyed region with no street window, where no crowd is drawn, a shop's mirror, a home's
+   * card or its furnishing). The host adds its own (cards, the console, the HUD hidden).
+   */
+  private talkBlocked(): 'car' | 'away' | 'halted' | null {
+    if (this.halted || this.disposed) return 'halted'
+    if (this.sim.state.driving >= 0) return 'car'
+    if (this.rig.headset || (this.places && !this.streets) || this.showroom !== null || this.homeCard !== null || this.furnishHome !== null) return 'away'
+    return null
+  }
+
+  /** Where the player stands for a scan (talkLink.ts TalkEye): the avatar's feet, its speed, the head's yaw. Reused: read at once. */
+  private talkEyeNow(): TalkEye {
+    const e = this.talkEye, av = this.sim.state.avatar
+    e.x = av.x
+    e.z = av.z
+    e.feetY = av.feetY
+    e.yaw = this.rig.pose.yaw
+    e.speed = av.speed
+    return e
+  }
+
+  /**
+   * One scan (TalkHost.scan, a few times a second): the nominee and the measures of row `current` (−1 for none) into
+   * `out`. The nearest TALK_POOL people from the pose copy (talkLink.ts nearestPeople, the fallen skipped) are scored by
+   * where their head, else their chest, falls across player 1's view (talkScore: off the screen is no one); then the
+   * walls are counted for the best TALK_WALL_CHECKS alone, best first, and the first the camera sees unwalled is the
+   * nominee. The current row is gone when it is past the crowd's rows, hidden, fallen, not a number, or moved farther
+   * than a walk since the last scan (TALK_JUMP a second at the least): someone else respawned on the row.
+   */
+  private talkScan(current: number, out: TalkScan): void {
+    blankScan(out)
+    if (this.halted || this.disposed) return
+    const eye = this.talkEyeNow(), pose = this.crowdPose
+    const rows = this.talkRows, dists = this.talkDists, scores = this.talkScores
+    const n = nearestPeople(pose, this.options.agents, eye, this.wornAgents, rows, dists)
+    for (let i = 0; i < n; i++) {
+      const o = 4 * rows[i]
+      scores[i] = talkScore(dists[i], this.talkSx(pose[o], pose[o + 1], pose[o + 2]))
+    }
+    for (let k = 0; k < TALK_WALL_CHECKS; k++) {
+      let best = -1
+      for (let i = 0; i < n; i++) if (scores[i] < Infinity && (best < 0 || scores[i] < scores[best])) best = i
+      if (best < 0) break
+      const o = 4 * rows[best]
+      if (this.talkWalls(pose[o], pose[o + 1], pose[o + 2], 1) === 0) {
+        out.best = rows[best]
+        out.bestScore = scores[best]
+        break
+      }
+      scores[best] = Infinity
+    }
+    if (current < 0) return
+    // The followed row as the newest state has it (talkFollow), else as the pose copy does.
+    const at = this.talkAt
+    let x = Number.NaN, y = Number.NaN, z = Number.NaN
+    if (current === this.talkRow && Number.isFinite(at.x + at.y + at.z)) { x = at.x; y = at.y; z = at.z }
+    else if (current > 0 && 4 * current + 2 < pose.length) { x = pose[4 * current]; y = pose[4 * current + 1]; z = pose[4 * current + 2] }
+    const last = this.talkLast, now = performance.now()
+    const jumped = last.row === current && Math.hypot(x - last.x, z - last.z) > TALK_JUMP * Math.max(1, (now - last.at) / 1000)
+    last.row = current
+    last.x = x
+    last.z = z
+    last.at = now
+    out.curX = x
+    out.curZ = z
+    out.curD = Math.hypot(x - eye.x, z - eye.z)
+    out.curGone = jumped || !(current > 0 && current < this.options.agents) || !Number.isFinite(x + y + z) || !(y > HIDDEN_Y) || this.wornAgents.includes(current)
+    if (out.curGone) return
+    out.curWalls = this.talkWalls(x, y, z, 2)
+    out.curScore = talkScore(out.curD, this.talkSx(x, y, z))
+  }
+
+  /**
+   * Where a person with feet at (x, feet, z) falls across player 1's own view, 0..1, by their head, else their chest
+   * (the screen's edge cuts the head off up close); NaN when neither is on the screen. screenPoint.ts places a point
+   * across the whole canvas, so a split screen's is brought back to player 1's viewport.
+   */
+  private talkSx(x: number, feet: number, z: number): number {
+    let p = this.screenOf(x, feet + HEAD_AT, z)
+    if (!Number.isFinite(p.sx)) p = this.screenOf(x, feet + CHEST_AT, z)
+    if (this.views.length <= 1 || !Number.isFinite(p.sx)) return p.sx
+    const r = this.views[0].rect
+    return (p.sx * Math.max(1, this.canvas.clientWidth) - r.x) / Math.max(1, r.width)
+  }
+
+  /** Walls between the head's camera and the speech point of a person with feet at (x, feet, z), counted up to `limit` (audio.ts wallsBetween). */
+  private talkWalls(x: number, feet: number, z: number, limit: number): number {
+    const m = this.talkMouth
+    m.x = x
+    m.y = feet + SPEECH.height
+    m.z = z
+    return wallsBetween(this.world.boxes, this.world.camera.position, m, limit)
+  }
+
+  /** The followed row out of a state's crowd frame (received(), before the upload hands it back): x, feet y, z. */
+  private talkFollow(frame: Float32Array): void {
+    const o = 4 * this.talkRow, at = this.talkAt, ok = o + 2 < frame.length
+    at.x = ok ? frame[o] : Number.NaN
+    at.y = ok ? frame[o + 1] : Number.NaN
+    at.z = ok ? frame[o + 2] : Number.NaN
+  }
+
+  /**
+   * Where a partner's provider voice is heard from (listen()): where they stand while they are still the one followed,
+   * else NaN, so the voice holds where it was (a line let finish after the conversation closed). Reused: read at once.
+   */
+  private talkVoiceAt(): { x: number; z: number } {
+    const v = this.talkVoiceXZ, mine = this.talkVoiceRow >= 0 && this.talkVoiceRow === this.talkRow
+    v.x = mine ? this.talkAt.x : Number.NaN
+    v.z = mine ? this.talkAt.z : Number.NaN
+    return v
+  }
+
+  /**
+   * Where a hired agent's own provider voice is heard in a conversation (onboarding/speaker.ts ConciergeOut, for
+   * ConciergeSpeaker.person): the soundscape at their head, muffled by the walls between and in the room they stand
+   * in, following them while the line lasts. The words are in the panel alone, so the caption says who speaks and
+   * where, never what. Player 1's soundscape alone. Only audio flows through it. Built per call, frozen.
+   */
+  private talkOut(row: number, label: string): ConciergeOut {
+    const clips = new WeakMap<SpeechClip, AudioBuffer>()
+    return Object.freeze({
+      decode: async (bytes: ArrayBuffer): Promise<SpeechClip> => {
+        const buffer = await this.audio.decodeSpeech(bytes)
+        const clip: SpeechClip = Object.freeze({ seconds: buffer.duration })
+        clips.set(clip, buffer)
+        return clip
+      },
+      play: (clip: SpeechClip): Utterance => {
+        const buffer = clips.get(clip)
+        if (!buffer) throw new Error('not speech this soundscape decoded')
+        if (this.halted || this.disposed) throw new Error('the city has stopped')
+        const at = this.talkAt
+        if (row !== this.talkRow || !Number.isFinite(at.x + at.z)) throw new Error(`${label} is not the one talked with`)
+        const u = this.audio.speak(buffer, at.x, at.z, this.wallsTo(at.x, at.z), undefined, { agent: row, label })
+        this.speakerCell = Number.NaN
+        this.talkVoice = true
+        this.talkVoiceRow = row
+        this.conciergeVoice = false
+        return u
+      },
+    })
+  }
+
+  /**
+   * The wordless caption of a person's browser voice (TalkHost.caption), which Web Audio cannot place: the same speech
+   * start and stop the soundscape's own voice makes ('[Pedestrian 1234 (Rust) speaking]', with the arrow and metres
+   * from the head), where the person stands. Only while captions are on and the city runs, as netChat's.
+   */
+  private talkCaption(row: number, label: string, on: boolean): void {
+    if (!this.captionsOn || this.halted || this.disposed) return
+    const pose = this.crowdPose, o = 4 * row
+    const mine = row === this.talkRow, known = row > 0 && o + 2 < pose.length
+    const x = mine ? this.talkAt.x : known ? pose[o] : Number.NaN
+    const z = mine ? this.talkAt.z : known ? pose[o + 2] : Number.NaN
+    this.captions.push({ kind: 'speech', phase: on ? 'start' : 'stop', source: row, x, z, t: this.audio.clock, label: String(label), agent: row }, this.rig.pose)
   }
 
   /** Rumble, the throttle trigger's hold and snap, and the lightbar's colour, in one output call. */
@@ -2726,6 +2952,9 @@ export class Engine {
     }
     if (input.take('matrix')) { this.toast('Rain mode', this.setMatrix(!this.matrixOn)); this.deed('optics') }
     if (mute) this.onMute?.()
+    // T or the pad's talk button opens a conversation with the person near (the host's talk.ts), on foot only. Taken
+    // first, so a press at the wheel is used up there and never opens one on the first frame out of the car.
+    if (input.take('talk') && driving < 0) this.onTalk?.(input.device === 'gamepad' ? 'pad' : 'keyboard')
     if (input.take('reset') && driving >= 0) sim.send({ c: 'reset' })
     // The other seats' doors and resets, each for its own avatar (their pads queue them on their own intents). In a
     // network room only player 1 drives (simCore.ts 'interact'): the others' presses are taken and go nowhere.
@@ -2882,6 +3111,9 @@ export class Engine {
     // createRenderer); without them the near and far planes come out as WebGL's and, reversed, swap.
     this.frustum.setFromProjectionMatrix(this.projScreen, cam.coordinateSystem, cam.reversedDepth)
     packFrustumPlanes(this.frustum.planes, this.planes)
+    // Where the label over a conversation's partner falls (talk.ts): a point over the tallest head, through the head's
+    // own camera. Not under the mirror or the draft camera, and not in a headset, which has no flat screen to label.
+    this.talkSpot = this.talkRow >= 0 && !mirror && !this.rig.headset ? this.screenOf(this.talkAt.x, this.talkAt.y + LABEL_ABOVE, this.talkAt.z) : OFF_SCREEN
 
     if (this.fresh) {
       this.view.sync(st.poses)
@@ -3168,9 +3400,10 @@ export class Engine {
       f.room = Number.isNaN(cell) ? undefined : roomAt(this.world.boxes, cam.position.x, cam.position.z)
     }
     // The person speaking, where the newest state has them (NaN: nobody, or not measured; the voice then holds).
-    // Sloane (conciergeOut) is at this head, with no walls between.
+    // Sloane (conciergeOut) is at this head, with no walls between; a conversation's partner (talkOut) where every
+    // state has them, so the voice walks with them.
     const pedestrian = this.speaker >= 0 ? st.recruits.find((r) => r.agent === this.speaker) : undefined
-    const speaking = !this.audio.speaking ? undefined : this.conciergeVoice ? { x: cam.position.x, z: cam.position.z } : pedestrian
+    const speaking = !this.audio.speaking ? undefined : this.conciergeVoice ? { x: cam.position.x, z: cam.position.z } : this.talkVoice ? this.talkVoiceAt() : pedestrian
     const sp = f.speaker!
     sp.x = speaking ? speaking.x : Number.NaN
     sp.z = speaking ? speaking.z : Number.NaN
@@ -3188,9 +3421,11 @@ export class Engine {
     if (this.captions.size > 0 && this.audio.status().state !== 'running') this.captions.clear()
     // Split: every other player's soundscape from their own head (their room, their cabin, the speaker's walls from
     // them); the speaker's room is the same room whoever listens.
-    // Sloane speaks to player 1 alone: the others go on hearing the pedestrian, wherever they are.
+    // Sloane and a conversation's partner speak to player 1 alone: the others go on hearing the pedestrian, wherever
+    // they are.
     for (let k = 1; k < this.views.length; k++) {
       if (this.conciergeVoice) this.listenFor(this.views[k], k, st, dt, pedestrian, undefined)
+      else if (this.talkVoice) this.listenFor(this.views[k], k, st, dt, pedestrian, undefined)
       else this.listenFor(this.views[k], k, st, dt, speaking, sp.room)
     }
   }

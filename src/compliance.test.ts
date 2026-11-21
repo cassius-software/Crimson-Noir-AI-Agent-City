@@ -170,7 +170,7 @@ test('every source file opens with why it exists and what breaks without it (the
 
 test('controller hints carry no console maker\'s button symbols, in any family, for any action', () => {
   const families: GlyphFamily[] = ['keyboard', 'abxy', 'bayx', 'numbered', 'generic', 'touch']
-  const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping']
+  const actions: ControlAction[] = ['move', 'look', 'run', 'interact', 'handbrake', 'reset', 'throttle', 'brake', 'clock', 'console', 'hud', 'ghost', 'ping', 'talk']
   for (const f of families) for (const a of actions) assert.doesNotMatch(glyph(a, f), /[✕×○◯△□▢⨯]/u, `${f}.${a}`)
   // The glyph table itself holds none either (not even unused).
   assert.doesNotMatch(readFileSync(join(ROOT, 'src/07_Execute_Actions/glyphs.ts'), 'utf8'), /[✕○△□]/u)

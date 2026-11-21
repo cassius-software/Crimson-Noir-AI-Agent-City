@@ -6,17 +6,22 @@
  * machine is ever picked (a remote one is never used, whatever its name), the tier follows the sound and the switch,
  * the speech provider is preferred when it has a voice and the soundscape can place it, a provider that fails falls
  * back to the browser's voice so the line is still heard, a new line cuts the one before, an abort cuts a line, the
- * switch and the voice are kept, and the console bridge reads it all back. Nothing here touches a real browser: the
- * synthesis and the provider are fakes handed in.
+ * switch and the voice are kept, and the console bridge reads it all back. A person in the street speaks through the
+ * same mouth (`person`): a hired agent's own provider voice through their own output, never the source's; anyone else
+ * in an offline voice picked by their number and never Sloane's while there is another (Android's `en_US` counted as
+ * English), at their profile's pitch and rate and their volume, captioned around it; the city's sound applies and
+ * Sloane's switch does not; their lines and hers cut each other and are told as speech like hers. Nothing here
+ * touches a real browser: the synthesis and the provider are fakes handed in.
  * What breaks if it is removed? A network voice could be picked behind the air gap, or Sloane could talk over the
  * sound being off, and nothing would say so.
  */
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type { SpeechClip, Utterance, Voice } from '../operator.ts'
+import type { VoiceProfile } from '../../08_Swarm/roster.ts'
 import {
-  CONCIERGE_DEFAULTS, CONCIERGE_KEY, ConciergeSpeaker, conciergeBridge, loadConciergeSettings, offlineVoices, pickVoice, saveConciergeSettings, synthEnv, tierFor,
-  type KeyStore, type SynthLike, type SynthVoice, type UtteranceLike,
+  CONCIERGE_DEFAULTS, CONCIERGE_KEY, ConciergeSpeaker, conciergeBridge, loadConciergeSettings, offlineVoices, personVoice, pickVoice, saveConciergeSettings, synthEnv, tierFor,
+  type KeyStore, type PersonVoice, type SynthLike, type SynthVoice, type UtteranceLike,
 } from './speaker.ts'
 
 const VOICES: SynthVoice[] = [
@@ -422,4 +427,205 @@ test('the console bridge: status names the switch, the tier and the voice; on an
   const none = conciergeBridge(new ConciergeSpeaker({ env: { synth: null, Utterance: null }, sound: () => true, store: memoryStore() }))
   assert.deepEqual(none.voices(), ['no offline voice on this machine'])
   assert.match(none.status()[2], /this browser has no offline voice/)
+})
+
+/** A phone's voices as Android lists them, with underscored language tags; one is a network voice. */
+const PHONE: SynthVoice[] = [
+  { name: 'Ash', lang: 'en_US', localService: true, default: true },
+  { name: 'Birch', lang: 'en_GB', localService: true },
+  { name: 'Cedar', lang: 'en-AU', localService: true },
+  { name: 'Fern', lang: 'fr_FR', localService: true },
+  { name: 'Remote', lang: 'en_US', localService: false },
+]
+
+/** A deeper profile than Sloane's, as roster.ts has it. */
+const GRAVEL: VoiceProfile = { name: 'gravel', pitch: 0.8, rate: 1.02, blurb: 'deeper, rough-edged' }
+
+/** A passer-by's voice unless told otherwise: no provider, no output, half volume. */
+function walker(o: Partial<PersonVoice> = {}): PersonVoice {
+  return { profile: GRAVEL, pick: 0, provider: null, out: null, volume: 0.5, ...o }
+}
+
+const settle = async () => { for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0)) }
+
+test('an underscored tag (en_US) is English; personVoice: picked by number among the English offline voices, never Sloane\'s while there is another, another language only when no English one is left, never a network voice', () => {
+  assert.deepEqual(offlineVoices(PHONE).map((v) => v.name), ['Ash', 'Birch', 'Cedar', 'Fern'], 'en_US and en_GB rank as English')
+  assert.deepEqual(offlineVoices([{ name: 'Fern', lang: 'fr_FR', localService: true, default: true }, { name: 'Ash', lang: 'en_US', localService: true }]).map((v) => v.name), ['Ash', 'Fern'])
+  assert.deepEqual(offlineVoices([{ name: 'Fern', lang: 'es-ES', localService: true, default: true }, { name: 'Ash', lang: 'EN', localService: true }]).map((v) => v.name), ['Ash', 'Fern'], 'a bare en, any case')
+  assert.deepEqual(offlineVoices([{ name: 'Ash', lang: 'eng', localService: true }, { name: 'Fern', lang: 'fr-FR', localService: true, default: true }]).map((v) => v.name), ['Fern', 'Ash'], 'eng is not a region of en')
+  assert.equal(pickVoice(PHONE, null)?.name, 'Ash', 'Sloane\'s: the English default')
+  assert.deepEqual([0, 1, 2, 3, 7].map((n) => personVoice(PHONE, n, 'Ash')?.name), ['Birch', 'Cedar', 'Birch', 'Cedar', 'Cedar'])
+  for (let n = 0; n < 40; n++) {
+    const v = personVoice(PHONE, n, 'Ash')
+    assert.ok(v && v.name !== 'Ash' && v.name !== 'Fern' && v.localService, `${n}: ${v?.name}`)
+    assert.equal(personVoice(PHONE, n, 'Ash'), v, 'the same number, the same voice')
+  }
+  assert.equal(personVoice(PHONE, 0, 'Birch')?.name, 'Ash', 'Sloane in another voice: that one is avoided instead')
+  assert.equal(personVoice(PHONE, 0, null)?.name, 'Ash', 'nothing to avoid')
+  assert.equal(personVoice([PHONE[0], PHONE[3]], 0, 'Ash')?.name, 'Fern', 'two voices: never hers, even if the other is not English')
+  assert.equal(personVoice([PHONE[0]], 5, 'Ash')?.name, 'Ash', 'one voice: hers is all there is')
+  assert.equal(personVoice([PHONE[4]], 0, null), null, 'a network voice is never used')
+  assert.equal(personVoice([], 0, null), null)
+  assert.equal(personVoice(PHONE, Number.NaN, 'Ash')?.name, 'Birch', 'not a number: the first')
+  assert.equal(personVoice(PHONE, -1, 'Ash')?.name, 'Cedar')
+  assert.equal(personVoice(PHONE, 0xffffffff, 'Ash')?.name, 'Cedar', 'a whole 32-bit number (skills.ts mix)')
+  assert.equal(personVoice(PHONE, 2.9, 'Ash')?.name, 'Birch', 'a fraction is cut to its whole part')
+})
+
+test('person: a browser voice of their own, picked by their number, at their profile\'s pitch and rate and their volume; Sloane\'s switch does not apply, the city\'s sound does; nothing to say, an aborted signal or no offline voice is silent', async () => {
+  const f = fakeSynth(PHONE)
+  let sound = true
+  const s = new ConciergeSpeaker({ env: f.env, sound: () => sound, store: memoryStore() })
+  assert.equal(s.setOn(false), false)
+  const first = s.person('  Evening.   Nice night   for it.  ', walker({ pick: 0, volume: 0.5 }))
+  assert.equal(f.spoken.length, 1, 'said with Sloane\'s switch off')
+  const u = f.spoken[0]
+  assert.deepEqual([u.text, u.voice?.name, u.lang, u.pitch, u.rate, u.volume], ['Evening. Nice night for it.', 'Birch', 'en_GB', 0.8, 1.02, 0.5])
+  f.end()
+  assert.equal(await first, 'browser')
+  assert.equal(s.lastTier, 'browser')
+  const second = s.person('Hello.', walker({ pick: 1 }))
+  assert.equal(f.spoken[1].voice?.name, 'Cedar', 'another number, another voice')
+  f.end()
+  await second
+  assert.equal(s.setVoice('birch'), 'Birch')
+  const third = s.person('Hello.', walker({ pick: 0 }))
+  assert.equal(f.spoken[2].voice?.name, 'Ash', 'Sloane now speaks in Birch: the person does not')
+  f.end()
+  await third
+  s.setOn(true)
+  const hers = s.speak('Hi.')
+  assert.deepEqual([f.spoken[3].voice?.name, f.spoken[3].volume], ['Birch', undefined], 'Sloane\'s own line: her voice, the volume left alone')
+  f.end()
+  await hers
+  for (const [given, set] of [[3, 1], [-1, 0], [Number.NaN, 1], [0.35, 0.35], [1, 1]] as const) {
+    const line = s.person('Hello.', walker({ volume: given }))
+    assert.equal(f.spoken.at(-1)?.volume, set, `volume ${given}`)
+    f.end()
+    await line
+  }
+  const said = f.spoken.length
+  sound = false
+  assert.equal(await s.person('Quiet.', walker()), 'silent', 'the city\'s sound off')
+  sound = true
+  assert.equal(await s.person('   ', walker()), 'silent', 'nothing to say')
+  const ctl = new AbortController()
+  ctl.abort()
+  assert.equal(await s.person('Too late.', walker(), ctl.signal), 'silent', 'aborted before it began')
+  assert.equal(f.spoken.length, said)
+  const remoteOnly = new ConciergeSpeaker({ env: fakeSynth([PHONE[4]]).env, sound: () => true, store: memoryStore() })
+  assert.equal(await remoteOnly.person('Hello.', walker()), 'silent', 'no offline voice (a web view)')
+  const bare = new ConciergeSpeaker({ env: { synth: null, Utterance: null }, sound: () => true, store: memoryStore() })
+  assert.equal(await bare.person('Hello.', walker()), 'silent', 'no speech synthesis at all')
+})
+
+test('person: a hired agent\'s own provider voice is asked for by name and played through their own output, never the source\'s; a passer-by, no output or no provider up takes the browser; a failing provider hands the line to the browser; a cut line is said by nobody', async () => {
+  const f = fakeSynth(PHONE)
+  const p = fakeProvider()
+  const asked: (string | undefined)[] = []
+  const voice: Voice = { ...p.voice, synthesize: (text, signal, v) => { asked.push(v); return p.voice.synthesize(text, signal) } }
+  const head = fakeProvider()
+  let source: { voice: Voice; out: typeof p.out } | null = { voice, out: p.out }
+  const s = new ConciergeSpeaker({ env: f.env, sound: () => true, source: () => source, store: memoryStore() })
+  s.setOn(false)
+  const captions: boolean[] = []
+  const crew = walker({ provider: 'af_sky', out: head.out, caption: (on) => { captions.push(on) } })
+  const line = s.person('Boss.', crew)
+  await settle()
+  assert.deepEqual(asked, ['af_sky'], 'their own voice, by name, with Sloane\'s switch off')
+  assert.deepEqual(head.played, ['Boss.'], 'played at their head')
+  assert.deepEqual(p.played, [], 'not through the source\'s output at the player\'s head')
+  assert.equal(f.spoken.length, 0)
+  head.end()
+  assert.equal(await line, 'provider')
+  assert.equal(s.lastTier, 'provider')
+  assert.deepEqual(captions, [], 'the soundscape captions the provider\'s audio itself')
+  assert.equal(p.voice.settings().voice, 'v1', 'the provider\'s own choice untouched')
+  // A passer-by has no provider voice: the browser, and the provider is never asked.
+  const passing = s.person('Evening.', walker({ out: head.out }))
+  assert.equal(f.spoken.length, 1)
+  f.end()
+  assert.equal(await passing, 'browser')
+  // A provider voice with nowhere at their head to play it: the browser, never the source's output.
+  const nowhere = s.person('Evening.', walker({ provider: 'af_sky' }))
+  assert.equal(f.spoken.length, 2)
+  f.end()
+  assert.equal(await nowhere, 'browser')
+  // No provider up yet (the onboarding): the browser.
+  source = null
+  const early = s.person('Evening.', crew)
+  assert.equal(f.spoken.length, 3)
+  f.end()
+  assert.equal(await early, 'browser')
+  assert.deepEqual(asked, ['af_sky'], 'the provider was asked once only')
+  assert.deepEqual(captions, [true, false], 'the browser line captioned')
+  // The provider fails: the browser says it, captioned.
+  const failing = fakeProvider({ fail: true })
+  source = { voice: failing.voice, out: failing.out }
+  const fails = s.person('Still here.', crew)
+  await settle()
+  assert.deepEqual([failing.said, f.spoken.length, f.spoken.at(-1)?.text], [['Still here.'], 4, 'Still here.'])
+  f.end()
+  assert.equal(await fails, 'browser')
+  assert.deepEqual(captions, [true, false, true, false])
+  // Cut while their clip plays: it fades, and the line ends. Cut on its way: nobody says it.
+  source = { voice, out: p.out }
+  const playing = s.person('Boss.', crew)
+  await settle()
+  assert.equal(head.played.length, 2)
+  s.stop()
+  assert.equal(head.stops, 1)
+  assert.equal(await playing, 'provider')
+  const cut = s.person('Never heard.', crew)
+  s.stop()
+  assert.equal(await cut, 'silent')
+  assert.deepEqual([head.played.length, f.spoken.length, p.played.length], [2, 4, 0])
+})
+
+test('person: one mouth with Sloane; speaking, onSpeaking and onLine cover a person\'s line; stop and an abort cut it; a person\'s line cuts hers and hers cuts theirs; caption brackets a browser line, and a caption that throws does not stop it', async () => {
+  const f = fakeSynth(PHONE)
+  const s = new ConciergeSpeaker({ env: f.env, sound: () => true, store: memoryStore() })
+  const heard: string[] = []
+  s.onSpeaking((on) => { heard.push(on ? 'on' : 'off') })
+  s.onLine(() => { heard.push('line') })
+  const v = walker({ caption: (on) => { heard.push(on ? 'caption' : 'uncaption') } })
+  const whole = ['on', 'line', 'caption', 'uncaption', 'off']
+  const one = s.person('One.', v)
+  assert.equal(s.speaking, true, 'speaking from the first sound')
+  assert.deepEqual(heard, ['on', 'line', 'caption'], 'the edge, the line, then the caption')
+  f.end()
+  assert.equal(await one, 'browser')
+  assert.equal(s.speaking, false)
+  assert.deepEqual(heard, whole, 'the caption ends before speaking does')
+  heard.length = 0
+  const cancelled = f.cancelled
+  const two = s.person('Two.', v)
+  s.stop()
+  assert.equal(await two, 'browser')
+  assert.deepEqual([f.cancelled - cancelled, heard], [1, whole], 'stop cuts a person\'s line')
+  heard.length = 0
+  const ctl = new AbortController()
+  const three = s.person('Three.', v, ctl.signal)
+  ctl.abort()
+  assert.equal(await three, 'browser')
+  assert.deepEqual([f.cancelled - cancelled, heard], [2, whole], 'an abort cuts it')
+  heard.length = 0
+  const hers = s.speak('Mine first.')
+  const theirs = s.person('No, mine.', v)
+  assert.equal(await hers, 'browser')
+  assert.equal(f.cancelled - cancelled, 3, 'a person\'s line cuts Sloane\'s')
+  assert.deepEqual(heard, ['on', 'line', 'line', 'caption'], 'one edge across the cut, a new line for the echo guard')
+  assert.equal(f.spoken.at(-1)?.text, 'No, mine.')
+  const again = s.speak('Excuse me.')
+  assert.equal(await theirs, 'browser')
+  assert.equal(f.cancelled - cancelled, 4, 'Sloane\'s line cuts a person\'s')
+  assert.deepEqual(heard, ['on', 'line', 'line', 'caption', 'line', 'uncaption'])
+  assert.equal(s.speaking, true)
+  f.end()
+  assert.equal(await again, 'browser')
+  assert.deepEqual([s.speaking, heard.at(-1)], [false, 'off'])
+  const loud = s.person('Still said.', walker({ caption: () => { throw new Error('a caption that fails') } }))
+  assert.equal(f.spoken.at(-1)?.text, 'Still said.')
+  f.end()
+  assert.equal(await loud, 'browser')
 })

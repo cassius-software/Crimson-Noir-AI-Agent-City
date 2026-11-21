@@ -16,7 +16,9 @@
  * saved record (05_Observe_Environment/homeStore.ts), saved on every edit the home card commits and handed to the engine
  * with what the shopkeeper says is owned, which draws the homes and makes their furniture solid. A rest at home (the
  * home card's Rest tab) goes through the same keeper, where the engine allows furnishing, with the deed's level and the
- * kinds of furniture the engine draws there.
+ * kinds of furniture the engine draws there. The person near the player can be talked to here too: the conversation
+ * (07_Execute_Actions/talk.ts) is built with the engine, ticked after each frame, offered every heard line before Sloane,
+ * blocked by the page's own cards, and drawn as a label over their head and a panel where Sloane's card stands.
  * What breaks if it is removed? Nothing is mounted: the page is blank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -68,6 +70,9 @@ import { GPU_BACK_FOR_MS, gpuBack, probeGpu, WebGPUUnavailableError, type GpuPro
 import { crowdKernelOf } from './03_Spawn_Agents/crowdSensor.ts'
 import { KernelResetError } from './03_Spawn_Agents/crowdKernelMemory.ts'
 import { Concierge, type AppModelLine } from './07_Execute_Actions/Concierge.tsx'
+import { TalkController } from './07_Execute_Actions/talk.ts'
+import { TalkLabel, TalkPanel } from './07_Execute_Actions/TalkLayer.tsx'
+import { talkWho } from './08_Swarm/talkLines.ts'
 import { Customizer } from './07_Execute_Actions/Customizer.tsx'
 import { StoreCard } from './07_Execute_Actions/StoreCard.tsx'
 import { HomeCard, type FurnishHooks } from './07_Execute_Actions/HomeCard.tsx'
@@ -96,7 +101,7 @@ import { builderPort } from './01_Initialize_World/lakefrontWorkerPort.ts'
 import { screenNames } from './01_Initialize_World/assets/cc0.ts'
 import { Onboarding, type Outcome } from './07_Execute_Actions/onboarding/Onboarding.tsx'
 import { loadMapChoice, loadOnboarding, mapWanted, needsOnboarding, saveMapChoice, type MapChoice, type SavedOnboarding } from './07_Execute_Actions/onboarding/script.ts'
-import { SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
+import { personChat, SLOANE_REWORD_MS, scriptedVoice, sloaneChat, sloaneVoice, type Chat, type Voice } from './07_Execute_Actions/onboarding/voice.ts'
 import { ConciergeSpeaker, conciergeBridge, synthEnv, type ConciergeOut } from './07_Execute_Actions/onboarding/speaker.ts'
 import { heardNow } from './07_Execute_Actions/onboarding/heard.ts'
 import { familyOf, useMentor } from './07_Execute_Actions/onboarding/useMentor.ts'
@@ -1010,7 +1015,10 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     const id = roster.set(name, 'look', next)
     if (id.agent !== null) engineRef.current?.setLook(id.agent, id.look)
   }, [roster])
-  const onSay = useCallback((text: string) => { void speaker.speak(text) }, [speaker])
+  // A conversation with someone in the street is open (talk.ts): Sloane's lines are not spoken over it (her words
+  // still show), and the person's voice is the one the speaker carries.
+  const talkingRef = useRef(false)
+  const onSay = useCallback((text: string) => { if (!talkingRef.current) void speaker.speak(text) }, [speaker])
   /** Sloane's own words for a brief (onboarding/voice.ts sloaneVoice), once the city's mind exists; it keeps the planner's sentence while the provider is scripted. */
   const [sloane, setSloane] = useState<Voice | null>(null)
   /** Sloane in conversation (onboarding/voice.ts sloaneChat), once the city's mind exists: talk on the card is put to it. */
@@ -1105,6 +1113,18 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   const walking = walk && !fw.passed
   // Sloane's card (not her chip) on screen: in a wide window too narrow for both, the walk's card steps aside for it.
   const [sloaneOpen, setSloaneOpen] = useState(false)
+  // The person near the player (talk.ts TalkController, made with the engine; null without one) and whether a
+  // conversation with them is open: the walk's card steps aside for its panel as for Sloane's card.
+  const [talkCtl, setTalkCtl] = useState<TalkController | null>(null)
+  const [talking, setTalking] = useState(false)
+  // Talking is the street's: never under the veil or with the HUD hidden, nor while the console, the wardrobe, a shop's
+  // card, a home's doorstep card, a city action's card, Sloane's card or a halted city's screen is up (the engine adds
+  // the wheel, a headset and its own cards: talk.ts TalkHost.blocked). An open conversation then closes as 'away'.
+  useEffect(() => {
+    talkCtl?.setBlocked(!(veilDone && hudVisible && !termOpen && !lookOpen && storeOpen === null && homeOpen === null && act === null && locked === null && error === null && !sloaneOpen))
+  }, [talkCtl, veilDone, hudVisible, termOpen, lookOpen, storeOpen, homeOpen, act, locked, error, sloaneOpen])
+  // The HUD's chip hands back the serial of the proposal it showed, so a stale chip never opens the wrong person.
+  const onTalkChip = useCallback((serial: number) => talkCtl?.press('tap', serial), [talkCtl])
   const walkRef = useRef(fw)
   useEffect(() => { walkRef.current = fw }, [fw])
   const onGoalSent = useCallback(() => walkRef.current.note('goal'), [])
@@ -1150,8 +1170,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   }, [fw.beat, profile?.name, onSay, hud?.supplier.glyphs])
   // Sloane's quiet watch over a first visitor (onboarding/useMentor.ts), once the walk is over: its lines reach the
   // Concierge as nudges, and a prompt sent to someone in the city is reported to it from the mind below (noteRef,
-  // built once with the engine).
-  const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone && !walking, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
+  // built once with the engine). It holds its tongue while a conversation with someone in the street is open.
+  const { nudge, note: noteMentor } = useMentor({ active: mentored && veilDone && !walking && !talking, engine, hud, family: hud?.supplier.glyphs ?? 'keyboard', name: profile?.name ?? '', voice })
   // The engine's failure handler's view of the mentor's choice (a restart for a lighter crowd carries it across).
   const mentoredRef = useRef(mentored)
   useEffect(() => { mentoredRef.current = mentored }, [mentored])
@@ -1431,6 +1451,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
     let unfollow: (() => void) | null = null
     /** Unties the microphone from the recogniser and Sloane's ear (set once the engine is up). */
     let unlisten: (() => void) | null = null
+    /** The conversation with the person near the player (talk.ts), ticked from the frame loop; null until the engine is up and once it halts. */
+    let talk: TalkController | null = null
     // The sentence the page's own recogniser last understood, and when: the pill shows it for SAID_MS.
     const said = { text: '', at: Number.NEGATIVE_INFINITY, n: 0 }
     /** Stops the page's keeper cueing this city's checks (its one listener), and the recruiter's events earning. */
@@ -1466,12 +1488,15 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       if (!engine || engine.halted) return
       try {
         engine.frame(now)
+        talk?.tick(now)
         // The team's lanes read the city a few times a second, never per frame: their gas is per tick, and the HUD shows
         // their readings on its own interval.
         if (crew && now - lastTeam >= TEAM_TICK_MS) { lastTeam = now; crew.tick() }
         if (now - lastHud > HUD_INTERVAL_MS) {
           lastHud = now
           const s = engine.snapshot()
+          // The person near the player for the HUD's chip and the announcer (talk.ts hud(): the same object while unchanged).
+          s.supplier.talk = talk?.hud()
           // The operator's progression chip: the keeper's own cache builds its strings only when what it shows changed
           // (a check, a purchase, the round's refill, the cue going stale), so this costs a few comparisons a tick.
           s.supplier.progress = hudProgress(pageProgress(), cue, now)
@@ -1638,7 +1663,9 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // to be had (no pack beside this page, or it could not start) and the browser promises one, or when
         // `recruit listen` asks for it by name; the two never read the same speech. Neither microphone is ever open
         // without the pill: `recruit listen` opens the pill's microphone too, and a mute stops both. What is heard
-        // that is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal).
+        // that is not a recruitment request goes to Sloane (Concierge.tsx heard; heard.ts decides what of it is a goal),
+        // unless an open conversation with the person near the player, or a greeting to the person offered, takes it
+        // (talk.ts hear; a line said to Sloane closes the conversation and still reaches her).
         const speech = PAGE_SPEECH()
         const words = (): boolean => { const R = speechEnv().Recognition; return R !== null && 'processLocally' in R.prototype }
         const browserLive = (): boolean => { const st = r.mic.state; return st === 'listening' || st === 'starting' }
@@ -1715,7 +1742,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         const onHeard = (ev: Event) => {
           const t = (ev as CustomEvent<{ transcript: string }>).detail.transcript
           if (!vouched && !heardNow(speaker.speaking, performance.now(), quietAt)) return
-          if (parseRequest(t) === null) setHeard({ id: ++heardId, text: t })
+          if (parseRequest(t) === null && !talk?.hear(t)) setHeard({ id: ++heardId, text: t })
         }
         r.addEventListener('heard', onHeard)
         // What the page's own recogniser read goes the way the browser's does: the recruiter's if it asks for a skill,
@@ -1740,6 +1767,10 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           r.removeEventListener('mic', onRecruiterMic)
           r.removeEventListener('heard', onHeard)
           unquiet()
+          // The conversation goes with the city (a halt, or the city's end): closed, nobody followed, no more presses.
+          talk?.dispose()
+          talk = null
+          e.onTalk = null
         }
         // The microphone opens as the city starts: on a first visit (the one line), or as the visitor left it (on, not muted).
         if (mic.opensAtBoot()) { unasked = true; void mic.listen() }
@@ -2118,6 +2149,42 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // Sloane in conversation, in the same order: talk on the card gets the model's reply, with no deadline of its own
         // (the router's waits bound it, a load in this page among them); none with the scripted provider.
         setSloaneTalk(sloaneChat(mind, () => local.settings().provider !== 'scripted'))
+        // Whether a passer-by's reply may ask the model at all (onboarding/voice.ts personChat): a model server on this
+        // machine answers people on any device; the model in this page or the app's only once warm (never the answer that
+        // loads it), and only on a desktop with a discrete GPU, so a passer-by never holds a phone's or a laptop's tier down;
+        // the operator's cloud key is never spent on them. Otherwise the person's scripted lines answer at once.
+        const peopleThink = (): boolean => {
+          const s = local.settings()
+          if (s.provider === 'scripted' || s.provider === 'claude' || s.found === 'claude' || pageCold()) return false
+          const shared = s.provider === 'inpage' || s.provider === 'native' || (s.provider === 'auto' && (s.found === undefined || s.found === 'inpage' || s.found === 'native'))
+          return !shared || (e.profile.gpuClass === 'discrete' && !e.profile.mobile && !e.profile.lite)
+        }
+        // The person near the player (talk.ts): who is offered and when a conversation opens or closes, over the engine's
+        // narrow host. Replies ask the raw router (never the mind above, so no unscreened tail reaches the HUD and no
+        // reply counts as the visitor's prompt), each is said through Sloane's own speaker (one mouth: the microphone's
+        // echo guard and barge-in cover people too), and a line typed to Sloane reaches her card as a heard one does.
+        // It starts blocked: the page's own reasons (the blocked effect above) follow with the next render.
+        const talker = new TalkController({
+          host: e.talkHost(),
+          chat: personChat(local, peopleThink),
+          speaker,
+          who: (row) => talkWho(row, roster.byAgent(row), r.recruits.find((v) => v.agent === row) ?? null, voiceOf(row)),
+          // The staring setter: a no-op until heads can be told whom to face (its one call site in the page).
+          partner: noop,
+          onOpen: (on) => {
+            talkingRef.current = on
+            setTalking(on)
+            if (on) noteRef.current('talk')
+          },
+          onSloane: (text) => setHeard({ id: ++heardId, text }),
+          toast: (title, body) => e.toast(title, body),
+          micOpen: () => mic.open,
+        })
+        talker.setBlocked(true)
+        talk = talker
+        // T, the pad's talk button (West, or the d-pad's up one-handed left) arrive through the engine as one press.
+        e.onTalk = (how) => talk?.press(how)
+        setTalkCtl(talker)
         setBridge(Object.freeze({
           ...engineBridge,
           // The map this shell walks, for the console's `map` status line (the choice itself is remap's).
@@ -2217,6 +2284,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
               // The first walk (09_Cognition/firstWalk.ts): the stage on the card (null when off or passed), and a report into it.
               walk: () => walkRef.current.stage,
               walkNote: (ev: WalkEvent) => walkRef.current.note(ev),
+              // A stand-in partner (talk.ts preview) for the smoke run's layouts: offered, talked with, or let go.
+              talk: (what?: 'near' | 'open' | null) => talk?.preview(what ?? null),
               // The physics realm as the harness sees it: the mirrored state, the command queue (dbg* accepted), the next state.
               sim: e.debugSim(),
               engine: e,
@@ -2273,6 +2342,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
       setSloaneTalk(null)
       setSiteModel(null)
       setAppModel(null)
+      setTalkCtl(null)
       unfollow?.()
       uncheck?.()
       unearn?.()
@@ -2297,10 +2367,12 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
   return (
     <main ref={mainRef} className="relative h-full w-full overflow-hidden bg-slate-900">
       <canvas ref={canvasRef} className="block h-full w-full touch-none" />
+      {/* The label over the head of the person near (TalkLayer.tsx), under the HUD; its key only where one is pressed. */}
+      {talkCtl && <TalkLabel talk={talkCtl} family={hud && !hud.supplier.touch ? hud.supplier.glyphs : undefined} />}
       {/* The picker's file input: no accept (a phone greys out a .gguf it has no type for), and hidden by its size
           and opacity, never by display, so every browser still opens it from a click. */}
       <input ref={fileRef} type="file" multiple tabIndex={-1} aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
-      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} />
+      <Hud s={hud} adapter={adapter} visible={hudVisible} terminalOpen={termOpen} mapLayer={engine?.mapLayer ?? null} highContrast={high} captionPx={CAPTION_PX[access.captions]} mic={mic} onMic={onMic} onBrowse={openStore} homes={engine?.homes ?? null} onHome={openHome} onTalkChip={onTalkChip} />
       {/* No touch controls under a home's doorstep card: the avatar is held still there, and the card takes the taps. */}
       {engine && hud && !termOpen && homeOpen === null && (
         <TouchControls
@@ -2358,9 +2430,23 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           onOpen={setSloaneOpen}
         />
       )}
+      {/* The conversation with the person near (TalkLayer.tsx), where Sloane's card stands: hers cannot be open meanwhile
+          (opening it closes the conversation), and her chip stays. Mounted with the HUD, so its screen-reader line exists
+          before the first thing it tells. */}
+      {hud && talkCtl && (
+        <TalkPanel
+          talk={talkCtl}
+          family={hud.supplier.glyphs}
+          overlay={hud.supplier.touch}
+          dark={hud.customer.daylight < 0.35}
+          beside={walking && fw.card !== null}
+          zoom={access.scale / 100}
+          voice={hud.supplier.voice ?? null}
+        />
+      )}
       {/* The first walk's card (onboarding/FirstWalk.tsx): over the HUD, under the console; away while the wardrobe, a
           shop's card or a home's doorstep card is open or the city is halted, and in a wide window under 60 rem across while Sloane's card is open
-          (from 60 rem her card stands left of it). It has no close: reaching the console on its last stage ends it. */}
+          or a conversation's panel stands in its place (from 60 rem either stands left of it). It has no close: reaching the console on its last stage ends it. */}
       {hud && walking && fw.card && (
         <FirstWalkCard
           visible={veilDone && !lookOpen && storeOpen === null && homeOpen === null && locked === null}
@@ -2373,7 +2459,7 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           termOpen={termOpen}
           onShow={showWalk}
           onSay={onSay}
-          crowded={sloaneOpen}
+          crowded={sloaneOpen || talking}
           driving={hud.input.mode === 'vehicle'}
           zoom={access.scale / 100}
           travelled={hud.experience.distanceWalked + hud.experience.distanceDriven}

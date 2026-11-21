@@ -38,7 +38,7 @@ export const CONTACT = Object.freeze({
 })
 
 /** A pedestrian's hidden rows (folded far below the street) are not people to meet. */
-const HIDDEN_Y = -50
+export const HIDDEN_Y = -50
 
 /** The poles of the city in a uniform grid, for the nearest one to a point. */
 export class PoleIndex {

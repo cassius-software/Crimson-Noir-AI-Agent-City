@@ -5,8 +5,8 @@
  * Why does this file exist? It is the Supplier stage of the SIPOC X flow: keyboard, mouse (pointer-locked,
  * or dragged with the button held), gamepads and touch controls, merged into one per-frame intent — the
  * head's yaw and pitch, held keys, an Analog frame (sticks, triggers, touch stick) and edge-triggered
- * actions (enter/exit vehicle, reset, clock, ghost view, a ping) — plus the hardware bus (HalBus) and the adaptive-trigger hook
- * that turns brake pressure into trigger resistance. With more than one local player (setPlayers) it also keeps the
+ * actions (enter/exit vehicle, reset, clock, ghost view, a ping, a word with the person near you) — plus the hardware
+ * bus (HalBus) and the adaptive-trigger hook that turns brake pressure into trigger resistance. With more than one local player (setPlayers) it also keeps the
  * seating plan (seats.ts): the pads are read once a frame and dealt to seats, player 1 keeps the keyboard, the mouse,
  * touch and the pad in seat 0, and every other seat is its own PadSeat intent (intent(seat)).
  * What breaks if it is removed? The player cannot move, look, drive or interact.
@@ -19,7 +19,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse' | 'talk'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -43,6 +43,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyV: 'mute',
   /** A shop's catalogue, standing in it (01_Initialize_World/storefronts.ts; E does it too when no car is in reach). */
   KeyB: 'browse',
+  /** Talk to the person near you (07_Execute_Actions/talk.ts); also a pad's west face button (a left hand's d-pad up). */
+  KeyT: 'talk',
 }
 
 /** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */
@@ -551,6 +553,7 @@ export class Input {
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
     if (edges & PAD_EDGE.mute) this.queued.add('mute')
+    if (edges & PAD_EDGE.talk) this.queued.add('talk')
     if (this.mapper.active) this.lastSource = 'gamepad'
 
     const xr = this.xr

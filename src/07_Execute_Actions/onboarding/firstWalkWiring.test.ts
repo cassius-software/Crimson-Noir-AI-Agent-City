@@ -167,7 +167,8 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   const card = read('./FirstWalk.tsx')
   // App: Sloane is told the walk's card is up and tells App when her card is open; the walk's card hears it.
   assert.match(app, /beside=\{walking && fw\.card !== null\}\s*zoom=\{access\.scale \/ 100\}\s*onOpen=\{setSloaneOpen\}/)
-  assert.match(app, /crowded=\{sloaneOpen\}/)
+  // The walk's card steps aside for a conversation's panel too: it stands where Sloane's card does (talk.ts, TalkLayer.tsx).
+  assert.match(app, /crowded=\{sloaneOpen \|\| talking\}/)
   // Sloane: her wide column moves left of the walk's card when there is room, and her open state is any view but the chip.
   assert.match(concierge, /className=\{beside && roomy \? WIDE_BESIDE : WIDE_COLUMN\}/)
   assert.match(concierge, /const opened = visible && view !== 'chip'/)
@@ -175,7 +176,7 @@ test('the walk\'s card and Sloane\'s open card stand side by side on a wide scre
   // Both cards are inside the text size's zoom, so the room is zoomed rem: twice the window at 200 %, one store per zoom.
   assert.match(concierge, /return `\(min-width: \$\{Math\.round\(BESIDE_ROOM_PX \* Math\.max\(1, zoom\)\)\}px\)`/)
   for (const src of [concierge, card]) assert.match(src, /const room = besideRoom\(zoom\)\n\s+const roomy = useSyncExternalStore\(room\.subscribe, room\.matches, room\.server\)/)
-  assert.equal(app.match(/zoom=\{access\.scale \/ 100\}/g)?.length, 2, 'App hands both cards the same zoom')
+  assert.equal(app.match(/zoom=\{access\.scale \/ 100\}/g)?.length, 3, 'App hands both cards, and the conversation\'s panel in Sloane\'s place, the same zoom')
   // Side by side only in the wide place with room for both: on a phone, a small window or a window small only at the
   // zoom, Sloane's open card takes the band the walk's card stands in (her short and tall layouts), so it steps aside.
   assert.match(card, /const besideHers = !overlay && !compact && !squeezed && roomy/)
