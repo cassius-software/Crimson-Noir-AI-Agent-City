@@ -207,7 +207,7 @@ const fillStyle = (home: number): number => (home === 1 ? STYLE.masonry : home =
 
 /**
  * The homes on the given lots, geometry and all: the city's (hollowProperties) or a region's (regionWorld.ts
- * hollowLots, from region/homes.ts). `podium` gives a lot's podium (its height and finish: the ceiling slab keeps the
+ * hollowLots, from region/placement.ts). `podium` gives a lot's podium (its height and finish: the ceiling slab keeps the
  * podium's own finish, so the building above reads as it did). A lot's property index must be one of PROPERTY_KINDS'.
  * - The shell is the shop's exactly (storefronts.ts shopsAt): the back wall, the two side walls, the doorway's wall in
  *   two pieces round the opening, all glass from the floor to ROOM.height, and the ceiling slab over the whole lot.

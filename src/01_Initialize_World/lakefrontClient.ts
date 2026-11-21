@@ -9,7 +9,7 @@
  * What breaks if it is removed? The onboarding and `?map=lakefront` have no way to build the map in the background.
  */
 import { generateLakefront, type LakefrontMap, type Zone } from './lakefront.ts'
-import { BUILD_STAGES, WALK_BLOCKS, packOf, type BuildStage, type FromWorker, type ToWorker } from './lakefrontPack.ts'
+import { BUILD_STAGES, WALK_BLOCKS, packOf, startZone, type BuildStage, type FromWorker, type ToWorker } from './lakefrontPack.ts'
 import type { RegionPack } from './region/pack.ts'
 
 /** Something that posts to and hears from the builder: a Worker, or the inline stand-in. */
@@ -38,7 +38,7 @@ export function inlinePort(): BuilderPort {
         } else {
           if (!map) throw new Error('no map was built yet')
           say({ kind: 'stage', stage: 'names' })
-          const pack = packOf(map, m.zone)
+          const pack = packOf(map, startZone(m.zone))
           say({ kind: 'stage', stage: 'ready' })
           say({ kind: 'pack', id: m.id, pack })
         }
