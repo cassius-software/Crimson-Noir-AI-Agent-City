@@ -1196,3 +1196,30 @@ test('a jolt that dips a resting finger for a frame or two never lowers the poin
   for (let k = 0; k < 20; k++) assert.equal(frame(0.15), 0, 'eased to 0.15: nothing')
   assert.ok(frame(0.3) > 0.1, 'held there, then pulled back to 0.3: it drives')
 })
+
+test('a press eased back and pulled again drives from where it came to rest, soon after, and a pull is never taken for the rest', () => {
+  const run = (path: number[]) => {
+    const lone = ctl('none', 6, 4)
+    lone.buttons[XR_BUTTON.trigger].value = 1
+    const r = rig([lone])
+    r.m.driving = true
+    const out: number[] = []
+    for (const v of path) { lone.buttons[XR_BUTTON.trigger].value = v; r.tick(11); r.m.read(); out.push(r.m.analog.throttle) }
+    return out
+  }
+  const ramp = (from: number, to: number, frames: number) => Array.from({ length: frames }, (_, k) => from + ((to - from) * (k + 1)) / frames)
+  const hold = (v: number, frames: number) => Array.from({ length: frames }, () => v)
+  // Released over 66 ms to a worn rest, then pulled straight to the stop over 99 ms and held.
+  let t = run([...hold(1, 2), ...ramp(1, 0.06, 6), ...ramp(0.06, 1, 9), ...hold(1, 30)])
+  assert.ok(close(t[t.length - 1], 1), `released and pulled straight back: full throttle (${t[t.length - 1]})`)
+  // Eased to 0.3 over 99 ms and held still for 165 ms, then a full pull.
+  t = run([...ramp(1, 0.3, 9), ...hold(0.3, 15), ...ramp(0.3, 1, 5), ...hold(1, 30)])
+  assert.ok(close(t[t.length - 1], 1), `eased, held, pulled: full throttle (${t[t.length - 1]})`)
+  // Released to a resting finger at 0.1, rested 200 ms, then pulled to 0.6 and held: it drives for as long as it is held.
+  t = run([...ramp(1, 0.1, 6), ...hold(0.1, 18), ...ramp(0.1, 0.6, 5), ...hold(0.6, 180)])
+  const at = (0.6 - 0.14) / 0.86
+  for (const v of t.slice(-170)) assert.ok(close(v, at, 1e-9), `pulled to 0.6 from a 0.1 rest: ${at} throughout (${v})`)
+  // A slow ease to 0.1 over 300 ms, then a pull to 0.5 held for a second.
+  t = run([...ramp(1, 0.1, 27), ...ramp(0.1, 0.5, 5), ...hold(0.5, 90)])
+  assert.ok(t.slice(-80).every((v) => v > 0.3), `after a slow ease, a pull to 0.5 drives (${t[t.length - 1]})`)
+})
