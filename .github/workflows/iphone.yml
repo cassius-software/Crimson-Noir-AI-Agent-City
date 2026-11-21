@@ -50,12 +50,23 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist || true
           xcodebuild -version || true
           ls /Applications | grep -i xcode || true
-          system_profiler SPDisplaysDataType || true
           xcrun simctl list runtimes || true
           xcrun simctl list devices available | grep -i iphone | head -40 || true
       - run: npm ci --no-audit --no-fund
       - name: The web copy (dist-web/), as web.yml builds it
         run: npm run build:web
+      # WebKit gives a virtual Mac no WebGPU adapter unless this default says otherwise (its HardwareCapabilities.mm,
+      # isPhysicalHardware: kern.hv_vmm_present, then WebKitAllowWebGPUOnVMs), and a hosted runner is a virtual Mac. Which
+      # process reads it is WebKit's GPU process, so it is written where every process of this user finds it, and by name.
+      - name: WebGPU allowed on this virtual Mac (WebKit's own switch for virtual machines)
+        run: |
+          sysctl kern.hv_vmm_present || true
+          defaults write -g WebKitAllowWebGPUOnVMs -bool YES
+          defaults write com.apple.WebKit.GPU WebKitAllowWebGPUOnVMs -bool YES
+          defaults write com.apple.Safari WebKitAllowWebGPUOnVMs -bool YES || true
+          sudo defaults write /Library/Preferences/.GlobalPreferences WebKitAllowWebGPUOnVMs -bool YES
+          defaults read -g WebKitAllowWebGPUOnVMs
+          system_profiler SPDisplaysDataType 2>&1 | head -30 || true
       - name: Safari's remote automation on
         run: sudo safaridriver --enable
       - name: The web copy in Safari on this Mac

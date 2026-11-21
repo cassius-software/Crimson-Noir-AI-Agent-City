@@ -139,6 +139,17 @@ export const PROBE = `(async () => {
   out.wasm = typeof WebAssembly
   out.storage = typeof navigator.storage?.getDirectory
   out.serviceWorker = typeof navigator.serviceWorker
+  // WebGL's own word for the GPU, where the browser gives one: it says whether any GPU reaches the page at all.
+  await step('webgl', () => {
+    const canvas = document.createElement('canvas')
+    for (const id of ['webgl2', 'webgl']) {
+      const gl = canvas.getContext(id)
+      if (!gl) continue
+      const ext = gl.getExtension('WEBGL_debug_renderer_info')
+      return { context: id, vendor: gl.getParameter(ext ? ext.UNMASKED_VENDOR_WEBGL : gl.VENDOR), renderer: gl.getParameter(ext ? ext.UNMASKED_RENDERER_WEBGL : gl.RENDERER) }
+    }
+    return null
+  })
   out.gpu = typeof navigator.gpu
   if (navigator.gpu) {
     await step('format', () => navigator.gpu.getPreferredCanvasFormat())
