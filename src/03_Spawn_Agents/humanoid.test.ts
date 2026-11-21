@@ -26,6 +26,7 @@ import {
 import { HEEL, LOOK_BODIES, LOOK_CODED_PIECE, LOOK_HASH, LOOK_PIECE_BIT, UMBRELLA, shaderHash } from './look.ts'
 import { FOOT, SEGMENTS } from './ragdollRig.ts'
 import { compileWgsl } from './wgslHost.ts'
+import { TALK, talkWeight } from './talkGaze.ts'
 import { RIG_POSE, RIG_SEGMENTS, RIG_SLOTS } from '../07_Execute_Actions/simProtocol.ts'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
@@ -538,44 +539,126 @@ test('on a heel: the foot pitches toes down and the body stands higher by heelPo
   }
 })
 
-test('gazeAt: the eye ahead holds the head straight; to the side it turns the chest by its share and the head by the rest, to their limits; behind, beyond reach or at the person\'s own neck it is let go; it fades from near to reach; the way they go turns the head within its small limit, whole from a slow walk; a heading wraps', () => {
+test('gazeAt: nobody looks at the operator unless the operator is talking to them: with no conversation the eye is ignored wherever it stands and the head goes the way they go', () => {
+  const neck = [0, 1.5, 0] as const
+  const same = (got: ReturnType<typeof gazeAt>, want: ReturnType<typeof gazeAt>, what: string) => { near(got.chest, want.chest, 1e-12, `${what}: chest`); near(got.head, want.head, 1e-12, `${what}: head`); near(got.pitch, want.pitch, 1e-12, `${what}: pitch`) }
+  for (const eye of [[0, 1.5, 2], [1, 1.5, 1.5], [2, 1.5, 0], [-1, 1.5, 1.5], [0, 2.5, 1.2], [0.6, 1.0, 0.6], [3, 1.7, 4]] as const) {
+    same(gazeAt(neck, 0, 0, 0, eye), GAZE_AHEAD, `standing, the eye at ${eye.join(', ')}: not talked to, not looked at`)
+    same(gazeAt(neck, 0, 0, 0, eye, 0), GAZE_AHEAD, 'a weight of 0 the same')
+    same(gazeAt(neck, 0, 0, 0, eye, -1), GAZE_AHEAD, 'a weight under 0 is none')
+    same(gazeAt(neck, 0.7, 1, 0.2, eye), gazeAt(neck, 0.7, 1, 0.2, null), 'walking: the way they go, as if nobody were there')
+  }
+})
+
+test('gazeAt in a conversation: the eye ahead holds the head straight; to the side it turns the chest by its share and the head by the rest, to their limits; behind, beyond reach or at the person\'s own neck it is let go, every edge a fade; the weight moves the head from the way they go to the eye; the way they go turns the head within its small limit, whole from a slow walk, let go as the bearing passes behind them; a heading wraps', () => {
   const neck = [0, 1.5, 0] as const
   const sum = GAZE.headYaw + GAZE.chestYaw
+  const talk = (heading: number, vx: number, vz: number, eye: readonly [number, number, number] | null, w = 1) => gazeAt(neck, heading, vx, vz, eye, w)
+  const yawOf = (g: ReturnType<typeof gazeAt>) => g.chest + g.head
   const same = (got: ReturnType<typeof gazeAt>, want: ReturnType<typeof gazeAt>, what: string) => { near(got.chest, want.chest, 1e-12, `${what}: chest`); near(got.head, want.head, 1e-12, `${what}: head`); near(got.pitch, want.pitch, 1e-12, `${what}: pitch`) }
-  same(gazeAt(neck, 0, 0, 1, [0, 1.5, 2]), GAZE_AHEAD, 'ahead')
-  same(gazeAt(neck, 0, 0, 1, null), GAZE_AHEAD, 'nobody')
-  const aside = gazeAt(neck, 0, 0, 0, [1, 1.5, 1.5])
+  same(talk(0, 0, 1, [0, 1.5, 2]), GAZE_AHEAD, 'ahead')
+  same(talk(0, 0, 1, null), GAZE_AHEAD, 'nobody')
+  const aside = talk(0, 0, 0, [1, 1.5, 1.5])
   const bearing = Math.atan2(1, 1.5)
   near(aside.chest, bearing * GAZE.chestShare, 1e-12, 'the chest\'s share'); near(aside.head, bearing * (1 - GAZE.chestShare), 1e-12, 'the head the rest'); assert.equal(aside.pitch, 0)
-  const right = gazeAt(neck, 0, 0, 0, [2, 1.5, 0])
-  same(right, { chest: GAZE.chestYaw, head: GAZE.headYaw, pitch: 0 }, 'square to the right: both at their limits')
+  same(talk(0, 0, 0, [2, 1.5, 0]), { chest: GAZE.chestYaw, head: GAZE.headYaw, pitch: 0 }, 'square to the right: both at their limits')
   assert.ok(Math.PI / 2 > sum, 'which a right angle exceeds')
-  const left = gazeAt(neck, 0, 0, 0, [-1, 1.5, 1.5])
+  assert.ok(GAZE.cone - GAZE.coneFade > Math.PI / 2, 'and the cone\'s fade starts past it')
+  const left = talk(0, 0, 0, [-1, 1.5, 1.5])
   near(left.chest, -aside.chest, 1e-12, 'mirrored'); near(left.head, -aside.head, 1e-12, 'mirrored')
-  same(gazeAt(neck, 0, 0, 0, [0, 1.5, -3]), GAZE_AHEAD, 'behind')
-  same(gazeAt(neck, 0, 0, 0, [3, 1.5, 5]), GAZE_AHEAD, 'beyond reach')
-  same(gazeAt(neck, 0, 0, 0, [0.2, 1.5, 0.3]), GAZE_AHEAD, 'their own neck')
-  const far = gazeAt(neck, 0, 0, 0, [1, 1.5, 3.3]), nearer = gazeAt(neck, 0, 0, 0, [1, 1.5, 2.2])
-  assert.ok(far.head > 0 && far.head < Math.atan2(1, 3.3) * (1 - GAZE.chestShare) - 1e-6, 'fading between near and reach')
-  near(nearer.head + nearer.chest, Math.atan2(1, 2.2), 1e-12, 'whole within near')
-  near(gazeAt(neck, 0, 0, 0, [0, 2.5, 2]).pitch, Math.atan2(1, 2), 1e-12, 'looking up at an eye above')
-  assert.equal(gazeAt(neck, 0, 0, 0, [0, 4, 1]).pitch, GAZE.headPitch, 'to the limit')
-  near(gazeAt(neck, 0, 0, 0, [0, 1.0, 2]).pitch, -Math.atan2(0.5, 2), 1e-12, 'down at one below')
+  same(talk(0, 0, 0, [0, 1.5, -3]), GAZE_AHEAD, 'behind')
+  const shoulder = talk(0, 0, 0, [Math.sin(GAZE.cone - GAZE.coneFade / 2) * 2, 1.5, Math.cos(GAZE.cone - GAZE.coneFade / 2) * 2])
+  assert.ok(yawOf(shoulder) > 0.2 && yawOf(shoulder) < sum - 0.2, 'over the shoulder, between the limit and the cone: swinging back to the front')
+  same(talk(0, 0, 0, [7, 1.5, 7]), GAZE_AHEAD, 'beyond reach')
+  same(talk(0, 0, 0, [0.1, 1.5, 0.15]), GAZE_AHEAD, 'their own neck')
+  const close = talk(0, 0, 0, [0.2, 1.5, 0.3])
+  assert.ok(yawOf(close) > 0 && yawOf(close) < Math.atan2(0.2, 0.3) - 1e-6, 'fading in toward their own neck')
+  const far = talk(0, 0, 0, [1, 1.5, 7.5]), nearer = talk(0, 0, 0, [1, 1.5, 5])
+  assert.ok(far.head > 0 && far.head < Math.atan2(1, 7.5) * (1 - GAZE.chestShare) - 1e-6, 'fading between near and reach')
+  near(yawOf(nearer), Math.atan2(1, 5), 1e-12, 'whole within near: as far off as a conversation is held')
+  assert.ok(Math.hypot(1, 5) < GAZE.near && Math.hypot(1, 7.5) > GAZE.near && Math.hypot(1, 7.5) < GAZE.reach)
+  near(talk(0, 0, 0, [0, 2.5, 2]).pitch, Math.atan2(1, 2), 1e-12, 'looking up at an eye above')
+  assert.equal(talk(0, 0, 0, [0, 4, 1]).pitch, GAZE.headPitch, 'to the limit')
+  near(talk(0, 0, 0, [0, 1.0, 2]).pitch, -Math.atan2(0.5, 2), 1e-12, 'down at one below')
   // The heading turns the frame: facing +x, an eye at +x is ahead and one at +z is to the left.
-  same(gazeAt(neck, Math.PI / 2, 0, 0, [2, 1.5, 0]), GAZE_AHEAD, 'facing +x, an eye at +x')
-  assert.ok(gazeAt(neck, Math.PI / 2, 0, 0, [0, 1.5, 2]).head < 0)
+  same(talk(Math.PI / 2, 0, 0, [2, 1.5, 0]), GAZE_AHEAD, 'facing +x, an eye at +x')
+  assert.ok(talk(Math.PI / 2, 0, 0, [0, 1.5, 2]).head < 0)
+  // The weight: half way into the conversation, half way round; it moves the head steadily from nothing to the eye.
+  near(yawOf(talk(0, 0, 0, [1, 1.5, 1.5], 0.5)), bearing / 2, 1e-12, 'half the weight, half the turn')
+  near(talk(0, 0, 0, [0, 2.5, 2], 0.5).pitch, Math.atan2(1, 2) / 2, 1e-12, 'and half the pitch')
+  same(talk(0, 0, 0, [1, 1.5, 1.5], 2), aside, 'a weight over 1 is whole')
+  let before = -Infinity
+  for (let w = 0; w <= 1 + 1e-9; w += 0.05) {
+    const y = yawOf(talk(0, 1, 0.3, [-1, 1.6, 1.2], w))
+    if (w > 0) assert.ok(y < before, `walking right and talked to on the left, the head turns left steadily (weight ${w.toFixed(2)})`)
+    before = y
+  }
   // The way they go.
-  const travel = gazeAt(neck, 0, 1, 0, null)
-  near(travel.chest + travel.head, GAZE.travelYaw, 1e-12, 'walking to the right of the heading, the head leads, to its small limit')
+  const travel = talk(0, 1, 0, null)
+  near(yawOf(travel), GAZE.travelYaw, 1e-12, 'walking to the right of the heading, the head leads, to its small limit')
   near(travel.chest, GAZE.travelYaw * GAZE.chestShare, 1e-12, 'the chest\'s share')
-  near(gazeAt(neck, 0, -1, 0, null).head, -travel.head, 1e-12, 'to the left')
-  near(gazeAt(neck, 0, GAZE.travelSpeed / 2, 0, null).head + gazeAt(neck, 0, GAZE.travelSpeed / 2, 0, null).chest, GAZE.travelYaw / 2, 1e-12, 'half at half the speed')
-  near(gazeAt(neck, 0, 0.1, 1, null).head + gazeAt(neck, 0, 0.1, 1, null).chest, Math.atan2(0.1, 1), 1e-12, 'a slight bearing, whole')
-  near(gazeAt(neck, 3, Math.sin(-3), Math.cos(-3), null).head + gazeAt(neck, 3, Math.sin(-3), Math.cos(-3), null).chest, 2 * Math.PI - 6, 1e-9, 'the bearing off the heading wraps')
-  const both = gazeAt(neck, 0, 1, 0, [0, 1.5, 2])
+  near(talk(0, -1, 0, null).head, -travel.head, 1e-12, 'to the left')
+  near(yawOf(talk(0, GAZE.travelSpeed / 2, 0, null)), GAZE.travelYaw / 2, 1e-12, 'half at half the speed')
+  near(yawOf(talk(0, 0.1, 1, null)), Math.atan2(0.1, 1), 1e-12, 'a slight bearing, whole')
+  near(yawOf(talk(3, Math.sin(-3), Math.cos(-3), null)), 2 * Math.PI - 6, 1e-9, 'the bearing off the heading wraps')
+  same(talk(0, 0, -1, null), GAZE_AHEAD, 'stepping straight back: the head stays ahead')
+  for (const off of [Math.PI - 0.05, -(Math.PI - 0.05)]) same(talk(0, Math.sin(off), Math.cos(off), null), GAZE_AHEAD, `a bearing of ${off.toFixed(2)}, nearly behind: still ahead, from either side`)
+  const mid = yawOf(talk(0, Math.sin((GAZE.travelFade + GAZE.travelBack) / 2), Math.cos((GAZE.travelFade + GAZE.travelBack) / 2), null))
+  assert.ok(mid > 0 && mid < GAZE.travelYaw - 1e-6, 'let go gradually between travelFade and travelBack')
+  const both = talk(0, 1, 0, [0, 1.5, 2])
   same(both, GAZE_AHEAD, 'an eye ahead overrides the way they go')
-  const farBoth = gazeAt(neck, 0, 1, 0, [0, 1.5, 3.5])
-  assert.ok(farBoth.head + farBoth.chest > 0 && farBoth.head + farBoth.chest < GAZE.travelYaw, 'a fading eye blends with it')
+  const farBoth = talk(0, 1, 0, [0, 1.5, 7.5])
+  assert.ok(yawOf(farBoth) > 0 && yawOf(farBoth) < GAZE.travelYaw, 'a fading eye blends with it')
+})
+
+test('gazeAt never snaps a head: the operator walking all the way round a person they talk to, toward them from far off to their own neck, or a person turning against their own way, each moves the head by small steps', () => {
+  const neck = [0, 1.5, 0] as const
+  const step = (a: ReturnType<typeof gazeAt>, b: ReturnType<typeof gazeAt>) => Math.max(Math.abs(a.chest - b.chest), Math.abs(a.head - b.head), Math.abs(a.pitch - b.pitch))
+  const ring = (r: number) => (k: number) => gazeAt(neck, 0, 0, 0, [Math.sin(k) * r, 1.7, Math.cos(k) * r], 1)
+  for (const r of [0.4, 1.5, 4, 7.5]) {
+    const at = ring(r)
+    let worst = 0
+    for (let k = -Math.PI; k < Math.PI; k += 0.005) worst = Math.max(worst, step(at(k), at(k + 0.005)))
+    assert.ok(worst < 0.03, `round them at ${r} m, 0.005 rad of bearing a step: the largest change ${worst.toFixed(4)} rad`)
+  }
+  let worst = 0
+  for (let d = 0; d < 10; d += 0.005) worst = Math.max(worst, step(gazeAt(neck, 0, 0, 0, [d * 0.6, 1.7, d * 0.8], 1), gazeAt(neck, 0, 0, 0, [(d + 0.005) * 0.6, 1.7, (d + 0.005) * 0.8], 1)))
+  assert.ok(worst < 0.03, `from their own neck to 10 m off, 5 mm a step: the largest change ${worst.toFixed(4)} rad`)
+  worst = 0
+  for (let k = -Math.PI; k < Math.PI; k += 0.005) worst = Math.max(worst, step(gazeAt(neck, 0, Math.sin(k), Math.cos(k), null), gazeAt(neck, 0, Math.sin(k + 0.005), Math.cos(k + 0.005), null)))
+  assert.ok(worst < 0.01, `the way they go swept all the way round the heading: the largest change ${worst.toFixed(4)} rad`)
+})
+
+test('crowdBody.ts bodyGaze and bodyTalk, run through wgslHost.ts, are gazeAt and talkGaze.ts talkWeight to f32: the way they go, the eye in a conversation, every fade, the slot that names a person', () => {
+  const parts = new Map([...BODY_WGSL.split(/(?=^fn )/m)].filter((p) => p.startsWith('fn ')).map((p) => [p.match(/^fn (\w+)/)![1], p]))
+  // wgslHost has no smoothstep: WGSL's own definition, as a stand-in.
+  const stand = 'fn smoothStep(lo: f32, hi: f32, x: f32) -> f32 { let t = clamp((x - lo) / (hi - lo), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }\n'
+  const gaze = parts.get('bodyGaze')!
+  assert.ok((gaze.match(/\bsmoothstep\(/g) ?? []).length >= 4, 'the fades are smoothsteps')
+  const host = compileWgsl(stand + gaze.replace(/\bsmoothstep\(/g, 'smoothStep(') + parts.get('bodyTalk')!)
+  const neck = [0.3, 1.52, -0.2] as const
+  let checked = 0
+  for (const heading of [0, 0.9, -2.4, 3.1]) {
+    for (const [vx, vz] of [[0, 0], [0.9, 0.4], [-0.2, -1.1], [0.05, 0.01], [0, -1.3]]) {
+      for (const [ex, ey, ez] of [[0.3, 1.7, 1.8], [2.1, 1.6, 0.2], [-1.4, 1.9, -1.1], [0.45, 1.6, 0.05], [6.9, 1.7, 3.2], [-0.4, 2.8, 2.6]]) {
+        for (const w of [0, 0.3, 1]) {
+          const cpu = gazeAt(neck, heading, vx, vz, [ex, ey, ez], w)
+          const [chest, head, pitch] = host.call('bodyGaze', [...neck], heading, [vx, vz], [ex, ey, ez, w]) as number[]
+          const what = `heading ${heading}, moving (${vx}, ${vz}), the eye at (${ex}, ${ey}, ${ez}), weight ${w}`
+          near(chest, cpu.chest, 2e-5, `${what}: chest`); near(head, cpu.head, 2e-5, `${what}: head`); near(pitch, cpu.pitch, 2e-5, `${what}: pitch`)
+          checked++
+        }
+      }
+    }
+  }
+  assert.equal(checked, 360)
+  const who = [5, -1, 812, 40, -1, -1, 9, -1, 77, -1, -1, 32767], weight = [0.25, 0, 1, 0.6, 0, 0, 0.75, 0, 0.5, 0, 0, 0.125]
+  assert.equal(who.length, TALK.slots)
+  for (const me of [0, 5, 812, 40, 9, 77, 11, 32767, 32766]) {
+    const got = host.call('bodyTalk', me, who.slice(0, 4), who.slice(4, 8), who.slice(8), weight.slice(0, 4), weight.slice(4, 8), weight.slice(8)) as number
+    near(got, talkWeight(me, who, weight), 1e-7, `the weight of person ${me}`)
+  }
+  near(talkWeight(9, [9, 9, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1], [0.75, 0.75, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]), 1, 0, 'never over 1')
 })
 
 test('RIG_REST: every bone hangs from the rig shape on its own side of the body, at that shape\'s standing centre (ragdollRig.ts SEGMENTS and FOOT, by the stream\'s order); the hands from the lower arms; RIG_WEAR is the realm\'s slots and shapes', () => {
@@ -989,7 +1072,7 @@ test('HAIRLINE: the cap\'s front leaves the skull\'s front at the hairline and i
 
 // --- The WGSL --------------------------------------------------------------------------------------------------
 
-test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), twenty-one functions, one call for the position and the normal, the face shaped on the head alone, the lower cut before the sliders, the legs solved from the feet, the gaze from the operator\'s eye, a fallen body hung from its rig', () => {
+test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow and wrist as their drop from the shoulder), twenty-two functions, one call for the position and the normal, the face shaped on the head alone, the lower cut before the sliders, the legs solved from the feet, the gaze to the operator\'s eye only in a conversation, a fallen body hung from its rig', () => {
   const lit = (n: number): string => (Number.isInteger(n) ? `${n}.0` : `${n}`)
   const flat = (name: string, o: unknown, out: [string, number][] = []): [string, number][] => {
     if (typeof o === 'number') out.push([name, o])
@@ -1005,7 +1088,7 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.doesNotMatch(BODY_WGSL, /undefined|NaN|\[object/, 'every interpolation is a number')
   // Tint refuses WGSL's reserved words as names (it refused `target`); the ones a hand reaches for, as a declared name.
   assert.doesNotMatch(BODY_WGSL, /\b(?:target|flat|smooth|filter|get|set|type|mod|of|from|new|ref|self|this|with|where|use|pass|premerge|precise|common|shared|static|sizeof|null|nil|do|match|move|mut|pub|priv|super|try|catch|throw|final|package|module|import|export|layout|resource|register|precision|patch|partition|require|regardless|unless|operator|namespace|template|typedef|union|enum|class|interface|extends|implements|instanceof|delete|yield|await|become|crate|impl|trait|unsafe|unsized|external|demote|coherent|readonly|writeonly|varying|attribute|active|cast|highp|mediump|lowp|snorm|unorm|std|meta|macro|auto|goto|inline|noexcept|volatile|virtual|friend|explicit|mutable|restrict|protected|public|using|typename|typeof|typeid|decltype|concept|debugger|fallthrough|finally|subroutine|groupshared|nointerpolation|noperspective|packoffset|pixelfragment|thread_local|column_major)\s*[:=]/, 'no name WGSL reserves')
-  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyRamp', 'bodyLowerShape', 'bodyGarment', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyHeel', 'bodyGaze', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
+  assert.deepEqual([...BODY_WGSL.matchAll(/^fn (\w+)\(/gm)].map((m) => m[1]), ['bodyRotX', 'bodyRotY', 'bodyRotAxis', 'bodyHat', 'bodyHeightMap', 'bodySlope', 'bodyRamp', 'bodyLowerShape', 'bodyGarment', 'bodyFace', 'bodyMorph', 'bodyFoot', 'bodyReach', 'bodyLeg', 'bodyHeel', 'bodyGaze', 'bodyTalk', 'bodyRigCentre', 'bodyRotQ', 'bodyRig', 'bodyBone', 'bodyVertex'])
   assert.ok(BODY_WGSL.includes('fn bodyVertex(v: vec3f, n: vec3f, rig: vec3f, skin: vec2f, face: vec2f, agent: vec4f, motion: vec4f, pose: vec4f, stance: vec4f, morphA: vec4f, morphB: vec4f, faceA: vec4f, faceB: vec4f, t: f32, gaze: vec4f, rigA: vec4f, rigAq: vec4f, rigB: vec4f, rigBq: vec4f) -> mat3x3f'))
   assert.ok(BODY_WGSL.includes('fn bodyRig(m: mat3x3f, bone0: u32, bone1: u32, weight: f32, stature: f32, pA: vec4f, qA: vec4f, pB: vec4f, qB: vec4f) -> mat3x3f'))
   // The fallen body: after the sliders and before the walk, hung from its rig; every shape's standing centre in the text.
@@ -1015,6 +1098,9 @@ test('crowdBody.ts: the WGSL carries every number humanoid.ts holds (the elbow a
   assert.ok(BODY_WGSL.includes('fn bodyFoot(phase: f32, stride: f32, lift: f32, roll: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyLeg(dy: f32, dz: f32, thigh: f32, shin: f32, sole: f32) -> vec4f'))
   assert.ok(BODY_WGSL.includes('fn bodyGaze(neck: vec3f, heading: f32, vel: vec2f, eye: vec4f) -> vec3f'))
+  assert.ok(BODY_WGSL.includes('fn bodyTalk(me: f32, whoA: vec4f, whoB: vec4f, whoC: vec4f, weightA: vec4f, weightB: vec4f, weightC: vec4f) -> f32'))
+  assert.match(BODY_WGSL, /if \(eye\.w > 0\.0\) \{/, 'the eye is read only in a conversation: everyone else skips it')
+  assert.match(BODY_WGSL, /let hold = min\(eye\.w, 1\.0\) \* inner \* front \* \(1\.0 - smoothstep\(/, 'by the conversation\'s weight, every edge a fade')
   assert.ok(BODY_WGSL.includes('fn bodyBone(bone: u32, m: mat3x3f, legL: vec4f, legR: vec4f, armL: vec4f, armR: vec4f, trunk: vec4f, pivA: vec4f, pivB: vec4f, pivX: vec2f, k: vec3f, headYaw: f32) -> mat3x3f'))
   // The legs from the feet, the pelvis' drop from the planted one, the gaze from the neck's place in the world, in humanoid.ts's order.
   assert.match(BODY_WGSL, /let footL = bodyFoot\(phase, stride, lift, roll\);\n\s*let footR = bodyFoot\(phase \+ 3\.14159\d+, stride, lift, roll\);/)
@@ -1161,7 +1247,6 @@ test('crowdBody.ts crowdHash, the crowd\'s hash: one WGSL function, run through 
 
 test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face attributes, and the vertex stage is one bodyVertex call whose columns are the position and the normal', () => {
   const crowd = read('./crowd.ts')
-  assert.match(crowd, /import \{ bodyVertex, crowdHash \} from '\.\/crowdBody\.ts'/)
   assert.match(crowd, /return geometryOf\(humanoidMesh\(v, detailed\)\)/)
   assert.match(crowd, /g\.setAttribute\('rig', new Float32BufferAttribute\(mesh\.rig, 3\)\)/)
   assert.match(crowd, /g\.setAttribute\('skin', new Float32BufferAttribute\(mesh\.skin, 2\)\)/)
@@ -1171,10 +1256,19 @@ test('crowd.ts: the geometry is humanoid.ts\'s mesh with its rig, skin and face 
   assert.match(crowd, /this\.material\(buffers, lod \* quota \* VARIANTS \+ v \* quota, v, lod === 0\)/, 'the near material alone shapes a face')
   assert.match(crowd, /const rig = attribute\('rig', 'vec3'\)\n\s*const skin = attribute\('skin', 'vec2'\)\n\s*const face = attribute\('face', 'vec2'\)/)
   assert.match(crowd, /if \(near\) \{\n\s*If\(rig\.x\.greaterThan\(BONE\.HEAD - 0\.5\)\.and\(rig\.x\.lessThan\(BONE\.HEAD \+ 0\.5\)\), \(\) => \{/, 'the face hashes run for the head alone')
-  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, this\.gazeTarget, this\.rigPoses\.element\(rigA\), this\.rigPoses\.element\(rigA\.add\(uint\(1\)\)\), this\.rigPoses\.element\(rigB\), this\.rigPoses\.element\(rigB\.add\(uint\(1\)\)\)\) as unknown as Mat3\)\.toVar\(\)/)
+  assert.match(crowd, /const skinned = \(bodyVertex\(positionLocal, normalLocal, rig, skin, face, agent, motion, pose, stance, morphA, morphB, faceA, faceB, time, gaze, this\.rigPoses\.element\(rigA\), this\.rigPoses\.element\(rigA\.add\(uint\(1\)\)\), this\.rigPoses\.element\(rigB\), this\.rigPoses\.element\(rigB\.add\(uint\(1\)\)\)\) as unknown as Mat3\)\.toVar\(\)/)
   assert.match(crowd, /readonly rigPoses = uniformArray\(Array\.from\(\{ length: RIG_WEAR\.slots \* RIG_WEAR\.shapes \* 2 \}, \(_, i\) => new Vector4\(0, 0, 0, i % 2\)\), 'vec4'\)/, 'the rig poses: a centre then a quaternion per shape, identity when empty')
   assert.match(crowd, /readonly rigShape = uniformArray\(RIG_REST\.map\(\(\[shape\]\) => shape\), 'float'\)/, 'the shape per bone')
   assert.match(crowd, /readonly gazeTarget: UniformNode<'vec4', Vector4> = uniform\(new Vector4\(0, 0, 0, 0\)\)/, 'the operator\'s eye, one uniform for both passes')
+  assert.match(crowd, /import \{ bodyTalk, bodyVertex, crowdHash \} from '\.\/crowdBody\.ts'/)
+  const vec4s = (n: number, v: string) => Array.from({ length: n }, () => `uniform\\(new Vector4\\(${v}\\)\\)`).join(', ')
+  const tuple = Array.from({ length: 3 }, () => "UniformNode<'vec4', Vector4>").join(', ')
+  assert.match(crowd, new RegExp(`readonly talkWho: readonly \\[${tuple}\\] = \\[${vec4s(3, '-1, -1, -1, -1')}\\]`), 'twelve empty slots: nobody is talked to')
+  assert.match(crowd, new RegExp(`readonly talkWeight: readonly \\[${tuple}\\] = \\[${vec4s(3, '0, 0, 0, 0')}\\]`))
+  assert.equal(TALK.slots, 12, 'three vec4s of slots')
+  assert.match(crowd, /for \(let q = 0; q < 3; q\+\+\) \{\n\s+const k = 4 \* q\n\s+this\.talkWho\[q\]\.value\.set\(who\[k\], who\[k \+ 1\], who\[k \+ 2\], who\[k \+ 3\]\)\n\s+this\.talkWeight\[q\]\.value\.set\(weight\[k\], weight\[k \+ 1\], weight\[k \+ 2\], weight\[k \+ 3\]\)/, 'four slots to each uniform, in order')
+  assert.match(crowd, /const gaze = vec4\(this\.gazeTarget\.xyz, this\.gazeTarget\.w\.mul\(bodyTalk\(seed, this\.talkWho\[0\], this\.talkWho\[1\], this\.talkWho\[2\], this\.talkWeight\[0\], this\.talkWeight\[1\], this\.talkWeight\[2\]\) as unknown as typeof seed\)\)/, 'the eye\'s weight is this person\'s own, by their index, for both passes')
+  assert.equal((crowd.match(/this\.gazeTarget\b/g) ?? []).length, 2, 'and the eye reaches the vertex stage there alone')
   assert.match(crowd, /normalLocal\.assign\(skinned\.element\(uint\(1\)\)\)/)
   assert.match(crowd, /const body = skinned\.element\(uint\(0\)\)/)
   assert.match(crowd, /const m = new MeshStandardNodeMaterial\(\)\n(?:\s*\/\/[^\n]*\n)*\s*m\.shadowSide = DoubleSide\n/, 'both faces in the shadow map: the skirt and the coat are open shells')

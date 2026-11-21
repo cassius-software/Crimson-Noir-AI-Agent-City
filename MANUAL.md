@@ -1402,11 +1402,18 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   what the planted leg cannot span at the ends of a stride; a person who stops stands with their feet together),
   swings the arms with the speed against the legs, turns the chest and the head, blends its two bones, then applies
   the spring-damper tilt, the stature, the heading and the place, with the normals carried through the same
-  arithmetic, so a wide shoulder is lit as the round thing it is. Pedestrians look you in the eye when you stand in
-  front of them on foot within about two and a half metres (the look fades out by four and a half; from a car
-  nobody is looked at), and look the way they are going otherwise, the head leading a turn. The CPU runs the same
-  arithmetic for the card's silhouette, its face view and the tests, so the body the card draws is the body the
-  street draws, to the number.
+  arithmetic, so a wide shoulder is lit as the round thing it is. Pedestrians do not stare: a person looks you in
+  the eye only while you are talking to them, which on this build means a recruit standing by at your side (called
+  over, facing you, not sent to a rally point). The engine can also name the one person a conversation is with
+  (`setTalkingTo`), ready for the proximity talk with whoever is nearest; nothing on this build calls it yet. Their
+  head and chest turn round to you over about 0.4 s and back over about 0.6 s once it ends; they hold your eye out
+  to six and a half metres and let it go by eight and a half, where a named conversation also ends by itself, as it
+  does on another floor; from a car nobody looks. When you get into a car, ride to another floor or are moved more
+  than about a metre in a moment, their head turns back from where you stood instead of swinging after you, and
+  someone you are still talking to then turns round to where you are now. Walking round behind someone you are
+  talking to, you see their head swing back to the front. Everyone else looks the way they are going, the head
+  leading a turn and staying ahead when they step backwards. The CPU runs the same arithmetic for the card's
+  silhouette, its face view and the tests, so the body the card draws is the body the street draws, to the number.
 - **The face.** The skull is twelve-sided rings from the chin to the crown, each ring in a region (the chin, the
   jaw, the cheekbones, the brow line), and the features are small lofted pillows laid on the skull's own front: two
   eyes (a white with an iris in front), two brows, a nose rooted on the skull, the lips, two ears. Seven face
@@ -1734,8 +1741,8 @@ Sloane's chip has a **Look** button ("Change my look" in the full list) that ope
   person's joints sit a few centimetres off its shapes for as long as the fall lasts (`?rigs=capsules` shows the rig
   bare), and the network ghosts keep the base body. The
   face is still: no expression, no blink, no lip movement when someone speaks, and the eyes look where the head
-  looks. The hair is a shape, not strands, and facial hair is paint on the face (the long beard is a shape). Heads turn to you and to the way their owner
-  goes, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
+  looks. The hair is a shape, not strands, and facial hair is paint on the face (the long beard is a shape). Heads turn to the way their owner goes,
+  and to you only while you are talking to them, not to other pedestrians or cars; the feet stay planted from half a metre a second up and shuffle a little
   under it while a stride shrinks to standing. Whether agent 0's hashed look and `lookFromSeed(0)` agree on the GPU
   is a browser check not yet made (see Browser support); the skinned body and its face have been looked at on a
   software WebGPU adapter and in CI's screenshots, not yet on a real GPU.
