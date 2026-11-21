@@ -32,6 +32,9 @@ const safari = (await import(SAFARI)) as {
   judge(target: string, probe: unknown, page: unknown): Verdict[]
   PROBE: string
   STATE: string
+  RECORDER: string
+  TRACE: string
+  withRecorder(html: string, trace?: boolean): string
 }
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -165,6 +168,71 @@ test('judge: with no GPU the card must be the one for exactly that, and an iPhon
   assert.equal(failures(safari.judge('iphone', probe({ adapter: false }), dead)).length >= 1, true)
 })
 
+test('withRecorder: the recorder is the first script of the page, the tracer comes after it only when asked, and both are scripts that parse', () => {
+  const page = '<!doctype html><html lang="en"><head data-x="1"><meta charset="utf-8"><script>window.first = 1</script></head><body></body></html>'
+  const plain = safari.withRecorder(page)
+  assert.equal(plain, page.replace('<head data-x="1">', `<head data-x="1">${safari.RECORDER}`))
+  assert.ok(!plain.includes('__safari_gpu_trace__'), 'no tracer unless asked')
+  const traced = safari.withRecorder(page, true)
+  assert.equal(traced, page.replace('<head data-x="1">', `<head data-x="1">${safari.RECORDER}${safari.TRACE}`))
+  assert.ok(traced.indexOf('__SAFARI__') < traced.indexOf('window.first = 1'), 'ahead of the page\'s own scripts')
+  assert.equal(safari.withRecorder('<p>no head</p>', true), `${safari.RECORDER}${safari.TRACE}<p>no head</p>`)
+  // Each is one <script> whose body is JavaScript: a stray newline inside a quoted string once made the tracer a
+  // syntax error, and a script that does not parse records nothing and says nothing.
+  for (const [name, script] of [['recorder', safari.RECORDER], ['tracer', safari.TRACE]] as const) {
+    const body = /^<script>([\s\S]*)<\/script>$/.exec(script)
+    assert.ok(body, `${name} is one script element`)
+    assert.ok(!body[1]!.includes('</script'), `${name} does not end its own element early`)
+    assert.doesNotThrow(() => new Function(body[1]!), `${name} parses`)
+  }
+})
+
+test('the tracer: in a page with a device, it notes the calls, an error caught in a scope, a shader the compiler refused, and the loss', async () => {
+  // A stand-in for the WebGPU classes the tracer wraps, enough to run it without a browser.
+  const lostResolve: Array<(l: { reason: string; message: string }) => void> = []
+  class GPUDevice extends EventTarget {
+    label = 'page'
+    lost = new Promise<{ reason: string; message: string }>((r) => lostResolve.push(r))
+    createShaderModule(_d: unknown) { return { getCompilationInfo: () => Promise.resolve({ messages: [{ type: 'error', lineNum: 7, message: 'unresolved value' }, { type: 'warning', lineNum: 1, message: 'w' }] }) } }
+    createBuffer(_d: unknown) { return {} }
+    pushErrorScope(_f: string) {}
+    popErrorScope() { return Promise.resolve({ message: 'a pipeline was refused' }) }
+  }
+  class GPUAdapter { requestDevice(_d?: unknown) { return Promise.resolve(new GPUDevice()) } }
+  class GPURenderPassEncoder { label = ''; draw(..._a: number[]) {} }
+  class GPUQueue { label = ''; submit(_l: unknown[]) {}; writeBuffer(..._a: unknown[]) {} }
+  const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
+  const window: Record<string, unknown> = { GPUDevice, GPUAdapter, GPURenderPassEncoder, GPUQueue, Worker: class {} }
+  class Channel { onmessage: unknown = null; postMessage() {} }
+  new Function('window', 'globalThis', 'self', 'BroadcastChannel', 'URL', 'Blob', 'Map', body)(window, window, window, Channel, { createObjectURL: () => 'blob:x' }, Blob, Map)
+  const gpu = (window.__SAFARI__ as { gpu: { calls: string[]; key: string[]; lost: string[]; errors: string[]; total: number; frozen: boolean } }).gpu
+  const device = await new GPUAdapter().requestDevice({ label: 'page' })
+  device.createShaderModule({ label: 'fragment', code: 'x'.repeat(90) })
+  device.createBuffer({ size: 64, usage: 8 })
+  device.pushErrorScope('validation')
+  await device.popErrorScope()
+  new GPUQueue().writeBuffer({}, 0, new Uint8Array(4))
+  new GPURenderPassEncoder().draw(3, 2_000_000_000)
+  new GPUQueue().submit([{}])
+  await new Promise((r) => setTimeout(r, 0))
+  const calls = gpu.calls.map((c) => c.replace(/^\d+ /, ''))
+  assert.deepEqual(calls.filter((c) => /^RenderPassEncoder\.draw|^Queue\.submit|^Device\.createBuffer/.test(c)), ['Device.createBuffer[page] {"size":64,"usage":8}', 'RenderPassEncoder.draw [3,2000000000]', 'Queue.submit 1'])
+  assert.ok(calls.some((c) => c.startsWith('Device.createShaderModule[page] {"label":"fragment","chars":90}')), calls.join(' | '))
+  assert.ok(calls.some((c) => c.startsWith('Queue.writeBuffer')), 'every call is in the short list')
+  assert.ok(!gpu.key.some((c) => /Queue\.writeBuffer|pushErrorScope|popErrorScope/.test(c)), 'the long list keeps only what can end a device')
+  assert.ok(gpu.key.some((c) => /RenderPassEncoder\.draw \[3,2000000000\]/.test(c)))
+  assert.ok(gpu.errors.some((e) => /device page, caught in a scope: a pipeline was refused/.test(e)), gpu.errors.join(' | '))
+  assert.ok(gpu.errors.some((e) => /shader fragment \(90 chars\), line 7: unresolved value/.test(e)), gpu.errors.join(' | '))
+  assert.equal(gpu.errors.some((e) => /: w$/.test(e)), false, 'a warning is not an error')
+  const before = gpu.calls.length
+  lostResolve[0]!({ reason: 'unknown', message: '' })
+  await new Promise((r) => setTimeout(r, 0))
+  assert.deepEqual(gpu.lost.map((l) => l.replace(/^\d+ /, '')), ['device page lost: reason unknown, message ""'])
+  new GPUQueue().submit([{}])
+  assert.equal(gpu.calls.length, before, 'the list is frozen at the loss: it ends with what came before')
+  assert.equal(gpu.frozen, true)
+})
+
 test('the tool: Safari through safaridriver on this machine only, the two targets, and a verdict that can fail', () => {
   assert.match(TOOL, /spawn\('safaridriver', \['--port', String\(port\)\]/)
   assert.match(TOOL, /'safari:useSimulator': true, 'safari:deviceUDID': phone\.udid/)
@@ -190,6 +258,7 @@ test('iphone.yml: Safari on both Macs and in the Simulator, GitHub\'s own action
   assert.match(mac, /defaults write -g WebKitAllowWebGPUOnVMs -bool YES/, 'WebKit\'s own switch for a virtual Mac, before Safari starts')
   assert.ok(mac.indexOf('WebKitAllowWebGPUOnVMs -bool YES') < mac.indexOf('safari.mjs --web dist-web --target mac'), 'the switch is set before Safari starts')
   assert.match(mac, /node tools\/browser\/safari\.mjs --web dist-web --target mac .*\$\{\{ matrix\.runner == 'macos-26' && '--needs-gpu' \|\| '' \}\}/, 'on macOS 26 a Safari without a GPU fails the check')
+  assert.match(mac, /safari\.mjs --web dist-web --target mac --trace /, 'a start WebKit ends says which WebGPU calls came before')
   assert.match(phone, /runs-on: macos-26\n/)
   assert.match(phone, /node tools\/browser\/safari\.mjs --web dist-web --target iphone /)
   for (const job of [mac, phone]) {

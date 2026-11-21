@@ -26,11 +26,14 @@
  * and words its card for an iPhone, and Safari on the Mac proves the city draws in WebKit.
  * The host adds one small script to the page it serves (RECORDER): it keeps what the page logged and every uncaught
  * error where the tool can read them, since Safari's driver gives no console. Nothing else of the page is touched.
+ * --trace adds a second (TRACE): it notes the WebGPU calls of the page and of its workers, and a start that does not
+ * end in a running city prints the last of them, with each device's errors and its loss. WebKit reports a lost
+ * device with no words at all, so the calls just before it are the only account there is.
  * --needs-gpu makes a browser without a working GPU a failure of its own, for a runner known to give one: without it
  * a runner that stopped giving Safari a GPU would quietly turn the check from "the city draws" into "the card shows".
  * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one.
  *   node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device "iPhone 17 Pro"] [--query "<query>"]...
- *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu]
+ *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu] [--trace]
  * It needs macOS with Safari's "Allow remote automation" on (`sudo safaridriver --enable` once), and for the iPhone
  * target Xcode with an iOS Simulator runtime. Nothing here reaches any address but this machine.
  * What breaks if it is removed? An iPhone is again something the page is only believed to run on.
@@ -73,10 +76,145 @@ export const RECORDER = `<script>(function () {
   })
 })()</script>`
 
-/** Pure. A page's HTML with the recorder as its first script: straight after <head>, else in front of everything. */
-export function withRecorder(html) {
+/**
+ * What runs in the page, and again inside each worker the page starts, under --trace: every WebGPU call that can end
+ * a device is noted with its time and the few arguments that matter (a draw's counts, a pipeline's label, a buffer's
+ * size), the last few hundred kept, and the list frozen the moment a device is lost. A device also reports its
+ * uncaptured errors and its loss. So when Safari takes the device away, which WebKit reports with no words at all,
+ * the report names the calls that came just before. `say(kind, text)` is where a note goes: the page's own list, or
+ * from a worker a BroadcastChannel the page listens on.
+ */
+const TRACER = `function (say) {
+  var G = typeof globalThis !== 'undefined' ? globalThis : self
+  var t0 = Date.now()
+  var brief = function (v) { try { return JSON.stringify(v, function (k, x) { return typeof x === 'string' && x.length > 80 ? x.slice(0, 80) + '...(' + x.length + ')' : typeof x === 'object' && x !== null && x.constructor && /^GPU/.test(x.constructor.name) ? '<' + x.constructor.name.slice(3) + (x.label ? ' ' + x.label : '') + '>' : ArrayBuffer.isView(x) || x instanceof ArrayBuffer ? '<' + x.byteLength + ' bytes>' : x }).slice(0, 260) } catch (e) { return '?' } }
+  var note = function (name, args) { say('call', (Date.now() - t0) + ' ' + name + (args === undefined ? '' : ' ' + args)) }
+  var wrap = function (ctor, name, describe) {
+    var proto = G[ctor] && G[ctor].prototype
+    if (!proto || typeof proto[name] !== 'function') return
+    var was = proto[name]
+    proto[name] = function () {
+      try { note(ctor.slice(3) + '.' + name + (this && this.label ? '[' + this.label + ']' : ''), describe ? describe.apply(this, arguments) : brief(Array.prototype.slice.call(arguments))) } catch (e) { /* the call goes on */ }
+      return was.apply(this, arguments)
+    }
+  }
+  var watch = function (device) {
+    try {
+      var label = device.label || '(no label)'
+      device.lost.then(function (l) { say('lost', (Date.now() - t0) + ' device ' + label + ' lost: reason ' + l.reason + ', message ' + JSON.stringify(l.message)) })
+      device.addEventListener('uncapturederror', function (e) { say('error', (Date.now() - t0) + ' device ' + label + ': ' + String(e.error && e.error.message).slice(0, 600)) })
+    } catch (e) { say('error', 'could not watch a device: ' + e) }
+  }
+  var adapterProto = G.GPUAdapter && G.GPUAdapter.prototype
+  if (adapterProto && typeof adapterProto.requestDevice === 'function') {
+    var request = adapterProto.requestDevice
+    adapterProto.requestDevice = function (d) {
+      note('Adapter.requestDevice', brief(d))
+      return request.apply(this, arguments).then(function (device) { watch(device); note('  a device arrived', brief({ label: device.label })); return device })
+    }
+  }
+  wrap('GPU', 'requestAdapter')
+  // What a device said no to and the page caught in an error scope, and what a shader's compiler said: neither is an
+  // uncaptured error, and either can be the refusal a later draw trips over.
+  var deviceProto = G.GPUDevice && G.GPUDevice.prototype
+  if (deviceProto && typeof deviceProto.popErrorScope === 'function') {
+    var pop = deviceProto.popErrorScope
+    deviceProto.popErrorScope = function () {
+      var label = this.label || '(no label)'
+      var result = pop.apply(this, arguments)
+      try { result.then(function (e) { if (e) say('error', (Date.now() - t0) + ' device ' + label + ', caught in a scope: ' + String(e.message).slice(0, 600)) }, function () {}) } catch (e) { /* the call goes on */ }
+      return result
+    }
+  }
+  if (deviceProto && typeof deviceProto.createShaderModule === 'function') {
+    var shader = deviceProto.createShaderModule
+    deviceProto.createShaderModule = function (d) {
+      var label = (d && d.label) || '(no label)'
+      var module = shader.apply(this, arguments)
+      try { module.getCompilationInfo().then(function (info) { for (var i = 0; i < info.messages.length && i < 4; i++) { var m = info.messages[i]; if (m.type === 'error') say('error', (Date.now() - t0) + ' shader ' + label + ' (' + (d && d.code && d.code.length) + ' chars), line ' + m.lineNum + ': ' + String(m.message).slice(0, 400)) } }, function () {}) } catch (e) { /* the call goes on */ }
+      return module
+    }
+  }
+  var count = function (list) { return String(list && list.length) }
+  ;['destroy', 'createShaderModule', 'createRenderPipeline', 'createRenderPipelineAsync', 'createComputePipeline', 'createComputePipelineAsync', 'createBindGroup', 'createBindGroupLayout', 'createPipelineLayout', 'createBuffer', 'createTexture', 'createQuerySet', 'pushErrorScope', 'popErrorScope', 'importExternalTexture'].forEach(function (name) {
+    wrap('GPUDevice', name, function (d) {
+      if (name === 'createShaderModule') return brief({ label: d && d.label, chars: d && d.code && d.code.length })
+      if (/Pipeline/.test(name) && name !== 'createPipelineLayout') return brief({ label: d && d.label, layout: d && d.layout === 'auto' ? 'auto' : 'given', vertex: d && d.vertex && d.vertex.entryPoint, fragment: d && d.fragment && { entry: d.fragment.entryPoint, targets: d.fragment.targets && d.fragment.targets.map(function (t) { return t && t.format }) }, compute: d && d.compute && d.compute.entryPoint, depth: d && d.depthStencil && d.depthStencil.format, samples: d && d.multisample && d.multisample.count, topology: d && d.primitive && d.primitive.topology })
+      if (name === 'createBindGroup') return brief({ label: d && d.label, entries: d && d.entries && d.entries.length })
+      return d === undefined ? '' : brief(d)
+    })
+  })
+  wrap('GPUQueue', 'submit', count)
+  wrap('GPUQueue', 'onSubmittedWorkDone')
+  wrap('GPUQueue', 'writeTexture', function (dest, data, layout, size) { return brief([dest, size]) })
+  wrap('GPUQueue', 'copyExternalImageToTexture', function (src, dest, size) { return brief([dest, size]) })
+  wrap('GPUQueue', 'writeBuffer', function (buffer, offset, data, at, size) { return brief([buffer, offset, data && data.byteLength, size]) })
+  ;['draw', 'drawIndexed', 'drawIndirect', 'drawIndexedIndirect', 'setPipeline', 'setVertexBuffer', 'setIndexBuffer', 'executeBundles', 'end'].forEach(function (name) { wrap('GPURenderPassEncoder', name) })
+  ;['dispatchWorkgroups', 'dispatchWorkgroupsIndirect', 'setPipeline', 'end'].forEach(function (name) { wrap('GPUComputePassEncoder', name) })
+  wrap('GPUCommandEncoder', 'beginRenderPass', function (d) { return brief({ label: d && d.label, color: d && d.colorAttachments && Array.prototype.map.call(d.colorAttachments, function (a) { return a && { view: a.view, resolve: a.resolveTarget, load: a.loadOp, store: a.storeOp } }), depth: d && d.depthStencilAttachment && { view: d.depthStencilAttachment.view }, occlusion: d && d.occlusionQuerySet ? true : undefined, timestamps: d && d.timestampWrites ? true : undefined }) })
+  ;['beginComputePass', 'copyBufferToBuffer', 'copyTextureToTexture', 'copyBufferToTexture', 'copyTextureToBuffer', 'resolveQuerySet', 'clearBuffer', 'finish'].forEach(function (name) { wrap('GPUCommandEncoder', name) })
+  wrap('GPUCanvasContext', 'configure', function (d) { return brief({ format: d && d.format, usage: d && d.usage, alphaMode: d && d.alphaMode, toneMapping: d && d.toneMapping, viewFormats: d && d.viewFormats }) })
+  wrap('GPUCanvasContext', 'unconfigure')
+  wrap('GPUBuffer', 'mapAsync', function (mode, offset, size) { return brief([mode, offset, size]) })
+  wrap('GPUBuffer', 'destroy')
+  wrap('GPUTexture', 'destroy')
+  wrap('GPUTexture', 'createView', function (d) { return d === undefined ? '' : brief(d) })
+}`
+
+/**
+ * The script --trace adds after the recorder: the tracer in the page, keeping its notes on __SAFARI__.gpu, and the
+ * same tracer put in front of each worker the page starts from a Blob (the city's crowd runs its own GPU device in
+ * one), whose notes come back over a BroadcastChannel. A page whose worker cannot be given the tracer starts it as
+ * it would have: the trace never decides whether the city runs.
+ */
+export const TRACE = `<script>(function () {
+  var S = window.__SAFARI__ = window.__SAFARI__ || { errors: [], lines: [] }
+  var T = S.gpu = { calls: [], key: [], lost: [], errors: [], total: 0, frozen: false, workers: 0 }
+  // A frame is hundreds of buffer writes and bindings: they stay in the short list of everything (calls), and out of
+  // the longer list of what can end a device (key: devices, pipelines, passes, draws, dispatches, submits, readbacks).
+  var routine = /^\\d+ (?:Queue\\.writeBuffer|RenderPassEncoder\\.set|ComputePassEncoder\\.set|Device\\.createBindGroup\\b|Texture\\.createView|Device\\.pushErrorScope|Device\\.popErrorScope)/
+  var say = function (where) { return function (kind, text) {
+    if (kind === 'call') {
+      T.total++
+      if (T.frozen) return
+      if (T.calls.length >= 120) T.calls.shift()
+      T.calls.push(where + text)
+      if (!routine.test(text)) { if (T.key.length >= 500) T.key.shift(); T.key.push(where + text) }
+      return
+    }
+    if (kind === 'lost') { T.lost.push(where + text); T.frozen = true; return }
+    if (T.errors.length < 40) T.errors.push(where + text)
+  } }
+  var tracer = ${TRACER}
+  try { tracer(say('')) } catch (e) { T.errors.push('the tracer did not start: ' + e) }
+  try {
+    var channel = new BroadcastChannel('__safari_gpu_trace__')
+    var fromWorker = say('worker: ')
+    channel.onmessage = function (e) { if (e.data && typeof e.data.kind === 'string') fromWorker(e.data.kind, String(e.data.text)) }
+    var blobs = new Map()
+    var make = URL.createObjectURL
+    URL.createObjectURL = function (b) { var url = make.apply(URL, arguments); try { if (b instanceof Blob) blobs.set(url, b) } catch (e) { /* as it was */ } return url }
+    var Real = window.Worker
+    var prelude = '(' + tracer.toString() + ')((function () { var c = new BroadcastChannel("__safari_gpu_trace__"); return function (kind, text) { try { c.postMessage({ kind: kind, text: text }) } catch (e) {} } })());\\n'
+    window.Worker = function (url, options) {
+      var blob = blobs.get(String(url))
+      if (blob && (!options || options.type !== 'module')) {
+        try { T.workers++; return new Real(make.call(URL, new Blob([prelude, blob], { type: blob.type || 'text/javascript' })), options) } catch (e) { T.errors.push('a worker started without the tracer: ' + e) }
+      }
+      return new Real(url, options)
+    }
+    window.Worker.prototype = Real.prototype
+  } catch (e) { T.errors.push('workers are not traced: ' + e) }
+})()</script>`
+
+/**
+ * Pure. A page's HTML with the recorder as its first script (and the tracer after it, with `trace`): straight after
+ * <head>, else in front of everything.
+ */
+export function withRecorder(html, trace = false) {
+  const added = RECORDER + (trace ? TRACE : '')
   const head = /<head[^>]*>/i.exec(html)
-  return head ? html.slice(0, head.index + head[0].length) + RECORDER + html.slice(head.index + head[0].length) : RECORDER + html
+  return head ? html.slice(0, head.index + head[0].length) + added + html.slice(head.index + head[0].length) : added + html
 }
 
 /**
@@ -97,7 +235,7 @@ export function fileFor(root, pathname) {
  * Serves `root` on 127.0.0.1 as a static host does (no isolation headers, nothing cached), and the probe's page. With
  * `record`, every HTML page goes out with the recorder in its head (withRecorder); every other file byte for byte.
  */
-export async function serve(root, { record = false } = {}) {
+export async function serve(root, { record = false, trace = false } = {}) {
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x')
     if (url.pathname === '/__probe') { res.writeHead(200, { 'Content-Type': TYPES['.html'], 'Cache-Control': 'no-store' }).end(PROBE_PAGE); return }
@@ -108,7 +246,7 @@ export async function serve(root, { record = false } = {}) {
     const type = TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream'
     if (record && type === TYPES['.html']) {
       let body
-      try { body = Buffer.from(withRecorder(readFileSync(file, 'utf8'))) } catch { res.writeHead(404, { 'Content-Type': TYPES['.txt'] }).end('not found'); return }
+      try { body = Buffer.from(withRecorder(readFileSync(file, 'utf8'), trace)) } catch { res.writeHead(404, { 'Content-Type': TYPES['.txt'] }).end('not found'); return }
       res.writeHead(200, { 'Content-Type': type, 'Content-Length': body.length, 'Cache-Control': 'no-store' })
       res.end(req.method === 'HEAD' ? undefined : body)
       return
@@ -275,6 +413,7 @@ export const STATE = `(() => {
     veil: veil ? text(veil).slice(0, 400) : null, running,
     bootDone: globalThis.__bootDone === true,
     pageErrors: R ? R.errors.slice(0, 20) : [], lines: R ? R.lines.slice(0, 40) : [],
+    gpu: R && R.gpu ? { total: R.gpu.total, workers: R.gpu.workers, lost: R.gpu.lost.slice(0, 8), errors: R.gpu.errors.slice(0, 40), key: R.gpu.key.slice(-500), calls: R.gpu.calls.slice(-120) } : null,
     body: card || running ? null : text(document.body).slice(0, 600),
   }
 })()`
@@ -377,7 +516,7 @@ async function main() {
   const all = (name) => argv.flatMap((a, i) => (a === `--${name}` && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
   const flag = (name) => argv.includes(`--${name}`)
   if (flag('help')) {
-    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu]')
+    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu] [--trace]')
     return 0
   }
   const web = resolve(arg('web') ?? 'dist-web')
@@ -419,7 +558,7 @@ async function main() {
     Object.assign(capabilities, { platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceUDID': phone.udid })
   }
 
-  const host = await serve(web, { record: true })
+  const host = await serve(web, { record: true, trace: flag('trace') })
   const driverProcess = spawn('safaridriver', ['--port', String(port)], { stdio: ['ignore', 'inherit', 'inherit'] })
   let driverGone = null
   driverProcess.on('exit', (code) => { driverGone = code ?? -1 })
@@ -477,7 +616,7 @@ async function main() {
         try { state = await driver.eval(STATE) } catch (e) { state = { threw: e.message.slice(0, 300) } }
         // A new line only when the start moved on: the card, the veil's words, the engine there or not, the page's own words.
         const stage = JSON.stringify({ card: state?.card?.kind ?? null, veil: state?.veil ?? null, running: Boolean(state?.running), drawing: (state?.running?.fps ?? 0) > 0, body: state?.body ?? null, threw: state?.threw ?? null })
-        if (stage !== last) { page.timeline.push({ ms: Date.now() - t0, state }); console.log(`${name}: +${Math.round((Date.now() - t0) / 1000)} s ${JSON.stringify(state).slice(0, 900)}`); last = stage }
+        if (stage !== last) { page.timeline.push({ ms: Date.now() - t0, state: { ...state, gpu: undefined } }); console.log(`${name}: +${Math.round((Date.now() - t0) / 1000)} s ${JSON.stringify({ ...state, gpu: state?.gpu ? { total: state.gpu.total, lost: state.gpu.lost } : undefined }).slice(0, 900)}`); last = stage }
         if (state?.card) { outcome = 'card'; break }
         if (state?.running && typeof state.running.crowdFrames === 'number') {
           if (crowdFrom === null && state.running.fps > 0) crowdFrom = state.running.crowdFrames
@@ -491,6 +630,14 @@ async function main() {
       await driver.shot(join(out, `${name}.png`)).catch((e) => console.log(`${name}: no screenshot (${e.message.slice(0, 200)})`))
       if (state?.card) console.log(`${name}: the card's details: ${state.card.detail ?? 'none'} | ${state.card.line ?? ''}`)
       for (const line of state?.lines ?? []) console.log(`${name}: console ${line}`)
+      // Under --trace, a start that did not end in a running city prints what WebGPU was asked just before.
+      if (state?.gpu && outcome !== 'running') {
+        console.log(`${name}: WebGPU trace: ${state.gpu.total} calls noted, ${state.gpu.workers} worker(s) traced`)
+        for (const line of state.gpu.errors) console.log(`${name}: WebGPU error ${line}`)
+        for (const line of state.gpu.lost) console.log(`${name}: WebGPU ${line}`)
+        for (const line of state.gpu.key) console.log(`${name}: WebGPU key call ${line}`)
+        for (const line of state.gpu.calls) console.log(`${name}: WebGPU last call ${line}`)
+      }
       for (const c of judge(target, probe, page)) check(c.ok, `${name} ${c.what}`, c.detail)
     }
   } catch (e) {

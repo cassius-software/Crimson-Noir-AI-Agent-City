@@ -32,7 +32,8 @@ defaults:
 jobs:
   # Safari on the Mac is the check that the city draws in WebKit: the same engine, WGSL compiler and Metal path an
   # iPhone runs, on this Mac's GPU. macOS 26 gives it a GPU under WebKit's switch for virtual Macs, so there a Safari
-  # without one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes the card that says so.
+  # without one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes the card that says so. --trace
+  # keeps the WebGPU calls of a start, so a start WebKit ends says what it was asked just before.
   mac:
     name: safari (${{ matrix.runner }})
     strategy:
@@ -72,7 +73,7 @@ jobs:
         run: sudo safaridriver --enable
       - name: The web copy in Safari on this Mac
         run: |
-          node tools/browser/safari.mjs --web dist-web --target mac --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
+          node tools/browser/safari.mjs --web dist-web --target mac --trace --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
             --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
       - uses: actions/upload-artifact@v4
         if: always()
