@@ -28,16 +28,18 @@ base64 = "0.22"
 
 [features]
 # The native model runner (src/runner.rs over native/llm: llama.cpp in the app's own process), compiled only where the
-# feature is on and the target is Linux; everywhere else the three commands answer that there is none. Off by default,
-# so no shipped build compiles llama.cpp or needs cmake and libclang to build.
+# feature is on and the target is Linux or macOS (build.rs sets the cfg native_runner there, and the code asks only
+# that); everywhere else the three commands answer that there is none. Off by default: the Linux and macOS release
+# builds turn it on (tools/build/matrix.mjs), and only they compile llama.cpp and need cmake and libclang.
 native-runner = ["dep:crimson-noir-llm"]
 # The tiny test model (tools/browser/tinyGguf.mjs tiny-a.gguf) as the carried model, for the WebKitGTK end-to-end job
 # alone (.github/workflows/native-e2e.yml). No release build passes it.
 tiny-model = ["native-runner"]
 
-# Linux only for now: the macOS, Android and iOS shells join in later slices, and Windows never (WebView2 runs the
-# model in the page). Optional, so the lockfile records it and nothing builds it unless native-runner is on.
-[target.'cfg(target_os = "linux")'.dependencies]
+# Linux and macOS (build.rs RUNNER_OS names the same two): the Android and iOS shells join in later slices, and Windows
+# never (WebView2 runs the model in the page). Optional, so the lockfile records it and nothing builds it unless
+# native-runner is on.
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 crimson-noir-llm = { path = "../native/llm", optional = true }
 
 # Mica behind the frosted glass title bar, Windows 11 only; the call is best effort (src/lib.rs).

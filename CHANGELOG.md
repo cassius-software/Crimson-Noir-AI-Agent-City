@@ -15,6 +15,67 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The macOS app carries Sloane's model and runs it in its own process.** The build matrix's `macos-universal` job
+  now builds both slices of the universal app with `--features native-runner` and the model overlay, and puts Qwen2.5
+  1.5B Instruct (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, 986,048,768 bytes, Apache-2.0) into the `.app` under
+  `Contents/Resources/models/` with its `LICENSE` and `NOTICE`, and llama.cpp's MIT text and notice under
+  `Contents/Resources/licenses/llama.cpp/` (`bundle.macOS.files` in `src-tauri/tauri.model.conf.json`); the `.dmg` and
+  the zipped `.app` each hold that `.app`. The job fetches the file as `windows-app.yml` and the Linux jobs do (the
+  pin's own cache, Hugging Face only on a miss, `siteModel.mjs app` on every build; the model's steps now run for the
+  jobs marked `model: true`). The runner is compiled under one cfg, `native_runner`, which `src-tauri/build.rs` sets
+  where the feature is on and the system is Linux or macOS (`RUNNER_OS`; `Cargo.toml`'s target table names the same
+  two, and a Rust test reads both), and `main.rs`, `runner.rs` and `model_file.rs` ask only that; Windows, Android and
+  iOS are unchanged. The plan puts every layer on the GPU on Apple silicon (Metal: `GPU` in `runner.rs`) and keeps the
+  processor alone on Linux and on an Intel Mac. The app needs macOS 11 or later: `bundle.macOS.minimumSystemVersion`
+  is 11.0, and `tools/build/matrix.mjs` gives the build the same `MACOSX_DEPLOYMENT_TARGET`, read only when a build
+  asks (`current.yml` loads `matrix.mjs` from a checkout of `tools/` alone, and `currentBuild.test.ts` loads it so).
+  llama-cpp-sys-2 passes every `CMAKE_*` and `GGML_*` variable to both slices alike and reads none per target, so the
+  Intel slice's settings come from a CMake file that runs inside llama.cpp's ggml project for that architecture alone
+  (`tools/build/macos-slices.cmake`, through `CMAKE_PROJECT_ggml_INCLUDE`, its hash in `GGML_SLICES_SHA256` so an edit
+  rebuilds llama.cpp): Metal off, and SSE4.2, AVX, AVX2, FMA, F16C and BMI2 on, the instruction sets the runner's
+  processor check asks for before llama.cpp starts (cross-compiled on the Apple silicon runner, ggml would otherwise
+  build that slice's CPU code without them); the arm64 slice keeps ggml's own defaults, Metal on. The job frees disk
+  first (the Android SDK, CodeQL and .NET), prints it between the heavy steps, removes the copies of the model Tauri's
+  build step leaves beside each slice's binary, zips the `.app` stored (`ditto --zlibCompressionLevel 0`), moves the
+  `.dmg` into `out/`, uploads both uncompressed, and leaves the app, those copies and llama.cpp's CMake folders out of
+  its build cache. That cache's key now also hashes `src-tauri/Cargo.toml`, `native/llm/Cargo.toml` and
+  `macos-slices.cmake`, the files that decide how llama.cpp is built, beside both lockfiles: actions/cache saves
+  nothing after an exact hit, and this change left the lockfiles as they were, so the key of the entry saved before
+  the runner would have been hit on every run and llama.cpp built again each time; every target's key moves once, each
+  restoring its last entry by the key's prefix (`buildMatrix.test.ts` pins the list). Before any upload it fails
+  unless the new `tools/build/macAudit.mjs` passes six checks: `package` (the `.app`, the `.app` in the `.dmg`,
+  attached read-only with hdiutil, and the `.app` in the zip hold the model at the pinned size with its licence and
+  notice and llama.cpp's texts, nothing holds the tiny test model, and the `.dmg` and the zip are each larger than
+  nine tenths of the model and under GitHub's 2 GiB), `archs` (`lipo -archs` lists arm64 and x86_64), `libraries`
+  (`otool -L`, slice by slice: only `/System/Library/` and `/usr/lib/`, no OpenSSL, curl or OpenMP, no `@rpath`
+  library outside the app), `minos` (`otool -l`: each slice's minos at most 11.0), `symbols` (the Linux check's banned
+  list, against each slice's Apple linker map, `-Wl,-map`, which `build.rs` now writes on macOS, one leading
+  underscore taken off each name; the binary's strings; `nm -u -m` for each slice) and `slices` (llama.cpp's build
+  output for each slice, and Metal's shader strings in the arm64 slice alone). `macAudit.test.ts` (7) runs every
+  command end to end over universal Mach-O binaries it makes with clang, ld64.lld and llvm-lipo and reads with
+  llvm-otool, llvm-lipo and llvm-nm, which print as Apple's tools do, each passing a good one and failing a bad one by
+  name (one slice, macOS 12, a Homebrew OpenSSL, an `@rpath` library outside the app, a kept download symbol, a
+  `connect` import, a planted string, Metal in the Intel slice, a missing model or notice, the tiny model's name). The
+  map is read in both of Apple's forms of an archive member: classic ld64's `lib.rlib(member.o)`, which ld64.lld
+  writes, and ld-prime's `lib.rlib[N](member.o)` (Xcode 15 on, the macOS runner's linker), which the test takes from a
+  fixture and from ld64.lld's maps rewritten to it; no real ld-prime map has been read. `buildMatrix.test.ts` pins the
+  build step's four settings as literals and `macos-slices.cmake`'s condition, FORCE lines and status lines.
+  `native-llm.yml`'s Apple silicon job now also reads a few greedy tokens of the 1.5B model with the macOS plan
+  (`desktop.rs`, whose GPU is `runner.rs`'s own expression), printing the devices llama.cpp found and where the
+  model's weights went, read from llama.cpp's own log of its weight buffers (the GPU only when a buffer not the
+  processor's holds some, so a listed GPU is not taken as proof); it fails when no token comes or no such line is
+  logged, not when Metal is missing. llama.cpp's CMake configuration was run in the container for each slice as
+  Darwin: the x86_64 slice printed Metal off and `-msse4.2;-mf16c;-mfma;-mbmi2;-mavx;-mavx2`, the arm64 slice kept
+  Metal on. `third_party/llama.cpp/NOTICE`, `NOTICE.md`, `docs/ip-audit.md`, the 1.5B model's NOTICE and
+  `siteModel.mjs` name the macOS app, and the model's carriers test holds four. No workflow starts the built app: an
+  answer from it would need a WebDriver for WKWebView, which tauri-driver lacks on macOS, or new product code, so the
+  launch is left out. The first macOS build in CI failed to link the Apple silicon slice: below macOS 15 ggml's Metal
+  code calls `__isPlatformVersionAtLeast`, which clang's runtime (compiler-rt, `libclang_rt.osx.a`) defines and rustc
+  does not link, so `src-tauri/build.rs` now links that archive on macOS where the runner is compiled, found through
+  `xcrun clang -print-resource-dir`, and stops with a sentence when it is missing (`desktopShell.test.ts` pins it).
+  Not verified: the macOS build itself until CI runs it, the app in WKWebView (WebGPU there, the recovery card, the
+  console alone), how fast Metal answers, any run on an Intel Mac, and Gatekeeper with this unsigned app.
+
 - **One readout says which brain Sloane is using.** `src/09_Cognition/brainReadout.ts` answers, read-only, which
   brain answers Sloane (a model server on this machine, the gateway to the Claude API, which answers from off this
   machine and is never called local, the model the app carries, the model kept in this page, or the scripted planner)
@@ -133,6 +194,24 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the halted city's lock screen or a headset session folds the keys and closes the menu. Checked by unit suites and by the browser smoke
   test (a simulated standard pad on the console alone, and the console on an emulated Android phone); unverified with
   a real pad, on a real phone or tablet, on an iPhone and with a screen reader.
+- **Headset controllers of every registry shape, hands that walk by pinch.** The headset's mapper
+  (`04_Connect_Hardware/xrInput.ts`) now reads the three kinds of controller the WebXR input profiles registry
+  describes (thumbstick with up to two face buttons, touchpad wands, single pointing controllers with a touchpad), as a
+  pair or alone in either hand, so each can walk, turn, enter and leave a car, ping and drive: touchpads walk only
+  while touched and turn on an edge click, a lone stick controller walks forward and back and snap-turns by a sideways
+  push, and roles come from the whole source list (two of one hand split by order). Hands, gaze-and-pinch pointers
+  and styluses tap with a quick still pinch and walk by holding it and drawing the hand, measured from the neck and
+  judged against the way the head faced when the drag began (a lean, a nod, a look around or a glance does not walk; a
+  sideways draw snap-turns); screens and gaze buttons tap. A pinch is dropped when cancelled, when its source leaves,
+  and through the headset's menu or a recentre; a hand that blinks out of tracking stands still and resumes, one gone
+  longer than a quarter of a second is spent (`07_Execute_Actions/xrSession.ts`). Every way out of a car is refused
+  above 1.5 m/s, with a buzz on the controller that asked and a short refusal chime in the headset (the toast stays for
+  the monitor); a trigger held from opening the door, or as a lone controller takes on the throttle, however lightly,
+  gives no throttle where it is, only past a point a little above the lowest it eases back to (no lurch, no creep on a
+  resting finger, a jolted one or a worn trigger). A pad held inside a headset walks where the headset looks and snap-turns. A session
+  without a floor-level space runs in a local one with the floor lifted by the eye height instead of being refused.
+  Checked by unit suites against fake sources of every registry shape and scripted select events; unverified on any
+  real headset.
 - **The console asks Sloane without the city.** In the console alone (`?boot=tty`, the shell the recovery card's
   **Open the console** opens, with no engine, canvas, WebGPU, worker or audio), `operator unlock`, then `ask <your
   words>`, now streams Sloane's reply into the console instead of `engine not running`, so a web view without WebGPU
@@ -2310,7 +2389,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (5: the shops' and homes' hollowing on the placement's lots, near the start and a kilometre off); the window tests
   (`workplaces`, `streets`, `paintedLight`, `transit`) are re-pinned at the new starts, and the browser smoke's
   `lakefront` checks the 28 places in five regions, the start and the HUD line in Lakefront Metropolis, and the same in
-  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,674 bytes, from 12,340,394 to 12,352,068; the limit in
+  The Grand Ravine with `?place=the-grand-ravine`, the workplaces on the same lots. `dist/index.html` grows by 11,665 bytes, from 12,353,777 to 12,365,442; the limit in
   `tools/verify/page_dist.mjs` is unchanged. Not there yet: the
   people, the cars, the lamps and the painted light still live only in the window round the start, so a place outside
   it stands on an empty street with nobody at work in it, and after dark a shop or home there is unlit inside (a
@@ -2319,6 +2398,17 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the fifteen starts of the three tested seeds a start's window holds one to four workplaces, one or two shops and up
   to two homes. Unverified on a real phone or GPU (the pictures are software
   WebGPU).
+
+- **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
+  answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
+  is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
+  on this machine" for a model server here, "Thinking off this machine" for the gateway, else her default model's
+  progress while it comes ("Getting her model, 42%", "Keeping her model", "The app checks her model"), else "Ready to
+  plan", which her scripted planner always is. The readout's whole line, the one `ask` prints as its brain row, is the
+  words' title for a pointer, and a screen reader hears it once, after the words. A change in the readout renders that
+  row alone, not the page, and nothing on the card probes, asks or downloads (`useFirstWalk.ts` `sloaneOf`, `FirstWalk.tsx`). Pinned by
+  `firstWalkWiring.test.ts` over every brain and default state, and by the browser smoke's `walk`, which holds the
+  row's brain and line to `__SIM__.brain()`.
 
 - **The console's second language is now called Crimson Noir Script.** It was NoirScript. The name changed everywhere
   a person reads it: the console's `help` and `noir` lines, Sloane's first-walk lines, the progression's skill text,

@@ -11,6 +11,12 @@
         "compression": "none"
       }
     },
+    "macOS": {
+      "files": {
+        "Resources/licenses/llama.cpp/LICENSE": "../third_party/llama.cpp/LICENSE",
+        "Resources/licenses/llama.cpp/NOTICE": "../third_party/llama.cpp/NOTICE"
+      }
+    },
     "linux": {
       "deb": {
         "files": {

@@ -84,11 +84,12 @@ test('the app\'s pin is its own record beside its licence, and the shell and the
 })
 
 test('every carrier of the app\'s model is named where its licence is: the notice beside it, the tool that places it, NOTICE.md and the audit', () => {
-  // The three that carry it: the Windows installer, the Linux packages and the NixOS package. A fourth must be named in
-  // each of these before it ships the file.
+  // The four that carry it: the Windows installer, the Linux packages, the macOS app and the NixOS package. A fifth must
+  // be named in each of these before it ships the file.
   const CARRIERS: Record<string, RegExp> = {
     'the Windows installer': /Windows installer/,
     'the Linux packages (.deb, .rpm, AppImage)': /Linux (?:packages|app's|app’s)[^]{0,80}\.deb[^]{0,40}\.rpm[^]{0,40}AppImage/,
+    'the macOS app (.dmg, zipped .app)': /macOS app[^]{0,80}\.dmg/,
     'the NixOS package': /NixOS package/,
   }
   const flat = (t: string): string => t.replace(/\s*\n\s*(?:\* ?)?/g, ' ')
@@ -119,7 +120,12 @@ test('every carrier of the app\'s model is named where its licence is: the notic
   assert.match(notice, /llama-cpp-sys-2 0\.1\.161/)
   assert.match(notice, /e7af607ebd5ec2932709ef918c17cca2f9b0fce4/)
   assert.match(notice, /\/usr\/share\/doc\/crimson-noir-agent-city\/llama\.cpp\/NOTICE and LICENSE/)
-  assert.match(places['NOTICE.md (shipped part)'], /The native model runner in the Linux app\./)
+  assert.match(places['NOTICE.md (shipped part)'], /The native model runner in the Linux and macOS apps\./)
+  // The macOS app holds the same two texts in its resources (bundle.macOS.files), and the notice says where.
+  const mac = (JSON.parse(read('../../src-tauri/tauri.model.conf.json')) as { bundle: { macOS: { files: Record<string, string> } } }).bundle.macOS.files
+  assert.deepEqual(mac, { 'Resources/licenses/llama.cpp/LICENSE': '../third_party/llama.cpp/LICENSE', 'Resources/licenses/llama.cpp/NOTICE': '../third_party/llama.cpp/NOTICE' })
+  assert.match(notice, /Contents\/Resources\/licenses\/llama\.cpp\/NOTICE and LICENSE/)
+  assert.doesNotMatch(notice, /The Windows, macOS/, 'the notice no longer says the macOS build does not compile it')
 })
 
 test('launcherServes: only a page on http://127.0.0.1 with models=1 in its address, the NixOS launcher\'s, is served the launcher\'s model', () => {
