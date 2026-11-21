@@ -25,7 +25,7 @@ import { AGENTS_RANGE, type CrowdReadout, type CrowdSensor, type CrowdStepInput 
 import { OperatorTrail } from './skills.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
 import { createFlowTexture, FlowFieldGpu, writeFlowTexture } from '../06_Make_Decisions/flowFieldGpu.ts'
-import { packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { lotInWindow, packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { packRooms, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { packRoutes } from '../01_Initialize_World/region/workplaces.ts'
 
@@ -141,7 +141,8 @@ export class CrowdSim implements CrowdSensor {
     this.#groups = Math.ceil(agentCount / CROWD_WORKGROUP[kernel])
     this.#grid = grid
     this.#streets = streets ? packStreets(streets) : undefined
-    this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms) : undefined
+    // In a region only the rooms on the window's lots are rooms to the crowd (the others keep their slots, empty).
+    this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms, undefined, streets ? (room) => lotInWindow(streets, room.k, room.m) : undefined) : undefined
     this.#routes = streets && rooms && rooms.length > 0 ? packRoutes(rooms, streets) : undefined
     this.#flowTexture = createFlowTexture(device, grid)
     this.#readout = {

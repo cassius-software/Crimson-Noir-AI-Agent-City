@@ -18,6 +18,9 @@
  * - blue, the floor inside a workplace, under the ceiling its real fixtures hang from (cityLights.ts roomFixtures):
  *   shown only while those are off, so the paint stands in for them and never lies under them;
  * - alpha, the floor inside a shop or a home, whose ceilings show the same lit panels and hang no light at all.
+ * A floor is painted only on a lot the picture holds whole: the picture's edge runs through the middle of the lots of
+ * the ring of blocks round the window, and a floor cut there would be lit to a straight line across the room and dark
+ * past it. Such a lot's glass still spills on the ground the picture holds, as every frontage's does.
  * Pure: numbers in, bytes out, nothing of three; regionWorld.ts makes the texture and the materials' glow from it.
  * What breaks if it is removed? After dark a lite phone's region is lamp heads and shop windows that light nothing:
  * the streets under them are black, and so is every room.
@@ -65,7 +68,8 @@ export interface PaintInput {
   /** The outer ring of every building whose ground floor is lit glazing, engine metres, wound either way. */
   frontages: readonly (readonly Pt[])[]
   /** The centre of every lot that is a room, a shop or a home (CITY.lotHalf each way, glass all round), and whether
-   *  its ceiling hangs real fixtures (a workplace's does: its floor goes to blue; a shop's and a home's go to alpha). */
+   *  its ceiling hangs real fixtures (a workplace's does: its floor goes to blue; a shop's and a home's go to alpha).
+   *  Any lot on the map may come: a lot the picture does not hold whole has no floor painted (see the header). */
   interiors: readonly { cx: number; cz: number; fixtures: boolean }[]
 }
 
@@ -172,9 +176,13 @@ export function bakePaintedLight(input: PaintInput): PaintedLight {
   const h = CITY.lotHalf
   for (const { cx, cz } of interiors) ring([[cx - h, cz - h], [cx + h, cz - h], [cx + h, cz + h], [cx - h, cz + h]])
 
-  // The lit floors: inside the glass, with a texel of soft edge.
+  // The lit floors: inside the glass, with a texel of soft edge, on the lots the picture holds whole.
   const inner = h - ROOM.wall
+  const extent = size * PAINT_TEXEL
+  const held = (cx: number, cz: number): boolean =>
+    cx - h >= originX && cx + h <= originX + extent && cz - h >= originZ && cz + h <= originZ + extent
   for (const { cx, cz, fixtures } of interiors) {
+    if (!held(cx, cz)) continue
     const floors = fixtures ? fixtured : bare
     const [x0, x1] = span(cx - inner - 1, cx + inner + 1, originX), [z0, z1] = span(cz - inner - 1, cz + inner + 1, originZ)
     for (let z = z0; z <= z1; z++) {

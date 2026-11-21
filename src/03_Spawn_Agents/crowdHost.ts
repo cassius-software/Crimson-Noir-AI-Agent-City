@@ -22,7 +22,7 @@ import { CROWD_SUBSTEP } from './crowdSim.ts'
 import { OperatorTrail } from './skills.ts'
 import { compileWgsl, hostBuffer, type HostBuffer, type HostModule, type HostTexture } from './wgslHost.ts'
 import { cpuFlowSolver, nearestOpen, type FlowGrid, type FlowSolver } from '../06_Make_Decisions/flowField.ts'
-import { packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { lotInWindow, packStreets, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { packRooms, type Workplace } from '../01_Initialize_World/interiors.ts'
 import { packRoutes } from '../01_Initialize_World/region/workplaces.ts'
 
@@ -77,7 +77,8 @@ export class CrowdHost implements CrowdSensor {
     this.#grid = grid
     this.#latency = Math.max(0, Math.floor(opts.latency ?? 0))
     this.#streets = streets ? packStreets(streets) : undefined
-    this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms) : undefined
+    // In a region only the rooms on the window's lots are rooms to the crowd (the others keep their slots, empty).
+    this.#rooms = rooms && rooms.length > 0 ? packRooms(rooms, undefined, streets ? (room) => lotInWindow(streets, room.k, room.m) : undefined) : undefined
     this.#routes = streets && rooms && rooms.length > 0 ? packRoutes(rooms, streets) : undefined
     const placement = grid ? { originX: grid.originX, originZ: grid.originZ, cell: grid.cell } : undefined
     this.#module = compileWgsl(crowdShader(agentCount, placement, streets ? geometryOf(streets) : undefined))

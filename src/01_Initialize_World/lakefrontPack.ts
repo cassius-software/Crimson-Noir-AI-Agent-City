@@ -9,11 +9,11 @@
  * runs it before the engine starts. The pack's names are screened by the CC0 gate (assets/cc0.ts) before they leave.
  * What breaks if it is removed? The onboarding and `?map=lakefront` have no map to hand the engine.
  */
-import { generateLakefront, REGIONS, ZONE, type LakefrontMap, type Zone } from './lakefront.ts'
+import { generateLakefront, REGIONS, REGION_NAMES, ZONE, type LakefrontMap, type Zone } from './lakefront.ts'
 import { MACRO } from './macroCity.ts'
 import { screenNames } from './assets/cc0.ts'
 import { macroToRegionPack } from './region/fromMacro.ts'
-import { validatePack, type RegionPack } from './region/pack.ts'
+import { packNames, validatePack, type RegionPack } from './region/pack.ts'
 
 /** The walkable map's size, blocks (2.56 km across). */
 export const WALK_BLOCKS = 64
@@ -37,10 +37,26 @@ export function zoneCentre(map: LakefrontMap, zone: Zone): { x: number; z: numbe
   return { x: Math.round((k / n) * MACRO.pitch), z: Math.round((m / n) * MACRO.pitch) }
 }
 
-/** The region pack of a generated map, the visitor's first walk starting at `zone`'s centre; its names screened. */
+/**
+ * The zone a pack starts in: the asked one when it is one of the five regions' ids, the metropolis for anything else
+ * (the lake, a number that is no zone, a name, nothing). Both builder ports (lakefront.worker.ts, lakefrontClient.ts
+ * inlinePort) take a `pack` request's zone through it, so they build the same pack for the same message.
+ */
+export function startZone(zone: unknown): Zone {
+  return REGIONS.some((r) => r.id === zone) ? (zone as Zone) : ZONE.metropolis
+}
+
+/**
+ * The region pack of a generated map, the visitor's first walk starting at `zone`'s centre; its names screened. The
+ * pack carries the map's quarters layer (region/pack.ts Quarters): the five regions' names, every block's region and
+ * ground, and `zone` as the quarter the visitor chose (startZone: the metropolis when `zone` is no region).
+ */
 export function packOf(map: LakefrontMap, zone: Zone, log?: (line: string) => void): RegionPack {
-  const pack = validatePack(macroToRegionPack(map, { name: METRO.name, attribution: METRO.attribution, waterName: METRO.lake, origin: zoneCentre(map, zone) }))
-  const purged = screenNames([pack.name, ...pack.names, ...pack.attribution], 'region pack', log)
+  const pack = validatePack(macroToRegionPack(map, {
+    name: METRO.name, attribution: METRO.attribution, waterName: METRO.lake, origin: zoneCentre(map, zone),
+    quarters: { names: REGION_NAMES, id: map.zones, terrain: map.terrain, home: startZone(zone) },
+  }))
+  const purged = screenNames(packNames(pack), 'region pack', log)
   if (purged.length) throw new Error(`the generated map named something after a weapon: ${purged.map((p) => p.asset).join(', ')}`)
   return pack
 }
