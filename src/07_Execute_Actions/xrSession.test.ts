@@ -38,7 +38,7 @@ const ndcX = (m: Matrix4, x: number, z: number) => { const v = new Vector4(x, 0,
 const reversed = (c: object) => (c as { _reversedDepth?: boolean })._reversedDepth === true
 
 function controller(handedness: 'left' | 'right'): XrInputSourceLike {
-  return { handedness, targetRayMode: 'tracked-pointer', profiles: ['meta-quest-touch-plus', 'generic-trigger-squeeze-thumbstick'], gamepad: { mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 7 }, () => ({ pressed: false, value: 0 })) } }
+  return { handedness, targetRayMode: 'tracked-pointer', profiles: ['generic-trigger-squeeze-thumbstick'], gamepad: { mapping: 'xr-standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 7 }, () => ({ pressed: false, value: 0 })) } }
 }
 const pinchSource = (): XrInputSourceLike => ({ handedness: 'none', targetRayMode: 'transient-pointer', profiles: [], gamepad: null })
 
@@ -385,4 +385,207 @@ test('xrSystemOf, hasWebGpuBinding, immersiveModes and headsetPossible: shape ch
   assert.equal(await headsetPossible({ xr }, {}), false)
   assert.equal(await headsetPossible(undefined, bound), false)
   assert.equal(hasWebGpuBinding(), typeof (globalThis as { XRGPUBinding?: unknown }).XRGPUBinding !== 'undefined')
+})
+
+// ── The pinch: selectstart, the frames between, select and selectend ──────────────────────────────────────────────
+
+type P3 = { x: number; y: number; z: number }
+/** A frame posing each space at a point (absent: untracked); the viewer at `head`, or throwing as an event's frame does. */
+function poseFrame(at: Map<unknown, P3>, head: P3 | null | 'throws') {
+  return {
+    getPose: (space: unknown, base: unknown) => {
+      if (base !== REF) throw new Error('posed against the wrong space')
+      const p = at.get(space)
+      return p ? { transform: { position: p } } : null
+    },
+    getViewerPose: (base: unknown) => {
+      if (head === 'throws') throw new Error('InvalidStateError')
+      if (base !== REF) throw new Error('posed against the wrong space')
+      return head ? { transform: { position: head } } : null
+    },
+  }
+}
+const REF = { kind: 'the reference space', listeners: new Set<() => void>(), addEventListener(_t: 'reset', l: () => void) { this.listeners.add(l) }, removeEventListener(_t: 'reset', l: () => void) { this.listeners.delete(l) } }
+
+/** The renderer with a reference space (null until setSession), its type, and a loop given a frame. */
+function spaceRenderer() {
+  const r = fakeRenderer()
+  let ref: unknown = null
+  const types: string[] = []
+  let frame: unknown = null
+  const xr = r.xr as typeof r.xr & { getReferenceSpace: () => unknown; setReferenceSpaceType: (t: string) => void }
+  const setSession = xr.setSession
+  xr.setSession = (s) => setSession(s).then(() => { ref = REF })
+  xr.getReferenceSpace = () => ref
+  xr.setReferenceSpaceType = (t) => { types.push(t) }
+  xr.getFrame = () => frame
+  const loop = () => (r.loop as unknown as ((t: number, f?: unknown) => void) | null)
+  return {
+    r, types,
+    dropSpace: () => { ref = null },
+    tick: (t: number, f: unknown) => { frame = f; loop()?.(t, f); frame = null },
+  }
+}
+/** A hand: a tracked pointer with a hand, a one-button xr-standard gamepad (its pinch) and a grip. */
+const handSource = (handedness: 'left' | 'right'): XrInputSourceLike => ({ handedness, targetRayMode: 'tracked-pointer', profiles: [], hand: {}, gamepad: { mapping: 'xr-standard', axes: [], buttons: [{ pressed: false, value: 0 }] }, gripSpace: { grip: handedness }, targetRaySpace: { ray: handedness } })
+/** A gaze-and-pinch pointer: transient, no mapping, its grip at the pinching fingers. */
+const transient = (): XrInputSourceLike => ({ handedness: 'none', targetRayMode: 'transient-pointer', profiles: [], gamepad: { mapping: '', axes: [], buttons: [{ pressed: true, value: 1 }] }, gripSpace: { grip: 'fingers' }, targetRaySpace: { ray: 'gaze' } })
+
+async function presenting(sources: XrInputSourceLike[], features: readonly string[] | undefined = ['webgpu', 'local-floor']) {
+  const session = new FakeSession()
+  session.inputSources = sources
+  session.enabledFeatures = features
+  const { xr } = fakeXr({ session: () => Promise.resolve(session) })
+  const s = spaceRenderer(), h = fakeHost(), m = new XrMapper()
+  let now = 0
+  const p = new XrPresence(xr, s.r, h.host, m, () => true, () => now)
+  assert.equal(await p.enter('immersive-vr'), 'vr: on')
+  return { session, s, h, m, p, at: (t: number) => { now = t }, selects: () => h.events.filter((e) => e.startsWith('select')).length }
+}
+const HEADP: P3 = { x: 0, y: 1.6, z: 0 }
+
+test('a quick still pinch of a hand taps once, in the event\'s own frame; a drag walks the mapper and never taps; a controller is never a pinch', async () => {
+  const hand = handSource('right'), ctl = controller('left')
+  const t = await presenting([hand, ctl])
+  assert.deepEqual([t.session.has('selectstart'), t.session.has('select'), t.session.has('selectend'), t.session.has('visibilitychange'), REF.listeners.size], [1, 1, 1, 1, 1])
+  const grip = hand.gripSpace
+  // A tap that starts and ends between two headset frames (a pinch quicker than a frame): the events' frames carry it.
+  t.at(100)
+  t.session.fire('selectstart', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.3 }]]), 'throws') })
+  t.at(180)
+  t.session.fire('select', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.205, y: 1.1, z: -0.3 }]]), 'throws') })
+  t.session.fire('selectend', { inputSource: hand, frame: poseFrame(new Map(), 'throws') })
+  assert.equal(t.selects(), 1, 'one tap')
+  assert.equal(t.m.pinches.size, 0)
+  // A drag: pinch, then the headset frames move the hand forward against the head; the release is no tap.
+  t.at(1000)
+  t.session.fire('selectstart', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.3 }]]), 'throws') })
+  t.s.tick(1011, poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.3 }]]), HEADP))
+  t.s.tick(1022, poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.45 }]]), HEADP))
+  t.m.sources = t.session.inputSources
+  t.m.read()
+  assert.ok(t.m.analog.moveY > 0.9, `the drag walks: ${t.m.analog.moveY}`)
+  assert.deepEqual(t.h.frames, [1011, 1022], 'the engine\'s frame still runs after the sample')
+  t.at(1300)
+  t.session.fire('select', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.45 }]]), 'throws') })
+  t.session.fire('selectend', { inputSource: hand })
+  assert.equal(t.selects(), 1, 'a drag never taps')
+  t.m.read()
+  assert.equal(t.m.analog.moveY, 0, 'let go: still')
+  // A controller's trigger fires select too: the mapper reads its buttons, so the session takes no pinch from it.
+  t.session.fire('selectstart', { inputSource: ctl })
+  t.session.fire('select', { inputSource: ctl })
+  assert.equal(t.selects(), 1)
+  assert.equal(t.m.pinches.size, 0)
+  await t.p.exit()
+  await settle()
+  assert.equal(REF.listeners.size, 0, 'the recentre listener goes with the session')
+})
+
+test('the drag is measured from the neck, so turning the head with the pinching hand still never walks', async () => {
+  const hand = handSource('right')
+  const t = await presenting([hand])
+  const grip = hand.gripSpace
+  const look = (yaw: number) => {
+    const p = { x: -0.08 * Math.sin(yaw), y: 1.6, z: -0.08 * Math.cos(yaw) } // eyes 8 cm before the neck (xrInput.ts PINCH.eyeFwdM)
+    return { getPose: (sp: unknown) => (sp === grip ? { transform: { position: { x: 0.2, y: 1.1, z: -0.35 } } } : null), getViewerPose: () => ({ transform: { position: p, orientation: { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) } } }) }
+  }
+  t.session.fire('selectstart', { inputSource: hand, frame: poseFrame(new Map([[grip, { x: 0.2, y: 1.1, z: -0.35 }]]), 'throws') })
+  for (let k = 0; k <= 30; k++) t.s.tick(11 * (k + 1), look((k / 30) * (Math.PI / 2)))
+  t.m.sources = t.session.inputSources
+  t.m.read()
+  assert.equal(t.m.analog.moveX, 0)
+  assert.equal(t.m.analog.moveY, 0)
+  assert.equal(t.m.turn, 0, 'a look a quarter round: no walk, no snap')
+  t.session.fire('selectend', { inputSource: hand })
+  await t.p.exit()
+  await settle()
+})
+
+test('a pinch cancelled (selectend with no select), one whose hand left, one held through the menu or a recentre: no tap, no walk on', async () => {
+  const hand = handSource('left'), pinch = transient()
+  const t = await presenting([hand, pinch])
+  const grip = hand.gripSpace
+  const start = (src: XrInputSourceLike) => t.session.fire('selectstart', { inputSource: src, frame: poseFrame(new Map([[src.gripSpace, { x: 0, y: 1.1, z: -0.3 }]]), 'throws') })
+  const release = (src: XrInputSourceLike) => { t.session.fire('select', { inputSource: src, frame: poseFrame(new Map([[src.gripSpace, { x: 0, y: 1.1, z: -0.3 }]]), 'throws') }); t.session.fire('selectend', { inputSource: src }) }
+  start(hand)
+  t.session.fire('selectend', { inputSource: hand })
+  assert.equal(t.m.pinches.size, 0, 'cancelled: forgotten')
+  assert.equal(t.selects(), 0)
+  // The hand leaves view mid-pinch: the sources change drops it.
+  start(hand)
+  t.session.inputSources = [pinch]
+  t.session.fire('inputsourceschange', { added: [], removed: [hand] })
+  assert.equal(t.m.pinches.size, 0, 'its source left: dropped')
+  // The session's menu over the city: a drag held through it is dropped, and its later release is no tap.
+  t.session.inputSources = [hand, pinch]
+  start(hand)
+  t.s.tick(16, poseFrame(new Map([[grip, { x: 0, y: 1.1, z: -0.3 }]]), HEADP))
+  t.s.tick(32, poseFrame(new Map([[grip, { x: 0, y: 1.1, z: -0.5 }]]), HEADP))
+  ;(t.session as { visibilityState?: string }).visibilityState = 'visible-blurred'
+  t.session.fire('visibilitychange', {})
+  t.m.read()
+  assert.equal(t.m.analog.moveY, 0, 'behind the menu: no walking on')
+  release(hand)
+  assert.equal(t.selects(), 0, 'and no tap when let go')
+  ;(t.session as { visibilityState?: string }).visibilityState = 'visible'
+  t.session.fire('visibilitychange', {})
+  // A recentre moves the space's origin under a held pinch: dropped.
+  start(pinch)
+  for (const l of REF.listeners) l()
+  release(pinch)
+  assert.equal(t.selects(), 0, 'a recentre drops it')
+  // A transient pointer's quick pinch taps (its release jump is not counted).
+  start(pinch)
+  t.session.fire('select', { inputSource: pinch, frame: poseFrame(new Map([[pinch.gripSpace, { x: 0.05, y: 1.1, z: -0.3 }]]), 'throws') })
+  assert.equal(t.selects(), 1)
+  t.session.fire('selectend', { inputSource: pinch })
+  // No reference space (a renderer without one) and untracked poses: a pinch is a tap only when quick, never a drag.
+  t.s.dropSpace()
+  start(hand)
+  t.s.tick(48, poseFrame(new Map(), HEADP))
+  t.m.read()
+  assert.equal(t.m.analog.moveY, 0)
+  t.session.fire('select', { inputSource: hand })
+  t.session.fire('selectend', { inputSource: hand })
+  assert.equal(t.selects(), 1, 'no poses at all: maybe a hand leaving view, so no tap')
+  await t.p.exit()
+  await settle()
+  assert.deepEqual([t.session.has('selectstart'), t.session.has('select'), t.session.has('selectend'), t.session.has('visibilitychange'), REF.listeners.size], [0, 0, 0, 0, 0], 'every listener removed')
+  assert.equal(t.m.pinches.size, 0)
+})
+
+test('a phone screen and a gaze button tap on any press; the floor: local-floor when granted, else local and floorless; describe counts hands', async () => {
+  const screen: XrInputSourceLike = { handedness: 'none', targetRayMode: 'screen', profiles: [], gamepad: { mapping: '', axes: [0.1, -0.2], buttons: [{ pressed: true, value: 1 }] } }
+  const gaze: XrInputSourceLike = { handedness: 'none', targetRayMode: 'gaze', profiles: [], gamepad: null }
+  const t = await presenting([screen, gaze])
+  assert.deepEqual(t.s.types, ['local-floor'])
+  assert.equal(t.p.floorless, false)
+  t.at(0)
+  t.session.fire('selectstart', { inputSource: screen })
+  t.at(5000)
+  t.session.fire('select', { inputSource: screen })
+  t.session.fire('selectstart', { inputSource: gaze })
+  t.session.fire('select', { inputSource: gaze })
+  assert.equal(t.selects(), 2, 'a long press of the screen still taps')
+  assert.equal(t.p.describe(), 'vr: 2 pinches')
+  const u = await presenting([handSource('left'), handSource('right'), controller('right')], ['webgpu'])
+  assert.deepEqual(u.s.types, ['local'], 'the floor withheld: a plain local space, never a refusal')
+  assert.equal(u.p.floorless, true)
+  assert.equal(u.p.describe(), 'vr: 1 controller, 2 hands')
+  await u.p.exit()
+  await settle()
+  assert.equal(u.p.floorless, false)
+  // Hands without hand tracking granted: no joints, but the browser names them hands; never counted as controllers.
+  const bareHand = (h: 'left' | 'right'): XrInputSourceLike => ({ handedness: h, targetRayMode: 'tracked-pointer', profiles: ['generic-hand-select', 'generic-hand'], gamepad: { mapping: 'xr-standard', axes: [], buttons: [{ pressed: false, value: 0 }] }, gripSpace: {} })
+  const w = await presenting([bareHand('left'), bareHand('right')])
+  assert.equal(w.p.describe(), 'vr: 2 hands')
+  await w.p.exit()
+  const v = await presenting([], undefined)
+  assert.deepEqual(v.s.types, ['local-floor'], 'a browser that lists no features: three\'s own floor')
+  assert.equal(v.p.describe(), 'vr: no input yet')
+  await t.p.exit()
+  await v.p.exit()
+  await settle()
+  assert.equal(REF.listeners.size, 0)
 })
