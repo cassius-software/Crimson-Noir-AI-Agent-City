@@ -30,8 +30,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   dispatch that both writes and reads one resource. The first back end is a deterministic CPU reference renderer
   (`soft.ts`): 1/256-pixel snapping, the top-left rule, clipping, four-sample coverage and resolve, quads with fine
   derivatives, perspective-correct interpolation, mip-mapped sampling, depth, blending, and a Lens interpreter whose
-  per-submit step budget stops a runaway shader (and loses the device, as a GPU watchdog would). 294 tests in the
-  folder pin it, among them seeded fuzzing of the binary form; an air-gap test keeps the folder free of other
+  per-submit step budget stops a runaway shader (and loses the device, as a GPU watchdog would). Calls run one at a
+  time, only objects Nightglass made are taken (a copy or a Proxy of one is refused before its code runs), and a
+  caller's list is read once, so nothing a caller's getter does lands between a call's checks and its work. 348 tests
+  in the folder pin it, among them seeded fuzzing of the binary form; an air-gap test keeps the folder free of other
   interfaces' names. Nothing in the page uses it yet: slice 2 adds the WebGPU back end and a browser check that
   compares its pictures with the reference renderer's, slice 3 the surfaces and the interface kit every console app
   is to draw with.
