@@ -34,7 +34,10 @@
  * is strictly inside all three edges, or exactly on an edge that is a top edge (horizontal, with the triangle below
  * it) or a left edge (with the triangle to its right). Two triangles that share an edge therefore cover every point
  * on it exactly once between them. Only pixels inside the attachment, the scissor rectangle and the viewport's span
- * are tested.
+ * are tested: the scan of each fan triangle visits every 2 x 2 quad of its bounding box clipped to them, covered or
+ * not (a clipped triangle's fan is scanned piece by piece, so a quad where their boxes overlap is visited once for
+ * each), and before it begins it tells the caller how many it will visit (the reference renderer charges its step
+ * budget for each), so a sliver whose box is large costs what its scan costs.
  *
  * INTERPOLATION. Barycentric weights come from the same exact edge functions, at the pixel centre for the vertex
  * outputs and the fragment coordinate, and at each sample position for the depth tested there. Vertex outputs are
@@ -99,20 +102,35 @@ export interface Triangle {
 /**
  * The triangles `count` vertices make. A list makes triangle t of vertices 3t, 3t + 1, 3t + 2 (leftover vertices draw
  * nothing). A strip makes triangle i of vertices i, i + 1, i + 2, and of i + 1, i, i + 2 when i is odd so that every
- * triangle keeps the strip's winding; its flat values still come from vertex i.
+ * triangle keeps the strip's winding; its flat values still come from vertex i. `restart` (a strip's only; a list
+ * never asks it) names the positions where the strip restarts, as an indexed strip does at its restart index: no
+ * triangle uses such a position, and the strip begins again after it, i counting from 0 there. It is asked once per
+ * position, in order, as the triangles are taken.
  */
-export function assemble(topology: Topology, count: number): Generator<Triangle, void, undefined> {
+export function assemble(topology: Topology, count: number, restart: ((i: number) => boolean) | null = null): Generator<Triangle, void, undefined> {
   if (topology !== 'triangles' && topology !== 'triangle-strip') fail('invalid', `primitive assembly: ${String(topology)} is not a topology (triangles or triangle-strip)`)
   if (!Number.isSafeInteger(count) || count < 0) fail('invalid', `primitive assembly: the vertex count ${String(count)} is not a whole number of zero or more`)
-  return topology === 'triangles' ? list(count) : strip(count)
+  if (restart !== null && typeof restart !== 'function') fail('invalid', 'primitive assembly: restart must be null or a function that takes a position')
+  return topology === 'triangles' ? list(count) : strip(count, restart)
 }
 
 function* list(count: number): Generator<Triangle, void, undefined> {
   for (let i = 0; i + 2 < count; i += 3) yield { a: i, b: i + 1, c: i + 2, provoking: i }
 }
 
-function* strip(count: number): Generator<Triangle, void, undefined> {
-  for (let i = 0; i + 2 < count; i++) yield i % 2 === 0 ? { a: i, b: i + 1, c: i + 2, provoking: i } : { a: i + 1, b: i, c: i + 2, provoking: i }
+function* strip(count: number, restart: ((i: number) => boolean) | null): Generator<Triangle, void, undefined> {
+  // run: the positions taken since the strip last began; position i ends triangle run - 3 of this piece of the strip.
+  let run = 0
+  for (let i = 0; i < count; i++) {
+    if (restart !== null && restart(i)) {
+      run = 0
+      continue
+    }
+    run++
+    if (run < 3) continue
+    const j = i - 2
+    yield run % 2 === 1 ? { a: j, b: j + 1, c: j + 2, provoking: j } : { a: j + 1, b: j, c: j + 2, provoking: j }
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -170,8 +188,10 @@ export interface Quad {
 }
 
 /**
- * The rasteriser of one draw. It is built from the draw's state, how many values each vertex passes on, and which of
- * them are flat (null: none), and checks them once; then `triangle` rasterises triangles one by one.
+ * The rasteriser of one draw. It is built from the draw's state, how many values each vertex passes on, which of them
+ * are flat (null: none), and optionally `charge`, and checks them once; then `triangle` rasterises triangles one by
+ * one. Before it scans a triangle (each piece of a clipped one's fan) it calls `charge` with the number of 2 x 2 quads
+ * the scan will visit, covered or not; a `charge` that throws stops the triangle before any of that work.
  */
 export class Raster {
   readonly state: RasterState
@@ -204,11 +224,15 @@ export class Raster {
   private readonly bias = new Float64Array(3)
   /** The three edge functions at the last point `weigh` was given. */
   private readonly e = new Float64Array(3)
+  /** Told the quads each scan will visit, before it begins. */
+  private readonly charge: ((quads: number) => void) | null
 
-  constructor(state: RasterState, varyings: number, flat: ArrayLike<boolean> | null) {
+  constructor(state: RasterState, varyings: number, flat: ArrayLike<boolean> | null, charge: ((quads: number) => void) | null = null) {
     checkState(state)
     if (!Number.isInteger(varyings) || varyings < 0 || varyings > MAX_VARYINGS) fail('invalid', `rasteriser: ${String(varyings)} values per vertex is not a whole number from 0 to ${MAX_VARYINGS}`)
     if (flat !== null && (typeof flat !== 'object' || !(flat.length >= varyings))) fail('invalid', `rasteriser: the flat flags must be null or give one flag for each of the ${varyings} values`)
+    if (charge !== null && typeof charge !== 'function') fail('invalid', 'rasteriser: charge must be null or a function that takes a number of quads')
+    this.charge = charge
     const vp = state.viewport
     const sc = state.scissor
     this.state = Object.freeze({
@@ -371,6 +395,9 @@ export class Raster {
     const x1 = Math.min(this.right - 1, Math.floor(Math.max(...xs) / SUBPIXEL))
     const y0 = Math.max(this.top, Math.floor(Math.min(...ys) / SUBPIXEL))
     const y1 = Math.min(this.bottom - 1, Math.floor(Math.max(...ys) / SUBPIXEL))
+    if (x1 < x0 || y1 < y0) return
+    // The scan visits every quad from the even column and row at or before x0 and y0 through x1 and y1.
+    if (this.charge !== null) this.charge((((x1 - (x0 - (x0 & 1))) >> 1) + 1) * (((y1 - (y0 - (y0 & 1))) >> 1) + 1))
     const quad = this.quad
     for (let qy = y0 - (y0 & 1); qy <= y1; qy += 2) {
       for (let qx = x0 - (x0 & 1); qx <= x1; qx += 2) {

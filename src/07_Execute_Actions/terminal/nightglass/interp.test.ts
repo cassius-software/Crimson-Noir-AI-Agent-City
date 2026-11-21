@@ -15,6 +15,7 @@
  * every picture the GPU back end is compared against would carry the drift with it.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { arrayOf, block, lens } from './builder.ts'
 import type { BlockRes, LensBuilder, Val } from './builder.ts'
@@ -272,6 +273,21 @@ test('every ternary function on the types it takes: mix and smoothstep by their 
     rows.forEach((r, i) => assert.deepEqual(got[i], flat(r[3]), `${fn} ${types.join(' ')} ${r[2].map(String).join(' ')}`))
   }
   assert.deepEqual(new Set(TERNARY_ROWS.map((r) => r[0])), new Set(TERNARY), 'every ternary function is covered')
+})
+
+test('fma rounds to odd through words of an explicit byte order, so its one rounding is the same on every host', () => {
+  // fma(1, 1, 2^-60) steps the low word of the double 1 up, and fma(1, 1, -2^-60) steps it down, borrowing from the
+  // high word; were the words read in the host's byte order, a big-endian host would step the high word instead and
+  // give 1 + 2^-20 for the first. The exact values round to +-1.
+  const cases = [[1, 1, 2 ** -60], [1, 1, -(2 ** -60)], [-1, 1, 2 ** -60], [-1, 1, -(2 ** -60)], [3, 1, 2 ** -60], [3, 1, -(2 ** -60)]]
+  assert.deepEqual(calc(['f32', 'f32', 'f32'], cases, (b, x, y, z) => b.ternary('fma', x, y, z)), [[1], [1], [-1], [-1], [3], [3]])
+  // The code itself: no typed array views another's buffer (whose element order would be the host's), and every
+  // multi-byte read or write through a DataView names little-endian.
+  const code = readFileSync(new URL('./interp.ts', import.meta.url), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
+  assert.doesNotMatch(code, /new\s+(?:Uint|Int|Float|BigInt|BigUint)(?:8|16|32|64)(?:Clamped)?Array\(\s*[\w.]+\.buffer\b/)
+  const accesses = [...code.matchAll(/\.(?:get|set)(?:Uint|Int|Float)(?:16|32|64)\((?:[^()]|\([^()]*\))*\)/g)].map((m) => m[0])
+  assert.ok(accesses.some((a) => a.startsWith('.setFloat64(')), 'fma writes its double through a DataView')
+  for (const a of accesses) assert.match(a, /,\s*true\)$/, a)
 })
 
 test('float rem is a - b trunc(a / b) with each step rounded, which is not the exact remainder', () => {

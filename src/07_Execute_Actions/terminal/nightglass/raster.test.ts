@@ -148,6 +148,29 @@ test('assembly: a list makes whole triangles from the first vertex; a strip keep
   faults(() => assemble('triangle-strip', '3' as unknown as number))
 })
 
+test('assembly: a strip restarts where it is told, no triangle using that position, its triangles counted again from 0', () => {
+  const stopsAt = (...stops: number[]) => (i: number): boolean => stops.includes(i)
+  // Positions 0 to 2 make one triangle; 3 and 4 restart; 5 to 8 begin again, the first triangle in the strip's order
+  // (position 5 is odd, but the first of its piece) and the second swapped, its flat vertex still its first position.
+  assert.deepEqual([...assemble('triangle-strip', 9, stopsAt(3, 4))], [
+    { a: 0, b: 1, c: 2, provoking: 0 },
+    { a: 5, b: 6, c: 7, provoking: 5 },
+    { a: 7, b: 6, c: 8, provoking: 6 },
+  ])
+  // A restart first or last, a piece of two positions between restarts, and nothing but restarts make no triangle there.
+  assert.deepEqual([...assemble('triangle-strip', 7, stopsAt(0, 3, 6))], [])
+  assert.deepEqual([...assemble('triangle-strip', 5, stopsAt(0))], [{ a: 1, b: 2, c: 3, provoking: 1 }, { a: 3, b: 2, c: 4, provoking: 2 }])
+  assert.deepEqual([...assemble('triangle-strip', 6, () => true)], [])
+  // With no restart, or one that never says so, a strip is as before.
+  assert.deepEqual([...assemble('triangle-strip', 6, () => false)], [...assemble('triangle-strip', 6)])
+  // Every position is asked once, in order; a list never asks.
+  const asked: number[] = []
+  for (const t of assemble('triangle-strip', 6, (i) => { asked.push(i); return i === 2 })) assert.ok(t.a > 2)
+  assert.deepEqual(asked, [0, 1, 2, 3, 4, 5])
+  assert.deepEqual([...assemble('triangles', 6, () => assert.fail('a list never restarts'))], [...assemble('triangles', 6)])
+  faults(() => assemble('triangle-strip', 3, 'yes' as unknown as () => boolean))
+})
+
 // ---------------------------------------------------------------------------------------------------
 // Coverage and the top-left rule
 
@@ -728,6 +751,56 @@ test('a triangle with no area, no finite position, or nothing in front draws not
   none([0, 1, 2].map((i) => ({ pos: [i * 1e-3, 0, 0, W_MIN / 2], vary: [] })))
   // A sliver thinner than a pixel that reaches no centre.
   none([at(st, 0, 3.6), at(st, 16, 3.7), at(st, 0, 3.7)])
+})
+
+test('the scan of a sliver whose box is large is told before it begins: every quad of the box within the scissor, covered or not', () => {
+  const charged = (st: RasterState, tri: readonly ClipVertex[], charge: (quads: number) => void = () => {}): { readonly quads: number[]; readonly emitted: number } => {
+    const quads: number[] = []
+    let emitted = 0
+    new Raster(st, 0, null, (n) => { quads.push(n); charge(n) }).triangle(tri[0], tri[1], tri[2], tri[0], () => { emitted++ })
+    return { quads, emitted }
+  }
+  // A wedge just below the line y = x - 0.25 from corner to corner: it holds no pixel centre, but its box is the whole
+  // attachment, 8 x 8 quads of 16 x 16 pixels.
+  const st = state()
+  const sliver = [at(st, 0.25, 0), at(st, 16, 15.75), at(st, 16, 15.734375)]
+  assert.deepEqual(charged(st, sliver), { quads: [64], emitted: 0 })
+  // A scissor clips the scan first: pixels 3 to 8 by 5 to 8 lie in the quads at columns 2, 4, 6, 8 and rows 4, 6, 8.
+  assert.deepEqual(charged(state({ scissor: { x: 3, y: 5, width: 6, height: 4 } }), sliver).quads, [12])
+  // A box wholly outside the scissor visits nothing and is told nothing.
+  assert.deepEqual(charged(state({ scissor: { x: 0, y: 8, width: 4, height: 4 } }), [at(st, 10, 1), at(st, 14, 1), at(st, 12, 4)]), { quads: [], emitted: 0 })
+  // A triangle that covers pixels is told its box too: the quads it hands out are some of those.
+  const half = charged(st, [at(st, 0, 0), at(st, 0, 16), at(st, 16, 0)])
+  assert.deepEqual(half.quads, [64])
+  assert.equal(half.emitted, 36)
+  // A clipped triangle is told once per piece of its fan, each piece's own box.
+  const wide = charged(st, [at(st, -16, 8), at(st, 32, -8), at(st, 32, 24)])
+  assert.ok(wide.quads.length >= 2 && wide.quads.every((n) => n > 0 && n <= 64), String(wide.quads))
+  // A charge that throws stops the triangle before any quad is scanned or handed out.
+  let emitted = 0
+  const stop = new Raster(st, 0, null, () => { throw new RangeError('past the budget') })
+  assert.throws(() => stop.triangle(at(st, 0, 0), at(st, 0, 16), at(st, 16, 0), at(st, 0, 0), () => { emitted++ }), RangeError)
+  assert.equal(emitted, 0)
+  faults(() => new Raster(st, 0, null, 'charge' as unknown as () => void))
+})
+
+test('a clipped triangle is scanned, and told, once per triangle of its fan, each with its own box, so overlapping boxes are told twice', () => {
+  // The usual full-screen triangle is clipped to the view square and drawn as a fan of two triangles; each one's box is
+  // the whole attachment, 8 x 8 quads. The quads along their shared diagonal are handed out by both, each covering
+  // different pixels, and every pixel is covered exactly once.
+  const st = state()
+  const quads: number[] = []
+  const counts = new Uint8Array(16 * 16)
+  let emitted = 0
+  const raster = new Raster(st, 0, null, (n) => quads.push(n))
+  const big = [at(st, 0, 16), at(st, 32, 16), at(st, 0, -16)]
+  raster.triangle(big[0], big[1], big[2], big[0], (q) => {
+    emitted++
+    for (let lane = 0; lane < 4; lane++) if (q.mask[lane] !== 0) counts[(q.y + (lane >> 1)) * 16 + q.x + (lane & 1)]++
+  })
+  assert.deepEqual(quads, [64, 64])
+  assert.equal(emitted, 64 + 8)
+  assert.deepEqual(Array.from(counts), new Array(16 * 16).fill(1))
 })
 
 test('the state, the values and the vertices are checked, and the state is kept as a frozen copy', () => {

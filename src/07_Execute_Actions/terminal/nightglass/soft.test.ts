@@ -16,7 +16,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import type {
   BindingEntry, BindingLayout, BindingSet, BindingWrite, Buffer, BufferUse, ColorAttachment, ColorOutput, CommandArena, CommandList,
-  DepthAttachment, DepthState, Device, Image, ImageInfo, ImageLayout, PipelineLayout, Queue, RenderPipeline, Scope, VertexBufferLayout, View,
+  DepthAttachment, DepthState, Device, Image, ImageInfo, ImageLayout, PipelineLayout, Queue, Rect, RenderPipeline, Scope, VertexBufferLayout, View,
 } from './api.ts'
 import { arrayOf, lens } from './builder.ts'
 import { isFault } from './fault.ts'
@@ -941,6 +941,78 @@ test('indexed draws add the base vertex; an attribute past the end of its buffer
   assert.deepEqual(Array.from(b.read(pic.image)), picture(8, 8, (x, y) => (x + y >= 7 && y > x ? [255, 0, 0, 255] : [128, 128, 128, 128])))
 })
 
+test('an index is read little-endian from every one of its bytes, u16 and u32', () => {
+  const b = new Bench()
+  const pic = b.picture(8, 8)
+  const pipe = b.pipeline()
+  const vb = b.vertices([...vtx(-1, -1, RED), ...vtx(1, -1, RED), ...vtx(-1, 1, RED)])
+  const draw = (type: 'u16' | 'u32', base: number): number[] => {
+    // Indices base, base + 1 and base + 2, less the base vertex, are vertices 0, 1 and 2.
+    const ib = b.filled(['index'], type === 'u16' ? new Uint16Array([base, base + 1, base + 2]) : new Uint32Array([base, base + 1, base + 2]))
+    b.submit((l) => {
+      b.sync(l, [[pic.image, 'color']])
+      l.beginPass({ colors: [color(pic.view)] })
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.bindIndices(ib, 0, type)
+      l.drawIndexed(3, 1, 0, -base)
+      l.endPass()
+    })
+    return Array.from(b.read(pic.image))
+  }
+  const drawn = picture(8, 8, (x, y) => (y > x ? [255, 0, 0, 255] : [0, 0, 0, 0]))
+  assert.deepEqual(draw('u16', 0xa1b2), drawn)
+  assert.deepEqual(draw('u32', 0x01a2b3c4), drawn)
+})
+
+test('an indexed strip restarts at 0xFFFF (u16) or 0xFFFFFFFF (u32), as WebGPU\'s do; a list, and 0xFFFF among u32 indices, do not', () => {
+  const b = new Bench()
+  const pic = b.picture(8, 8)
+  // The vertex whose vertex-index is a restart value would sit at the top right corner, white, if a triangle used it.
+  const v = lens('vertex')
+  const vi = v.builtin('vertex-index')
+  const stop = v.lor(v.eq(vi, v.lit('u32', 0xffff)), v.eq(vi, v.lit('u32', 0xffffffff)))
+  v.position(v.choose(stop, v.lit('f32x4', 1, 1, 0, 1), v.input(0, 'f32x4')))
+  v.out(v.output(0, 'f32x4', { flat: true }), v.choose(stop, v.lit('f32x4', 1, 1, 1, 1), v.input(1, 'f32x4')))
+  const vertex = v.finish()
+  const strip = b.pipeline({ vertex, fragment: colorFragment(true), topology: 'triangle-strip', cull: 'back' })
+  const list = b.pipeline({ vertex, fragment: colorFragment(true), cull: 'back' })
+  // In pixels: v0 (0, 0), v1 (0, 4), v2 (4, 0) at the top left; v3 (0, 4), v4 (0, 8), v5 (4, 4), v6 (4, 8) below it.
+  // Only the first vertex of each triangle gives its (flat) colour.
+  const vb = b.vertices([...vtx(-1, 1, RED), ...vtx(-1, 0, CLEAR), ...vtx(0, 1, CLEAR), ...vtx(-1, 0, GREEN), ...vtx(-1, -1, BLUE), ...vtx(0, 0, CLEAR), ...vtx(0, -1, CLEAR)])
+  const draw = (pipe: RenderPipeline, type: 'u16' | 'u32', indices: readonly number[], baseVertex = 0): Uint8Array => {
+    const ib = b.filled(['index'], type === 'u16' ? new Uint16Array(indices) : new Uint32Array(indices))
+    b.submit((l) => {
+      b.sync(l, [[pic.image, 'color']])
+      l.beginPass({ colors: [color(pic.view)] })
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.bindIndices(ib, 0, type)
+      l.drawIndexed(indices.length, 1, 0, baseVertex)
+      l.endPass()
+    })
+    return b.read(pic.image)
+  }
+  // Triangle (v0, v1, v2) is red; two restarts; then the strip begins again at position 5: (v3, v4, v5) in the strip's
+  // order (position 5 is odd, but the first of its piece, so the back-face cull keeps it), green from v3, and
+  // (v5, v4, v6), blue from v4. Their shared diagonal x + y = 8 is a left edge of the second only. Nothing is white.
+  const restarted = picture(8, 8, (x, y) => (y < 4 ? (x + y <= 2 ? [255, 0, 0, 255] : [0, 0, 0, 0]) : x >= 4 ? [0, 0, 0, 0] : x + y <= 6 ? [0, 255, 0, 255] : [0, 0, 255, 255]))
+  const R16 = 0xffff
+  const R32 = 0xffffffff
+  assert.deepEqual(Array.from(draw(strip, 'u16', [0, 1, 2, R16, R16, 3, 4, 5, 6])), restarted)
+  assert.deepEqual(Array.from(draw(strip, 'u32', [0, 1, 2, R32, R32, 3, 4, 5, 6])), restarted)
+  // The index is compared before the base vertex is added.
+  assert.deepEqual(Array.from(draw(strip, 'u16', [1, 2, 3, R16, R16, 4, 5, 6, 7], -1)), restarted)
+  // Among u32 indices 0xFFFF is an ordinary vertex, so the strip runs on through it: (white, v3, v4) is drawn white and
+  // the strip's next two triangles face away. A list never restarts: its second triangle is (white, v3, v4) too.
+  const through = draw(strip, 'u32', [0, 1, 2, R16, R16, 3, 4, 5, 6])
+  assert.deepEqual(px(through, 8, 1, 5), [255, 255, 255, 255])
+  assert.deepEqual(px(through, 8, 3, 7), [0, 0, 0, 0])
+  const listed = draw(list, 'u16', [0, 1, 2, R16, 3, 4])
+  assert.deepEqual(px(listed, 8, 0, 0), [255, 0, 0, 255])
+  assert.deepEqual(px(listed, 8, 1, 5), [255, 255, 255, 255])
+})
+
 test('a vertex that writes no position makes its triangles draw nothing', () => {
   const b = new Bench()
   const pic = b.picture(8, 8)
@@ -1175,6 +1247,37 @@ test('indirect draws and dispatches read their numbers from the buffer when they
   assert.deepEqual(dispatchAt(12), new Array(32).fill(0))
 })
 
+test('an indirect draw whose first instance is not 0 draws nothing, as WebGPU\'s do without indirect-first-instance; a direct draw keeps it', () => {
+  const b = new Bench()
+  const pic = b.picture(8, 8)
+  const pipe = b.pipeline()
+  const vb = b.vertices([...vtx(-1, -1, RED), ...vtx(1, -1, RED), ...vtx(-1, 1, RED)])
+  const ib = b.filled(['index'], new Uint16Array([0, 1, 2, 0]))
+  // Words 0-3: a draw of 3 vertices from instance 1; 4-7: the same from instance 0. 8-12: an indexed draw of 3 indices
+  // from instance 1; 13-17: the same from instance 0.
+  const args = b.filled(['indirect'], new Uint32Array([3, 1, 0, 1, 3, 1, 0, 0, 3, 1, 0, 0, 1, 3, 1, 0, 0, 0]))
+  const run = (record: (l: CommandList) => void): number[] => {
+    b.submit((l) => {
+      b.sync(l, [[pic.image, 'color']])
+      l.beginPass({ colors: [color(pic.view)] })
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.bindIndices(ib, 0, 'u16')
+      record(l)
+      l.endPass()
+    })
+    return Array.from(b.read(pic.image))
+  }
+  const drawn = picture(8, 8, (x, y) => (y > x ? [255, 0, 0, 255] : [0, 0, 0, 0]))
+  const blank = new Array(256).fill(0)
+  assert.deepEqual(run((l) => l.drawIndirect(args, 0)), blank)
+  assert.deepEqual(run((l) => l.drawIndirect(args, 16)), drawn)
+  assert.deepEqual(run((l) => l.drawIndexedIndirect(args, 32)), blank)
+  assert.deepEqual(run((l) => l.drawIndexedIndirect(args, 52)), drawn)
+  assert.deepEqual(run((l) => l.draw(3, 1, 0, 1)), drawn)
+  assert.deepEqual(run((l) => l.drawIndexed(3, 1, 0, 0, 1)), drawn)
+})
+
 // ---------------------------------------------------------------------------------------------------
 // Copies
 
@@ -1385,4 +1488,94 @@ test('draws are bounded too: the vertex and fragment invocations and each quad r
     l.draw(6)
     l.endPass()
   }), 'bound', /\(draw\)/)
+})
+
+/** The steps the interpreter counts for one batch of three vertices of colorVertex(), measured on its own. */
+function colorVertexSteps(): number {
+  const program = compile(colorVertex())
+  const none = { block: () => null, image: () => null, sampler: () => null, storageImage: () => null }
+  return program.run({ lanes: 3, inputs: new Float64Array(3 * program.inputWidth) }, program.bind(none), 1e6).steps
+}
+
+test('a sliver whose box is large is bounded: each sample point of each 2 x 2 quad the scan visits counts, covered or not, within the scissor', () => {
+  // A wedge just below the line y = x - 0.125 across a 64 x 64 picture holds no pixel centre and none of the four
+  // sample positions, but its box is the whole picture, 32 x 32 quads: four steps each (one per pixel's sample point)
+  // beside the vertex steps, and no fragment runs.
+  const W = 64
+  const vertexSteps = colorVertexSteps()
+  const cx = (x: number): number => (2 * x) / W - 1
+  const cy = (y: number): number => 1 - (2 * y) / W
+  const sliver = [...vtx(cx(0.125), cy(0), RED), ...vtx(cx(W), cy(W - 0.125), RED), ...vtx(cx(W), cy(W - 0.125 - 1 / 64), RED)]
+  const draw = (steps: number, instances: number, scissor?: Rect, samples: 1 | 4 = 1): Uint8Array | null => {
+    const b = new Bench({ steps })
+    const pic = b.picture(W, W, 'rgba8', samples)
+    const pipe = b.pipeline({ samples })
+    const vb = b.vertices(sliver)
+    b.submit((l) => {
+      b.sync(l, [[pic.image, 'color']])
+      l.beginPass({ colors: [color(pic.view)] })
+      if (scissor !== undefined) l.setScissor(scissor)
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.draw(3, instances)
+      l.endPass()
+    })
+    return samples === 1 ? b.read(pic.image) : null
+  }
+  const per = vertexSteps + 32 * 32 * 4
+  assert.deepEqual(Array.from(draw(per, 1) ?? []), new Array(W * W * 4).fill(0))
+  refuses(() => draw(per - 1, 1), 'bound', /\(draw\): the work ran past this submit's budget of \d+ steps \(a step is .*one sample point of a 2 x 2 quad the rasteriser scans/)
+  // Every instance scans again.
+  draw(2 * per, 2)
+  refuses(() => draw(2 * per - 1, 2), 'bound', /\(draw\)/)
+  // The scan is clipped to the scissor first: pixels [0, 8) x [0, 8) are 4 x 4 quads.
+  draw(vertexSteps + 16 * 4, 1, { x: 0, y: 0, width: 8, height: 8 })
+  refuses(() => draw(vertexSteps + 16 * 4 - 1, 1, { x: 0, y: 0, width: 8, height: 8 }), 'bound', /\(draw\)/)
+  // With four samples the scan tests four points of each pixel, so a quad is sixteen steps.
+  draw(vertexSteps + 32 * 32 * 16, 1, undefined, 4)
+  refuses(() => draw(vertexSteps + 32 * 32 * 16 - 1, 1, undefined, 4), 'bound', /\(draw\)/)
+  // An indexed strip of nothing but restarts shades nothing and draws nothing, yet each restart index is a step.
+  const restarts = (steps: number): void => {
+    const b = new Bench({ steps })
+    const pic = b.picture(8, 8)
+    const pipe = b.pipeline({ topology: 'triangle-strip' })
+    const vb = b.vertices(sliver)
+    const ib = b.filled(['index'], new Uint16Array(64).fill(0xffff))
+    b.submit((l) => {
+      b.sync(l, [[pic.image, 'color']])
+      l.beginPass({ colors: [color(pic.view)] })
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.bindIndices(ib, 0, 'u16')
+      l.drawIndexed(64, 2)
+      l.endPass()
+    })
+  }
+  restarts(128)
+  refuses(() => restarts(127), 'bound', /\(draw-indexed\)/)
+})
+
+test('a clipped triangle is charged for the scan of each triangle of its fan, whose boxes overlap: the full-screen triangle twice', () => {
+  // The usual full-screen triangle, drawn depth-only on a 16 x 16 depth attachment, is clipped to the view square and
+  // drawn as a fan of two triangles. Each one's box is the whole attachment, 8 x 8 quads, so the scan charges
+  // 2 x 64 quads of 4 steps each beside the vertex steps, though the attachment holds only 64 quads.
+  const vertexSteps = colorVertexSteps()
+  const draw = (steps: number): number[] => {
+    const b = new Bench({ steps })
+    const depth = b.picture(16, 16, 'depth32f')
+    const pipe = b.pipeline({ fragment: null, depth: { format: 'depth32f', write: true, compare: 'always' } })
+    const vb = b.vertices([...vtx(-1, -1, RED, 0.5), ...vtx(3, -1, RED, 0.5), ...vtx(-1, 3, RED, 0.5)])
+    b.submit((l) => {
+      b.sync(l, [[depth.image, 'depth']])
+      l.beginPass({ colors: [], depth: depthOf(depth.view) })
+      l.bindPipeline(pipe)
+      l.bindVertices(0, [{ buffer: vb }])
+      l.draw(3)
+      l.endPass()
+    })
+    return floats(b.read(depth.image))
+  }
+  const steps = vertexSteps + 2 * 64 * 4
+  assert.deepEqual(draw(steps), new Array(16 * 16).fill(0.5))
+  refuses(() => draw(steps - 1), 'bound', /\(draw\)/)
 })

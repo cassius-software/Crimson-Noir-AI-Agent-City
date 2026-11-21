@@ -37,9 +37,12 @@
  * - DRAWS run instance by instance, and within an instance triangle by triangle in the order raster.ts assembles
  *   them; each triangle is rasterised, shaded and written before the next. Vertices are shaded four draw positions
  *   at a time (positions 4k to 4k + 3). A vertex-rate attribute reads element `firstVertex + i`, or for an indexed
- *   draw `index + baseVertex`, with the index read little-endian from the index buffer (no restart value); an
- *   instance-rate attribute reads element `firstInstance + instance`. An attribute whose bytes would lie outside its
- *   buffer (possible for an indexed draw), or whose element is negative, reads zero in every component. The
+ *   draw `index + baseVertex`, with the index read little-endian from the index buffer; an instance-rate attribute
+ *   reads element `firstInstance + instance`. An indexed triangle strip restarts, as WebGPU's always do, at index
+ *   0xFFFF (u16 indices) or 0xFFFFFFFF (u32), compared before the base vertex is added: no triangle uses that
+ *   position, and the strip begins again at the next one, its triangles counted from 0 there (for their order and
+ *   flat vertex). A list, or a strip that is not indexed, has no restart. An attribute whose bytes would lie outside
+ *   its buffer (possible for an indexed draw), or whose element is negative, reads zero in every component. The
  *   vertex-index builtin is that element and instance-index is `firstInstance + instance`, both wrapping to u32. A
  *   triangle with a vertex that wrote no position draws nothing.
  * - FRAGMENTS are shaded once per 2 x 2 quad the rasteriser hands out, all four lanes, lanes covering no sample as
@@ -53,15 +56,21 @@
  * - INDIRECT draws and dispatches read their numbers from the device bytes of the buffer when they run. Numbers for
  *   which the same direct command would have been refused when recorded are skipped, and the command draws or
  *   dispatches nothing: vertex-rate or instance-rate ranges past the end of a vertex buffer, an index range past the
- *   end of the index buffer, more workgroups along an axis than the device's `groups` limit.
+ *   end of the index buffer, more workgroups along an axis than the device's `groups` limit. An indirect draw whose
+ *   first instance is not 0 draws nothing too, as WebGPU's do without its optional indirect-first-instance feature;
+ *   a direct draw keeps its first instance.
  * - COMPUTE runs every workgroup and invocation through interp.ts's dispatch() (groups x fastest, then y, then z;
  *   invocations of one workgroup four at a time).
  * - COPIES, updates and zeroes move device bytes; buffer-to-image copies move whole rows of `width` texels, row r of
  *   the region at `offset + r * rowBytes` in the buffer, and bytes between rows are left as they were.
  * - THE STEP BUDGET. One submit may take `steps` steps (default SOFT_STEPS) across all its draws and dispatches: the
- *   steps interp.ts counts for every vertex, fragment and compute invocation, and one more for each quad the
- *   rasteriser hands out (its depth test and writes), so a depth-only draw is bounded too. Past it the submit stops
- *   with a Fault of code `bound` that names the list and the command.
+ *   steps interp.ts counts for every vertex, fragment and compute invocation; one more for each sample point of each
+ *   2 x 2 quad the rasteriser's scan visits, covered or not (4 steps a quad, 16 with four samples), charged before
+ *   the scan begins, which covers the depth tests and writes of the quads it hands out; and one for each restart
+ *   index an indexed strip passes. The scan visits every quad of each fan triangle's bounding box within the
+ *   attachment, the scissor and the viewport, so a clipped triangle is charged once for each triangle of its fan,
+ *   whose boxes may overlap. So a depth-only draw, a sliver whose box is large and a strip of restarts are bounded
+ *   too. Past it the submit stops with a Fault of code `bound` that names the list and the command.
  */
 import type {
   AdapterReport, Backend, BackendDevice, BindingEntry, BindingLayoutInfo, BoundEntry, BufferInfo, ColorOutput, Command, Compare, Feature,
@@ -605,7 +614,7 @@ class Runner {
       try {
         this.command(cmd)
       } catch (e) {
-        if (isFault(e, 'bound')) fail('bound', `${this.where}: the work ran past this submit's budget of ${this.total} steps (a step is one instruction or loop iteration of one invocation, or one quad rasterised)`)
+        if (isFault(e, 'bound')) fail('bound', `${this.where}: the work ran past this submit's budget of ${this.total} steps (a step is one instruction or loop iteration of one invocation, one sample point of a 2 x 2 quad the rasteriser scans, or one strip restart)`)
         if (isFault(e)) throw e
         fail('device', `${this.where}: the reference renderer raised ${e instanceof Error ? `${e.name}: ${e.message}` : say(e)}`)
       }
@@ -802,10 +811,10 @@ class Runner {
     } else if (cmd.indexed) {
       const [count, instances, first, base, firstInstance] = this.words(cmd.buffer, cmd.offset, 5)
       const n = { count, instances, first, baseVertex: base | 0, firstInstance, indexed: true }
-      if (this.indicesFit(n) && this.verticesFit(p, null, [firstInstance, instances])) this.draw(p, n)
+      if (firstInstance === 0 && this.indicesFit(n) && this.verticesFit(p, null, [firstInstance, instances])) this.draw(p, n)
     } else {
       const [count, instances, first, firstInstance] = this.words(cmd.buffer, cmd.offset, 4)
-      if (this.verticesFit(p, [first, count], [firstInstance, instances])) this.draw(p, { count, instances, first, baseVertex: 0, firstInstance, indexed: false })
+      if (firstInstance === 0 && this.verticesFit(p, [first, count], [firstInstance, instances])) this.draw(p, { count, instances, first, baseVertex: 0, firstInstance, indexed: false })
     }
   }
 
@@ -850,12 +859,14 @@ class Runner {
       samples: p.info.samples ?? 1,
       unclipped: p.depth !== null && p.depth.unclipped,
     }
-    const raster = new Raster(state, p.varyings, p.flat)
+    // The scan tests every sample point of a quad's four pixels: a step for each.
+    const raster = new Raster(state, p.varyings, p.flat, (quads) => this.charge(quads * LANES * state.samples))
     const vertices = new VertexStage(this, p, n, p.vertex.program.bind(this.resources(p.layout, p.vertex.module)))
     const pixels = new PixelStage(this, p, pass, p.fragment === null ? null : p.fragment.program.bind(this.resources(p.layout, p.fragment.module)), this.blendConstant)
+    const restart = n.indexed && topology === 'triangle-strip' ? (i: number): boolean => this.restarts(n, i) : null
     for (let instance = 0; instance < n.instances; instance++) {
       vertices.begin(instance)
-      for (const t of assemble(topology, n.count)) {
+      for (const t of assemble(topology, n.count, restart)) {
         const a = vertices.vertex(t.a)
         const b = vertices.vertex(t.b)
         const c = vertices.vertex(t.c)
@@ -874,13 +885,29 @@ class Runner {
 
   /** The element an indexed draw's vertex-rate attributes read at draw position i: its index plus the base vertex. */
   indexed(n: DrawNumbers, i: number): number {
+    return this.index(n, i) + n.baseVertex
+  }
+
+  /** Whether draw position i of an indexed strip is its restart index (all ones in the index type); each costs a step. */
+  private restarts(n: DrawNumbers, i: number): boolean {
+    if (this.index(n, i) !== (this.indices?.type === 'u16' ? 0xffff : 0xffffffff)) return false
+    this.charge(1)
+    return true
+  }
+
+  /**
+   * The index at draw position i of an indexed draw, as the index buffer holds it. It is read little-endian byte by
+   * byte, not through a view made for each index, so a strip of restart indices (one step each) is not slowed by it.
+   */
+  private index(n: DrawNumbers, i: number): number {
     const ib = this.indices
     if (ib === null) fail('state', `${this.where}: an indexed draw needs an index buffer bound`)
     const bytes = ib.buffer.memory.device
     const size = ib.type === 'u16' ? 2 : 4
     const at = ib.buffer.offset + ib.offset + (n.first + i) * size
-    const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-    return (size === 2 ? data.getUint16(at, true) : data.getUint32(at, true)) + n.baseVertex
+    if (!(at + size <= bytes.length)) fail('device', `${this.where}: index ${n.first + i} lies past the end of its memory`)
+    const low = bytes[at] | (bytes[at + 1] << 8)
+    return size === 2 ? low : (low | (bytes[at + 2] << 16) | (bytes[at + 3] << 24)) >>> 0
   }
 
   /** A bound vertex buffer, or undefined. */
@@ -1037,8 +1064,8 @@ class PixelStage {
     this.batch = { lanes: LANES, helpers: 0, inputs: this.inputs, builtins: { 'frag-coord': new Float64Array(4 * LANES), 'front-facing': this.front } }
   }
 
+  /** Takes one quad; its steps were charged when the rasteriser's scan of it began. */
   readonly emit = (quad: Quad): void => {
-    this.runner.charge(1)
     const result = this.shade(quad)
     const dropped = result === null ? 0 : result.helpers
     for (let l = 0; l < LANES; l++) {
