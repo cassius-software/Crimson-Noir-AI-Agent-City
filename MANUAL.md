@@ -59,7 +59,10 @@ launcher's model). `dist/index.html` itself carries no model and asks for none.
 The city needs WebGPU:
 
 - **Desktop and Android:** a current Chrome, Edge or Brave.
-- **iPhone, iPad and Mac:** Safari 26.
+- **iPhone and iPad:** iOS 26 or iPadOS 26, or newer. Every browser there is Safari's engine, so Chrome or Firefox on
+  an iPhone gets WebGPU from the same update and adds nothing on an older iOS.
+- **Mac:** Safari on macOS 26 or newer (Safari's own number is not enough: Safari 27 on macOS 15 has no WebGPU), or a
+  current Chrome, Edge or Brave.
 
 The crowd runs as WGSL compute and has no WebGL path. `?boot=tty` opens the Ring-0 console alone, with no WebGPU
 at all, where Sloane still answers through a model on this machine or in the app (see Track B under Ring-0 console).
@@ -5256,7 +5259,10 @@ bar and no reload of their own, so the page carries its own way out.
   its top right, which a pad's A or a tap presses. The cards let go of the mouse if the city held it (pointer lock),
   and Enter on Details opens it. Under **Details** are the raw message and
   one line (build, adapter, user agent) to copy into a bug report. Where WebGPU itself is what is missing, the card
-  ends with what the city needs: a current Chrome, Edge or Brave on desktop or Android, or Safari 26.
+  ends with what the city needs, in the device's own words: an iPhone or iPad is told that iOS 26 brings WebGPU and
+  that another browser does not add it (they are all Safari's engine there, so no card sends an iPhone to Chrome); a
+  Mac is told Safari on macOS 26 or newer, or a current Chrome, Edge or Brave; everything else a current Chrome, Edge
+  or Brave on desktop or Android, or Safari on iOS 26, iPadOS 26, macOS 26 or newer.
 - **The console still talks to Sloane.** Where the app's own runner says the model it carries is ready (`native_model`
   answers with the file and a ready or loaded status) and the provider kept is `auto` or `native`, the card adds one
   line under its buttons: "This app carries Sloane's model, and the console talks to her without the city: open it,
@@ -5329,8 +5335,11 @@ bar and no reload of their own, so the page carries its own way out.
   "Android 10; K" and a version ending in `.0.0.0` in its user agent whatever the phone is.
 - **What it tells whom.** An insecure address (plain http to another machine, such as `http://192.168.1.20:4173`) is
   named as the problem, not the browser. Without WebGPU, an iPhone before iOS 26 is told it needs iOS 26 (which
-  runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari 26 with WebGPU off is pointed at Lockdown Mode
-  and the feature flag; another browser on iOS, or an app's built-in browser, is sent to Safari; Android Chrome to
+  runs on iPhone 11, iPhone SE (2nd generation) and newer); Safari on iOS 26 or newer with WebGPU off is pointed at
+  Lockdown Mode and the feature flag; another browser on iOS, or an app's built-in browser, is told about iOS 26
+  first (WebKit turns WebGPU on for every browser there from iOS 26, so one without it is most often an older iOS,
+  where Safari has none either) and about Safari second, for an app's browser that leaves WebGPU off; Safari on a
+  Mac is told macOS 26 brings WebGPU, whatever Safari's own number; Android Chrome to
   an update, an Android app's built-in browser to Chrome; Firefox to `dom.webgpu.enabled`; Chrome on Linux with no
   adapter to `chrome://gpu` and its Vulkan flags (and NixOS's `hardware.graphics.enable`). An Android browser with
   WebGPU but no adapter (other than an app's built-in browser, which is sent to Chrome with the Open in Chrome button,

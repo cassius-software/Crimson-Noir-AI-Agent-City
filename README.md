@@ -138,7 +138,7 @@ docs/                   Architecture blueprint, Crimson Noir Script, joint bridg
 npm install
 npm run dev
 ```
-The page needs WebGPU: a current Chrome, Edge or Brave, or Safari 26. A browser without it gets a recovery card, not a WebGL fallback. On NixOS, `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds the page from source in Nix's sandbox and runs it, with Sloane's model beside it.
+The page needs WebGPU: a current Chrome, Edge or Brave, or Safari on iOS 26, iPadOS 26, macOS 26 or newer (every browser on an iPhone is Safari's engine, so there it is the iOS that counts). A browser without it gets a recovery card, not a WebGL fallback. On NixOS, `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds the page from source in Nix's sandbox and runs it, with Sloane's model beside it.
 
 ### 2. Run the tests and the proofs
 ```bash

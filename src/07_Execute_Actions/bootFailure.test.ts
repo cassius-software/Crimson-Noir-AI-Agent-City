@@ -27,7 +27,7 @@ import { kernelLostFailure, kernelNoneFailure, KernelNoneError, KernelResetError
 import {
   appName, AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
   appWebView, haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
-  recentGpuLosses, WEBGPU_LINE, webgpuLine, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure, CONSOLE_TALKS_LINE, consoleTalks, keptLeavesApp,
+  recentGpuLosses, WEBGPU_LINE, webgpuLine, iosBefore26, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure, CONSOLE_TALKS_LINE, consoleTalks, keptLeavesApp,
 } from './bootFailure.ts'
 import { createMindRouter, PROVIDERS } from '../09_Cognition/router.ts'
 
@@ -90,8 +90,26 @@ test('no WebGPU: each device gets its own way out', () => {
   const home = classify(err('no-api'), env(UA.homeScreen, HOME_SCREEN))
   assert.match(home.headline, /This iPhone needs iOS 26/)
   assert.match(text(home), /open the app again/)
-  assert.match(text(classify(err('no-api'), env(UA.crios, IPHONE))), /Open the page in Safari/)
-  assert.equal(classify(err('no-api'), env(UA.instagram, IPHONE)).headline, 'Open this page in Safari')
+  // Chrome on an iPhone and an app's built-in browser are Safari's engine and have WebGPU from iOS 26 too: without it
+  // the update comes first (Safari on an older iOS has none either), and Safari second, where the iOS may be new enough.
+  const crios = classify(err('no-api'), env(UA.crios, IPHONE))
+  assert.equal(crios.headline, 'No WebGPU in this browser on this iPhone')
+  assert.deepEqual(crios.steps, [
+    'On an iPhone, WebGPU comes with iOS 26, in Safari and in every other browser: they all use Safari’s engine.',
+    'Update in Settings > General > Software Update (iOS 26 runs on iPhone 11, iPhone SE (2nd generation) and newer), then open the page again.',
+    'Already on iOS 26? Open the page in Safari (the share button, then Open in Safari, or copy the link), and check that Lockdown Mode is off in Settings > Privacy & Security.',
+  ])
+  const inApp = classify(err('no-api'), env(UA.instagram, IPHONE))
+  assert.equal(inApp.headline, 'No WebGPU in this browser on this iPhone')
+  assert.match(text(inApp), /Already on iOS 26\? This is an app’s built-in browser, which can leave WebGPU off: use the app’s menu \(often ••• or the share button\) and choose Open in Safari/)
+  // A system token below 18_6 says the iOS is older outright: no Safari to send it to.
+  const old17 = classify(err('no-api'), env(UA.crios.replace('18_6', '17_5'), IPHONE))
+  assert.equal(old17.headline, 'This iPhone needs iOS 26')
+  assert.equal(old17.steps.length, 2)
+  assert.doesNotMatch(text(old17), /Open the page in Safari|Already on/)
+  assert.deepEqual([iosBefore26(UA.ios18), iosBefore26(UA.ios26), iosBefore26(UA.crios.replace('18_6', '18_5')), iosBefore26(UA.crios.replace('18_6', '16_7')), iosBefore26(UA.ipadDesktop), iosBefore26(UA.androidChrome), iosBefore26(UA.macSafari18)],
+    [true, false, true, true, false, false, false], 'only a token below 18_6 on an iPhone or iPad says older; 18_6 and later are frozen and say nothing')
+  assert.equal(iosBefore26('Mozilla/5.0 (iPad; CPU OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1'), true, 'an iPad writes "CPU OS"')
   assert.equal(classify(err('no-api'), env(UA.androidWebView)).headline, 'Open this page in Chrome')
   assert.match(text(classify(err('no-api'), env(UA.androidWebView))), /Open in Chrome/)
   assert.match(text(classify(err('no-api'), env(UA.androidChrome))), /Update Chrome.*Android 12/s)

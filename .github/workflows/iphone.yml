@@ -30,14 +30,17 @@ defaults:
     shell: bash
 
 jobs:
-  safari:
+  # Safari on the Mac is the check that the city draws in WebKit: the same engine, WGSL compiler and Metal path an
+  # iPhone runs, on this Mac's GPU. macOS 26 gives it a GPU under WebKit's switch for virtual Macs, so there a Safari
+  # without one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes the card that says so.
+  mac:
     name: safari (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
         runner: [macos-26, macos-15]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 75
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,14 +49,12 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-      - name: This Mac, its Safari, its Xcode, its GPU and its iOS Simulator runtimes
+      - name: This Mac, its Safari and its GPU
         run: |
           sw_vers
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/Safari.app/Contents/Info.plist || true
-          xcodebuild -version || true
-          ls /Applications | grep -i xcode || true
-          xcrun simctl list runtimes || true
-          xcrun simctl list devices available | grep -i iphone | head -40 || true
+          sysctl kern.hv_vmm_present || true
+          system_profiler SPDisplaysDataType 2>&1 | head -30 || true
       - run: npm ci --no-audit --no-fund
       - name: The web copy (dist-web/), as web.yml builds it
         run: npm run build:web
@@ -62,33 +63,59 @@ jobs:
       # process reads it is WebKit's GPU process, so it is written where every process of this user finds it, and by name.
       - name: WebGPU allowed on this virtual Mac (WebKit's own switch for virtual machines)
         run: |
-          sysctl kern.hv_vmm_present || true
           defaults write -g WebKitAllowWebGPUOnVMs -bool YES
           defaults write com.apple.WebKit.GPU WebKitAllowWebGPUOnVMs -bool YES
           defaults write com.apple.Safari WebKitAllowWebGPUOnVMs -bool YES || true
           sudo defaults write /Library/Preferences/.GlobalPreferences WebKitAllowWebGPUOnVMs -bool YES
           defaults read -g WebKitAllowWebGPUOnVMs
-          system_profiler SPDisplaysDataType 2>&1 | head -30 || true
       - name: Safari's remote automation on
         run: sudo safaridriver --enable
-      # Safari on this Mac is the check that the city draws in WebKit. macOS 26 gives it a GPU under the switch above, so
-      # there a Safari without one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes its card.
       - name: The web copy in Safari on this Mac
         run: |
           node tools/browser/safari.mjs --web dist-web --target mac --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
             --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
-      # WebKit never gives the iOS Simulator a WebGPU adapter, so this is the check of everything before the GPU on an
-      # iPhone: its own WebKit build loads the page, runs its script, has WebGPU on the page and in a worker, and the
-      # card it gets is the one for no adapter, in an iPhone's words. It runs even when the Mac's check failed.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safari-mac-${{ matrix.runner }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/safari/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # WebKit never gives the iOS Simulator a WebGPU adapter, so this is the check of everything before the GPU on an
+  # iPhone: its own WebKit build loads the page, runs its script, has WebGPU on the page and in a worker, and the card
+  # it gets is the one for no adapter, in an iPhone's words. The newest iOS runtime the newest runner has.
+  iphone:
+    name: safari on an iPhone (iOS Simulator)
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: This Mac, its Xcode and its iOS Simulator runtimes
+        run: |
+          sw_vers
+          xcodebuild -version || true
+          xcrun simctl list runtimes || true
+          xcrun simctl list devices available | grep -i iphone | head -40 || true
+      - run: npm ci --no-audit --no-fund
+      - name: The web copy (dist-web/), as web.yml builds it
+        run: npm run build:web
+      - name: Safari's remote automation on
+        run: sudo safaridriver --enable
       - name: The web copy in Safari on an iPhone, in the iOS Simulator
-        if: ${{ !cancelled() }}
         run: |
           node tools/browser/safari.mjs --web dist-web --target iphone --boot-ms 420000 --out "$RUNNER_TEMP/safari/iphone" \
             --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: safari-${{ matrix.runner }}-${{ github.run_id }}
+          name: safari-iphone-${{ github.run_id }}
           path: ${{ runner.temp }}/safari/
           if-no-files-found: ignore
           retention-days: 30

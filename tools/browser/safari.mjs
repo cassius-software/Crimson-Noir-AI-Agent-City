@@ -125,7 +125,9 @@ export async function serve(root, { record = false } = {}) {
 export class Driver {
   constructor(base) { this.base = base; this.id = null }
   async call(method, path, body) {
-    const res = await fetch(`${this.base}${path}`, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
+    // A deadline on every call: a driver that hangs must not hold the run past its own timeouts (script and page load
+    // are 120 s; a session in a simulator that is still starting takes longer than either).
+    const res = await fetch(`${this.base}${path}`, { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(path === '/status' ? 5_000 : 280_000) })
     const text = await res.text()
     let data
     try { data = JSON.parse(text) } catch { throw new Error(`WebDriver ${method} ${path}: ${res.status} ${text.slice(0, 300)}`) }
@@ -361,6 +363,9 @@ export function pickIphone(listing, named = '') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/** How long safaridriver gets to start listening, ms. */
+const DRIVER_UP_MS = 180_000
+
 function run(cmd, args, { ms = 600_000 } = {}) {
   const r = spawnSync(cmd, args, { encoding: 'utf8', timeout: ms, maxBuffer: 64 * 2 ** 20 })
   return { ok: r.status === 0, out: r.stdout ?? '', err: (r.stderr ?? '') + (r.error ? r.error.message : '') }
@@ -421,12 +426,15 @@ async function main() {
   driverProcess.on('error', (e) => { driverGone = e.message })
   const driver = new Driver(`http://127.0.0.1:${port}`)
   try {
-    // The driver answers /status once it listens.
+    // The driver answers /status once it listens. Beside a simulator that has just started, on a Mac still busy with
+    // it, that has taken most of a minute: three minutes are allowed, by the clock and not by the count of tries.
     let listening = false
-    for (let i = 0; i < 60 && !listening && driverGone === null; i++) {
+    const asked = Date.now()
+    while (!listening && driverGone === null && Date.now() - asked < DRIVER_UP_MS) {
       try { await driver.call('GET', '/status'); listening = true } catch { await sleep(500) }
     }
-    if (!check(listening, `${target}: safaridriver listens`, listening ? '' : `it ${driverGone === null ? 'never answered' : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) { save(); return 1 }
+    const took = `${Math.round((Date.now() - asked) / 1000)} s`
+    if (!check(listening, `${target}: safaridriver listens`, listening ? `after ${took}` : `it ${driverGone === null ? `never answered in ${took}` : `stopped (${driverGone})`}; sudo safaridriver --enable turns remote automation on`)) { save(); return 1 }
 
     let session = null
     let why = ''

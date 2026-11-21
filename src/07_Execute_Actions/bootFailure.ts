@@ -245,6 +245,18 @@ function gpuLostHere(): boolean {
   }
 }
 
+/**
+ * Pure. Whether a user agent says outright that its iPhone or iPad runs something older than iOS 26: its system token
+ * below 18_6. From iOS 26 on the token is frozen (a real Safari 26.5 writes 18_7), so 18_6 and later say nothing
+ * either way, and an iPad asking for the desktop site writes no such token at all: false for both.
+ */
+export function iosBefore26(ua: string): boolean {
+  const m = /\b(?:iPhone )?OS (\d+)_(\d+)/.exec(ua)
+  if (!m || !/iPhone|iPad|iPod/.test(ua)) return false
+  const major = Number(m[1])
+  return major < 18 || (major === 18 && Number(m[2]) < 6)
+}
+
 /** Pure. The platform behind a user agent (iPads in desktop mode are Macs with touch points). */
 export function platformOf(ua: string, touchPoints = 0, standalone = false): Platform {
   const ipad = /iPad/.test(ua) || (/Macintosh/.test(ua) && touchPoints > 1)
@@ -562,18 +574,20 @@ function words(kind: FailureKind, env: Env, p: Platform, kept = true, webgl: boo
         ], true)
       }
       if (p.os === 'ios') {
-        if (p.inApp) {
-          return w('Open this page in Safari', [
-            'This is an app’s built-in browser, and it has no WebGPU.',
-            'Use the app’s menu (often ••• or the share button) and choose Open in Safari, or copy the link into Safari.',
-            `Safari has WebGPU from iOS 26 (${IOS26}).`,
-          ], true)
-        }
-        if (p.iosOther) {
-          return w('Open this page in Safari', [
-            `This browser doesn’t offer WebGPU on this ${device}.`,
-            'Open the page in Safari (the share button, then Open in Safari, or copy the link).',
-            `Safari has WebGPU from iOS 26 (${IOS26}).`,
+        if (p.inApp || p.iosOther) {
+          // Chrome, Firefox, Edge and an app's built-in browser on an iPhone are all Safari's engine, and WebKit turns
+          // WebGPU on for every one of them from iOS 26 (its WebGPUEnabled preference has no condition on the app). So
+          // one without it is most often an older iOS, where Safari has none either: "open it in Safari" alone would
+          // send that reader to a second card. The update comes first; Safari comes second, and only where the system
+          // may already be iOS 26 (an app's browser can leave WebGPU off, and Lockdown Mode turns it off).
+          const os26 = p.ipad ? 'iPadOS 26' : 'iOS 26'
+          const old = iosBefore26(env.ua)
+          return w(old ? `This ${device} needs ${os26}` : `No WebGPU in this browser on this ${device}`, [
+            `On an ${device}, WebGPU comes with ${os26}, in Safari and in every other browser: they all use Safari’s engine.`,
+            `${iosUpdate.replace(/\.$/, '')}, ${again}.`,
+            ...(old ? [] : [p.inApp
+              ? `Already on ${os26}? This is an app’s built-in browser, which can leave WebGPU off: use the app’s menu (often ••• or the share button) and choose Open in Safari, or copy the link into Safari.`
+              : `Already on ${os26}? Open the page in Safari (the share button, then Open in Safari, or copy the link), and check that Lockdown Mode is off in Settings > Privacy & Security.`]),
           ], true)
         }
         if (p.safari !== null && p.safari >= 26) {
