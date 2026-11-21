@@ -8,8 +8,8 @@
  * slot, a speaker, a peer, a ping), fed by plain start/change/stop events, that merges a continuing sound into its one
  * live line instead of repeating it, keeps a stopped line readable for a short hold, expires what nobody refreshes,
  * ranks speech over ambience, and holds at most a few lines at once. Two sounds have no place and read as text alone:
- * the cabin, and the head-locked check chime that confirms a successful check (heard in the ears, not on the street,
- * so a player who cannot hear it reads the same result). Then the bearing of a point in the listener's head
+ * the cabin, and the head-locked chime that confirms a successful check or marks a headset's refused step out (heard
+ * in the ears, not on the street, so a player who cannot hear it reads the same result). Then the bearing of a point in the listener's head
  * frame as a clock hour, an eight-way arrow, a left/right word and a rounded distance (the same forward as
  * listenerBasis and the head rig: forward = (−sin yaw, −cos yaw) in the ground plane); and the one-line caption text
  * in the house style, brand-free and civil, with a speaker's words kept verbatim. Allocation-light (records are pooled
@@ -31,9 +31,9 @@ export type SoundPhase = 'start' | 'change' | 'stop'
  * id: identity within the kind, 0 when the kind has one source) started, changed or stopped at the world point (x, z)
  * at clock time `t` (seconds); NaN for both when the sound has no place (the cabin, the chime), which the track then
  * shows as text alone. `text` is a speaker's exact words, `label` a display name the host supplies (a skill bearer's
- * label, a peer's name, a ping's label, the title of the skill a chime confirms), `agent` the speaker's number, and
- * `detail` the kind's own word: engine 'approaching' | 'passing' | 'up' | 'down' | 'idle', murmur 'quiet' | 'busy',
- * walk-signal 'ns' | 'ew', speech 'muffled' | 'clear', chime 'success' | 'critical'.
+ * label, a peer's name, a ping's label, the title of the skill a chime confirms or what it refused), `agent` the
+ * speaker's number, and `detail` the kind's own word: engine 'approaching' | 'passing' | 'up' | 'down' | 'idle', murmur
+ * 'quiet' | 'busy', walk-signal 'ns' | 'ew', speech 'muffled' | 'clear', chime 'success' | 'critical' | 'refused'.
  */
 export interface CaptionEvent {
   kind: SoundKind
@@ -122,8 +122,8 @@ export interface CaptionLine {
 
 /**
  * Ranking between kinds: what a player most needs to read first. The chime sits under every sound a player acts on
- * (words, a ping, someone coming over, the walk signal, the cabin) and over the ambience: it only confirms a check the
- * HUD already shows, so it never pushes a cue off the strip.
+ * (words, a ping, someone coming over, the walk signal, the cabin) and over the ambience: it confirms a check the HUD
+ * already shows, or a refused step out the headset's wearer just asked for, so it never pushes a cue off the strip.
  */
 const PRIORITY: Readonly<Record<SoundKind, number>> = Object.freeze({
   speech: 10, peer: 9, ping: 8, cue: 7, 'walk-signal': 6, cabin: 5, chime: 4, engine: 3, tyres: 2, murmur: 1,
@@ -223,7 +223,7 @@ export function soundText(e: CaptionEvent): string {
       return e.label ? `[ping: ${e.label}]` : '[ping]'
     case 'chime': {
       if (e.phase === 'stop') return ''
-      const degree = e.detail === 'critical' ? 'critical success' : 'success'
+      const degree = e.detail === 'critical' ? 'critical success' : e.detail === 'refused' ? 'refused' : 'success'
       return e.label ? `[chime: ${e.label}, ${degree}]` : `[chime: ${degree}]`
     }
   }

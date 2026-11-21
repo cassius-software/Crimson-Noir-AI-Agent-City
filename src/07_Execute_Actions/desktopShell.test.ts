@@ -246,7 +246,7 @@ test('the shell lends the page the carried model over one fixed file: two comman
   assert.ok(app?.[1].includes('"base64 0.22.1"'), 'the committed lockfile carries the edge to the base64 Tauri already builds')
 })
 
-test('the shell lends the runner\'s three commands in the design\'s order, under the names shellRunner sends, compiled only with the native-runner feature on Linux', async () => {
+test('the shell lends the runner\'s three commands in the design\'s order, under the names shellRunner sends, compiled only with the native-runner feature on Linux and macOS', async () => {
   const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   assert.match(lib, /^mod runner;$/m)
   assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read\]/)
@@ -258,9 +258,28 @@ test('the shell lends the runner\'s three commands in the design\'s order, under
   assert.match(rs, /#\[tauri::command\]\npub fn native_model\(runner: State<'_, Runner>\) -> Option<NativeModel> \{/)
   assert.match(rs, /#\[tauri::command\]\npub async fn native_generate\(runner: State<'_, Runner>, req: GenRequest, on_event: Channel<RunEvent>\) -> Result<GenDone, RunError> \{/)
   assert.match(rs, /#\[tauri::command\]\npub fn native_stop\(runner: State<'_, Runner>, id: u32\) -> bool \{/)
-  assert.match(rs, /pub const COMPILED: bool = cfg!\(all\(target_os = "linux", feature = "native-runner"\)\);/)
-  assert.equal(rs.split('#[cfg(all(target_os = "linux", feature = "native-runner"))]\nmod imp {').length, 2, 'the runner, where it is compiled')
-  assert.equal(rs.split('#[cfg(not(all(target_os = "linux", feature = "native-runner")))]\nmod imp {').length, 2, 'the answers everywhere else')
+  // One cfg, set by build.rs where the feature is on and the system is in RUNNER_OS (Linux and macOS), so the files
+  // cannot drift apart; Cargo.toml's target table names the same two systems.
+  assert.match(rs, /pub const COMPILED: bool = cfg!\(native_runner\);/)
+  assert.equal(rs.split('#[cfg(native_runner)]\nmod imp {').length, 2, 'the runner, where it is compiled')
+  assert.equal(rs.split('#[cfg(not(native_runner))]\nmod imp {').length, 2, 'the answers everywhere else')
+  const build = readFileSync(new URL('../../src-tauri/build.rs', import.meta.url), 'utf8')
+  assert.match(build, /^const RUNNER_OS: \[&str; 2\] = \["linux", "macos"\];$/m)
+  assert.match(build, /println!\("cargo:rustc-check-cfg=cfg\(native_runner\)"\);/)
+  assert.match(build, /if feature && RUNNER_OS\.contains\(&os\.as_str\(\)\) \{\n {8}println!\("cargo:rustc-cfg=native_runner"\);/)
+  // Below macOS 15 ggml's Metal code calls __isPlatformVersionAtLeast, which clang's runtime (compiler-rt) defines and
+  // rustc does not link: build.rs links it on macOS where the runner is compiled, from the clang that builds llama.cpp,
+  // and fails with a sentence when it cannot find it (the first macOS build, on PR #165, failed to link without it).
+  assert.match(build, /if os == "macos" \{\n {12}link_clang_runtime\(\);\n {8}\}\n {4}\}\n {4}tauri_build::build\(\)/, 'compiler-rt on macOS where the runner is, and only there')
+  assert.match(build, /\["xcrun", "clang", "-print-resource-dir"\]/)
+  assert.match(build, /\.join\("lib\/darwin\/libclang_rt\.osx\.a"\)/)
+  assert.match(build, /println!\("cargo:rustc-link-lib=static=clang_rt\.osx"\);/)
+  assert.match(build, /println!\("cargo:rerun-if-changed=\{\}", archive\.display\(\)\);/, 'a moved runtime runs the script again')
+  assert.match(build, /panic!\("clang's runtime \(lib\/darwin\/libclang_rt\.osx\.a/, 'a missing runtime is said plainly, not left to the linker')
+  for (const file of ['main.rs', 'model_file.rs', 'lib.rs', 'model.rs']) {
+    const src = readFileSync(new URL(`../../src-tauri/src/${file}`, import.meta.url), 'utf8')
+    assert.doesNotMatch(src, /feature = "native-runner"/, `${file} asks the cfg, not the feature and the system`)
+  }
   const code = rs.slice(0, rs.indexOf('#[cfg(test)]')).replace(/^\s*\/\/.*$/gm, '')
   assert.ok(code.length > 3000, 'the commands and both halves, without their tests')
   assert.doesNotMatch(code, /std::(net|process)\b|Command::new|TcpStream|UdpSocket|reqwest/, 'no socket, no process')
@@ -277,7 +296,9 @@ test('the shell lends the runner\'s three commands in the design\'s order, under
   assert.match(code, /runner\.start_carried\(c, model, app\.path\(\)\.app_data_dir\(\)\);/)
   assert.match(code, /let path = model\.filter\(\|p\| p\.is_file\(\)\)\?;/, 'no carried file, no runner')
   assert.match(code, /Ok\(dir\) => dir\.join\("models"\),/, 'the stamp in the app\'s data folder')
-  assert.match(code, /gpu: Gpu::Off,/)
+  // The GPU on Apple silicon alone (Metal); Linux and the Intel slice, whose llama.cpp has no Metal, the processor.
+  assert.match(code, /pub const GPU: Gpu = if cfg!\(all\(target_os = "macos", target_arch = "aarch64"\)\) \{ Gpu::All \} else \{ Gpu::Off \};/)
+  assert.match(code, /gpu: GPU,/)
   assert.match(code, /threads: half_the_threads\(THREADS_CAP\),/)
   assert.match(code, /sampling: Sampling::Chat \{ seed: None \},/)
   // The plan is what the page asks for on a computer: its context, its answer's length, the integrated row's batch.
@@ -289,11 +310,11 @@ test('the shell lends the runner\'s three commands in the design\'s order, under
   // The installer's model is never lent where the app runs its own.
   const model = readFileSync(new URL('../../src-tauri/src/model.rs', import.meta.url), 'utf8')
   assert.match(model, /pub fn app_model\(app: AppHandle\) -> Option<AppModel> \{\n {4}if crate::runner::COMPILED \{\n {8}return None;\n {4}\}/)
-  // The feature table: off by default, Linux only, the runner an optional dependency the lockfile still records.
+  // The feature table: off by default, Linux and macOS only, the runner an optional dependency the lockfile still records.
   const cargo = readFileSync(new URL('../../src-tauri/Cargo.toml', import.meta.url), 'utf8')
   const features = /\n\[features\]\n([\s\S]*?)\n\[/.exec(cargo)?.[1] ?? ''
   assert.deepEqual(features.split('\n').filter((l) => l && !l.startsWith('#')), ['native-runner = ["dep:crimson-noir-llm"]', 'tiny-model = ["native-runner"]'], 'no default feature')
-  assert.match(cargo, /\n\[target\.'cfg\(target_os = "linux"\)'\.dependencies\]\n(?:#.*\n)*crimson-noir-llm = \{ path = "\.\.\/native\/llm", optional = true \}\n/)
+  assert.match(cargo, /\n\[target\.'cfg\(any\(target_os = "linux", target_os = "macos"\)\)'\.dependencies\]\n(?:#.*\n)*crimson-noir-llm = \{ path = "\.\.\/native\/llm", optional = true \}\n/)
   assert.equal(cargo.split('crimson-noir-llm').length - 1, 2, 'named once as a dependency and once by its feature')
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
   const app = /\[\[package\]\]\nname = "crimson-noir-app"[\s\S]*?dependencies = \[([^\]]*)\]/.exec(lock)

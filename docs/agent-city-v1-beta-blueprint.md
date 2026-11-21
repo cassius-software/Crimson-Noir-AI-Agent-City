@@ -409,10 +409,12 @@ the page carries the runtime, and the file is the operator's. The MANUAL's A mod
 **Extended (the model the app runs itself, 13 November 2026).** A seventh provider, `native`
 (`09_Cognition/nativeMind.ts`), asks the model an app carries and runs itself (llama.cpp in the app's own process,
 `native/llm`) through the shell's runner, and `AUTO_ORDER` is now `ollama`, `llamacpp`, `openai`, `native`, `inpage`,
-`claude`. Where there is no runner (a browser, the Windows and macOS apps, a Linux build without the feature) it lists
+`claude`. Where there is no runner (a browser, the Windows app, a Linux or macOS build without the feature) it lists
 nothing, so every look reads as it did. The Linux app's `.deb`, `.rpm` and `.AppImage` (the build matrix's
-`linux-x64` and `linux-arm64`) have the runner and carry Qwen2.5 1.5B Instruct for it (the MANUAL's The Linux app's
-model); the real model in those packages is checked by CI, not in the container that wrote this. The page's half is
+`linux-x64` and `linux-arm64`) and the macOS app's `.dmg` and zipped `.app` (`macos-universal`, 14 November 2026)
+are built with the runner and carry Qwen2.5 1.5B Instruct for it (the MANUAL's The Linux app's model and The macOS
+app's model); CI checks the real model in those packages, not the container that wrote this, and no macOS run of
+that check had happened when the macOS app was added. The page's half is
 also proven against a fake shell that replays `native/llm/tests/wire.json`.
 
 ### 8.4 Pings and closed captions

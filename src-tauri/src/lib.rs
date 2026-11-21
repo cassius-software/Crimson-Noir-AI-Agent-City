@@ -10,7 +10,7 @@
 //! On Windows the shell also opens a DualSense for the page (hid.rs), since its web view has no WebHID chooser, and
 //! reads the GPUs' memory for auto's Ollama model (gpu.rs), which a page cannot. And it lends the page a read of the
 //! model the Windows installer carries beside the app (model.rs over model_file.rs), so Sloane talks from the first
-//! launch. Built with the native-runner feature on Linux, it runs a model itself (runner.rs over native/llm:
+//! launch. Built with the native-runner feature on Linux or macOS, it runs a model itself (runner.rs over native/llm:
 //! llama.cpp in the app's own process) and lends the page three commands, what it carries, one answer streamed on a
 //! channel, and a stop; a page that starts loading stops every answer it asked for. Everywhere else those three
 //! commands answer that there is none.

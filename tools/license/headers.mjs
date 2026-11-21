@@ -74,7 +74,7 @@ export function commentStyle(name) {
   if (['.ts', '.tsx', '.mts', '.mjs', '.js', '.rs', '.wgsl'].includes(ext)) return { line: '// ' }
   if (ext === '.css') return { open: '/*', line: ' * ', close: ' */' }
   if (ext === '.html' || ext === '.svg') return { open: '<!--', line: '  ', close: '-->' }
-  if (['.py', '.sh', '.yml', '.yaml', '.toml', '.ps1', '.nix', '.conf'].includes(ext)) return { line: '# ' }
+  if (['.py', '.sh', '.yml', '.yaml', '.toml', '.ps1', '.nix', '.conf', '.cmake'].includes(ext)) return { line: '# ' }
   if (/^Dockerfile(\..*)?$/.test(name) && !name.endsWith('.dockerignore')) return { line: '# ' }
   return null
 }

@@ -166,15 +166,18 @@ beside the pack as `speech/MODEL-LICENSE`, `speech/MODEL-NOTICE`, `speech/RUNTIM
 `third_party/moonshine-tiny-en/` and `third_party/onnxruntime-web/1.31.1/`. The same vendor's Spanish model is under
 a licence that limits commercial use; it is not used, fetched or served.
 
-**The native model runner in the Linux app.** The Linux app (its .deb, .rpm and AppImage) runs the model it carries in
-its own process: llama.cpp's model library and ggml are compiled into its executable from the sources the Rust crate
-llama-cpp-sys-2 0.1.161 vendors (llama-cpp-rs at commit e7af607e), with its bindings llama-cpp-2 (both MIT or
-Apache-2.0). llama.cpp and ggml are MIT, Copyright (c) 2023-2026 The ggml authors; the llamafile matrix multiplication
+**The native model runner in the Linux and macOS apps.** The Linux app (its .deb, .rpm and AppImage) and the macOS
+app (the universal .app, in its .dmg and its zip) run the model they carry in their own process: llama.cpp's model
+library and ggml are compiled into the executable from the sources the Rust crate llama-cpp-sys-2 0.1.161 vendors
+(llama-cpp-rs at commit e7af607e), with its bindings llama-cpp-2 (both MIT or Apache-2.0); in the macOS app's Apple
+silicon slice ggml's Metal backend is compiled in too, with its shader sources embedded, and its Intel slice has no
+Metal. llama.cpp and ggml are MIT, Copyright (c) 2023-2026 The ggml authors; the llamafile matrix multiplication
 compiled with them is MIT, Copyright 2024 Mozilla Foundation, and their YaRN code is MIT, Copyright (c) 2023 Jeffrey
 Quesnelle and Bowen Peng. They remain under their own licence, not under this product's licence: the full MIT License
-text and a notice of what is compiled in are installed with the app as
-`/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE` and `NOTICE`, from `third_party/llama.cpp/`. No other build
-of the app compiles them.
+text and a notice of what is compiled in are installed with the Linux app as
+`/usr/share/doc/crimson-noir-agent-city/llama.cpp/LICENSE` and `NOTICE`, and held in the macOS app as
+`Contents/Resources/licenses/llama.cpp/LICENSE` and `NOTICE`, from `third_party/llama.cpp/`. No other build of the
+app compiles them.
 
 **The model the web copy serves.** The page file, the bare Windows .exe and the OS media carry no model. The
 published web copy of the page serves one model beside it, Qwen2.5 0.5B Instruct (the file
@@ -186,14 +189,16 @@ remains under its own licence, not under this product's licence: the full text o
 copyright line, and a notice of where the file comes from, are served beside it as `models/LICENSE` and
 `models/NOTICE`, from `third_party/qwen2.5-0.5b-instruct/`.
 
-**The model the desktop apps carry.** The Windows app's installer and its .msi, and the Linux app's .deb, .rpm and
-AppImage, carry one model beside the app, Qwen2.5 1.5B Instruct (the file `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`). The
-Windows app's page copies it into its own storage once the city is on screen, or when the person taps for it; the
-Linux app runs it in its own process (the native model runner above). The model is the Qwen team's, Copyright 2024
+**The model the desktop apps carry.** The Windows app's installer and its .msi, the Linux app's .deb, .rpm and
+AppImage, and the macOS app (its .dmg and its zipped .app) carry one model beside the app, Qwen2.5 1.5B Instruct (the
+file `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`). The Windows app's page copies it into its own storage once the city is on
+screen, or when the person taps for it; the Linux and macOS apps run it in their own process (the native model runner
+above). The model is the Qwen team's, Copyright 2024
 Alibaba Cloud, licensed under the Apache License 2.0; the file is a GGUF conversion of its weights quantized to Q4_K_M
 by bartowski, shipped unchanged. It remains under its own licence, not under this product's licence: the full text of
 the Apache License 2.0 with that copyright line, and a notice of where the file comes from, are installed beside it as
-`models/LICENSE` and `models/NOTICE` in the app's folder (on Linux, `/usr/lib/Crimson Noir Agent City/models/`), from
+`models/LICENSE` and `models/NOTICE` in the app's folder (on Linux, `/usr/lib/Crimson Noir Agent City/models/`; in the
+macOS app, `Contents/Resources/models/`), from
 `third_party/qwen2.5-1.5b-instruct/`.
 
 **The model the NixOS package carries.** The NixOS package (the flake's `nix run` and its NixOS module) carries the
@@ -232,18 +237,19 @@ pedestrians have, so the operator can ask for them (`03_Spawn_Agents/skills.ts`)
 the local model server API the operator's `ask` speaks, OpenAI only to identify the chat-completions wire format
 it can speak instead (`ask api chat`), llama.cpp only to identify the local server that serves packaged models in
 that format (`ask provider llamacpp`) and the engine compiled into the in-page model runtime (`ask provider inpage`)
-and into the Linux app's native model runner,
+and into the Linux and macOS apps' native model runner,
 Claude and Anthropic only to identify the network model API the operator can choose with a key of their own
 (`ask provider claude`, `09_Cognition/claudeApi.ts`), and Qwen3-VL only as the model `ask` asks the local server for
 unless the operator chooses another (`09_Cognition/localCompute.ts`), and Qwen2.5 only as the models the web copy
-serves beside its page and the Windows installer, the Linux packages and the NixOS package carry, for the in-page
-runtime and the Linux app's own runner (`09_Cognition/siteModel.ts`). No model server ships with the product, and the
-page file, the bare Windows .exe and the OS media carry no model: the operator's server, a model file kept in their
+serves beside its page and the Windows installer, the Linux packages, the macOS app and the NixOS package carry, for
+the in-page runtime and the Linux and macOS apps' own runner (`09_Cognition/siteModel.ts`). No model server ships
+with the product, and the page file, the bare Windows .exe and the OS media carry no model: the operator's server, a
+model file kept in their
 browser for the in-page runtime, or the file a desktop app carries, holds the model under the model's own licence.
 The two models the product offers are Qwen2.5 0.5B Instruct, which the web copy serves beside its page and fetches by
 itself once the city is on screen, or when the visitor taps for it (`third_party/qwen2.5-0.5b-instruct/`, served beside
-it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B Instruct, which the Windows installer and the Linux
-packages carry beside the app and the NixOS package's launcher serves beside its page
+it as `models/LICENSE` and `models/NOTICE`), and Qwen2.5 1.5B Instruct, which the Windows installer, the Linux
+packages and the macOS app carry beside the app and the NixOS package's launcher serves beside its page
 (`third_party/qwen2.5-1.5b-instruct/`, beside it as `models/LICENSE` and `models/NOTICE`); both Apache-2.0, Copyright
 2024 Alibaba Cloud, the files quantized by bartowski, each under its own licence. The network provider
 answers only with the operator's own key, which stays in their browser. No speech synthesis engine and no voice
@@ -367,6 +373,13 @@ release; each one is something the release engineering could not confirm.
       (`third_party/llama.cpp/`, its MIT text and a notice installed under
       `/usr/share/doc/crimson-noir-agent-city/llama.cpp/`). The same two points apply, and each package is about 1 GB
       on GitHub's release storage (six files on a numbered release, six on the `current` pre-release).
+    - **The macOS app's model.** The universal .app carries the same file the same way (`build-matrix.yml`'s macOS
+      job, the same pin and checks), as `Contents/Resources/models/` with the same LICENSE and NOTICE, and runs it in
+      its own process with llama.cpp compiled in (its MIT text and notice under
+      `Contents/Resources/licenses/llama.cpp/`). The same two points apply. The .dmg and the zipped .app each hold the
+      whole .app, so each is about 1 GB on GitHub's release storage (two files on a numbered release, two on the
+      `current` pre-release), under GitHub's 2 GiB limit for one file, which `tools/build/macAudit.mjs package`
+      checks before the upload.
     - **The NixOS package's model.** The same file again (`tools/nix/model.nix`, the same pin), fetched by each
       machine that builds the package straight from Hugging Face at the pinned revision (about 0.9 GB, once a machine),
       so the product does not redistribute it there; the Nix store keeps it beside the same LICENSE and NOTICE. The

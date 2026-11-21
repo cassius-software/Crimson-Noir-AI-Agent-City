@@ -49,7 +49,7 @@ pub struct Carried {
 
 /// The model this build's runner is handed: the tiny test model with the tiny-model feature, else the phones' model
 /// on a phone and the computer's on a computer. Read only where the runner is compiled (runner.rs `COMPILED`).
-#[cfg_attr(not(all(target_os = "linux", feature = "native-runner")), allow(dead_code))]
+#[cfg_attr(not(native_runner), allow(dead_code))]
 pub const fn carried() -> Carried {
     if cfg!(feature = "tiny-model") {
         Carried { file: TINY_FILE, bytes: TINY_BYTES, sha256: TINY_SHA256 }

@@ -51,8 +51,10 @@ pub enum Source {
 /// Whether the model's layers go to a GPU. `Off` keeps every device out of the model and its context (split mode None,
 /// main GPU -1, no op offload), so no work runs on a GPU. It does not stop Metal from starting: wherever Metal is
 /// compiled in (every Apple build but watchOS), llama.cpp's backend start registers it, which creates the device and a
-/// command queue and compiles its whole shader library, whatever the plan. A CPU-only Apple app that must not pay for
-/// that is built with GGML_METAL=OFF (llama-cpp-sys-2 passes GGML_* environment variables to CMake).
+/// command queue and compiles its whole shader library, whatever the plan. A CPU-only Apple build that must not pay
+/// for that is built with GGML_METAL=OFF: the macOS app's Intel slice is, by tools/build/macos-slices.cmake (an
+/// environment variable would reach both slices of the universal build alike), while its Apple silicon slice keeps
+/// Metal and plans `All` (src-tauri/src/runner.rs GPU).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gpu {
     Off,

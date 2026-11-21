@@ -9,10 +9,14 @@
 # its template, an answer that ends by itself, and the kept context giving the same greedy answer. The model comes
 # from the cache keyed by its pin (the web workflow's key; an entry saved on another system is not restored here),
 # else from Hugging Face at the pinned revision, and is checked against the pin's size and SHA-256 either way. The
-# x86-64 job then does the same for the desktop's model (Qwen2.5 1.5B Instruct, which the Linux packages carry: the
-# pin is APP_MODEL, the cache key that pin's) and reads a few tokens of its greedy answer with the Linux app's own plan
-# (src-tauri/src/runner.rs: an 8192-token context, 512-token batches, half the threads up to eight, the CPU alone);
-# one job is enough for a gigabyte download, and build-matrix's x86-64 job asks the installed app the same way.
+# x86-64 Linux job and the Apple silicon macOS job (matrix.desktop) then do the same for the desktop's model (Qwen2.5
+# 1.5B Instruct, which the Linux packages and the macOS app carry: the pin is APP_MODEL, the cache key that pin's) and
+# read a few tokens of its greedy answer with the desktop app's own plan for that computer (src-tauri/src/runner.rs:
+# an 8192-token context, 512-token batches, half the threads up to eight; the processor alone on Linux, every layer
+# on Metal on Apple silicon). Each run prints the devices llama.cpp found and where the model's weights went, read from
+# llama.cpp's own log of its weight buffers (the GPU only when a buffer not the processor's holds some); a runner
+# without Metal does not fail it, no token does. The Arm Linux job skips the gigabyte download; build-matrix's x86-64
+# job asks the installed Linux app the same way.
 # It runs on a pull request or a push to main that touches the crate, the tiny model's writer, the pin or this file
 # (a push to main seeds the caches pull requests restore), and by hand. It is not part of ci.yml, which runs on every
 # change and whose failures wake the self-healing workflow: its sandbox has no cmake or libclang for llama.cpp.
@@ -62,6 +66,13 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+        # The desktop's model on the two computers whose plans differ: x86-64 Linux (the processor alone) and Apple
+        # silicon (Metal).
+        include:
+          - runner: ubuntu-24.04
+            desktop: true
+          - runner: macos-15
+            desktop: true
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -122,17 +133,17 @@ jobs:
           FILE: ${{ steps.model.outputs.file }}
         run: REAL_GGUF="$RUNNER_TEMP/site-model/$FILE" cargo test --manifest-path native/llm/Cargo.toml --release --locked --test real -- --ignored --nocapture --test-threads=1
       - id: app-model
-        name: The desktop's model, by the page's own pin (APP_MODEL), on the x86-64 job alone
-        if: matrix.runner == 'ubuntu-24.04'
+        name: The desktop's model, by the page's own pin (APP_MODEL), on the x86-64 Linux and Apple silicon jobs
+        if: matrix.desktop
         run: node tools/web/siteModel.mjs pin --pin app | tee -a "$GITHUB_OUTPUT"
       - id: app-model-cache
-        if: matrix.runner == 'ubuntu-24.04'
+        if: matrix.desktop
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/app-model
           key: ${{ steps.app-model.outputs.key }}
       - name: The desktop's model from Hugging Face, at the pinned revision (only when the cache does not hold it)
-        if: matrix.runner == 'ubuntu-24.04' && steps.app-model-cache.outputs.cache-hit != 'true'
+        if: matrix.desktop && steps.app-model-cache.outputs.cache-hit != 'true'
         env:
           URL: ${{ steps.app-model.outputs.url }}
           FILE: ${{ steps.app-model.outputs.file }}
@@ -140,10 +151,10 @@ jobs:
           mkdir -p "$RUNNER_TEMP/app-model"
           curl --proto '=https' --tlsv1.2 -sSfL --retry 4 --retry-all-errors --retry-delay 5 "$URL" -o "$RUNNER_TEMP/app-model/$FILE"
       - name: It is exactly the pinned file (size and SHA-256)
-        if: matrix.runner == 'ubuntu-24.04'
+        if: matrix.desktop
         run: node tools/web/siteModel.mjs check --pin app --from "$RUNNER_TEMP/app-model"
-      - name: The desktop's model with the Linux app's plan, a few tokens of its greedy answer
-        if: matrix.runner == 'ubuntu-24.04'
+      - name: The desktop's model with this computer's desktop plan, a few tokens of its greedy answer, and where its weights went
+        if: matrix.desktop
         env:
           FILE: ${{ steps.app-model.outputs.file }}
         run: APP_GGUF="$RUNNER_TEMP/app-model/$FILE" cargo test --manifest-path native/llm/Cargo.toml --release --locked --test desktop -- --ignored --nocapture --test-threads=1

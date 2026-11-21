@@ -220,7 +220,8 @@ drives a player of its own, entering, leaving and righting its own car (see Spli
   highlight are drawn in its colours. Checked in CI and emulation only: unit suites for each part, and the browser
   smoke test (headless Chrome with a simulated standard pad on the console alone, and the console on an emulated
   Android phone); not yet tried with a real pad, on a real phone or tablet, on an iPhone, or with a screen reader.
-  Headset controllers do not yet count as a device of their own (the page is not shown inside a headset session).
+  Headset controllers are not counted as a device for the keys: the page's own panels are not shown inside a headset
+  session, where the keys fold to their chip.
   Firefox for Android has been reported to expose no gamepads to pages; there a pad's d-pad reaches the field as arrow
   keys and `access keys on` brings the keys.
 
@@ -947,7 +948,8 @@ not been seen. Where the browser offers no immersive session the whole path is i
   (xr vr)`), or the session's mode and what it holds (`vr: 2 controllers`); `xr vr` or `xr ar` asks for the session
   and `xr off` leaves it; on a touch screen the menu's **Headset** item does the same, VR where it is offered, else
   AR. A browser grants a session only inside the tap or the key press, so both ask synchronously; the page asks for
-  the `webgpu` feature and, optionally, a floor-level reference space and hand tracking. Split screen and a headset
+  the `webgpu` feature and, optionally, a floor-level reference space (a plain local one where it is withheld) and hand
+  tracking. Split screen and a headset
   do not mix (`no headset while the screen is split`). A passthrough or see-through session shows `(passthrough)`.
 - **The picture.** While presenting, the headset's own loop drives the frame (the page's animation frames are let
   go), every frame is shown (the cinema pacer's 24 a second is suspended), the post-processing chain and the ghost
@@ -960,15 +962,64 @@ not been seen. Where the browser offers no immersive session the whole path is i
   turned the body's way; the headset's pose is composed onto it, so a seated or a standing player's eyes land where
   the mouse's would. The pose read back is the headset's: yaw, pitch unclamped, roll on the camera. The stick's
   forward is where the headset looks, not where the body stands.
-- **Controllers** (`04_Connect_Hardware/xrInput.ts`, the `xr-standard` mapping): the left thumbstick walks and
-  steers, its press latches a run, the left squeeze is the handbrake; the right thumbstick snap-turns the body by
-  30° per flick (re-armed when it comes back), the right trigger accelerates, the right squeeze brakes, A (button 4)
-  pings and B (button 5) enters or leaves a car. A controller of no hand takes both duties. Their edges join the
-  pad's, under the same shield (a card waiting for your OK keeps the buttons), and no stick turns the head: the
-  headset does.
-- **Gaze and pinch, hands.** A source with no usable gamepad (a transient pointer, an articulated hand) is read by
-  the session's select events: a pinch enters or leaves a car when one is at hand, otherwise it pings where the head
-  looks. A gaze-and-pinch headset's pointers exist only during the pinch and may report no hand.
+- **Controllers** (`04_Connect_Hardware/xrInput.ts`). A controller is a tracked pointer with the `xr-standard`
+  mapping and at least one pair of axes. The 46 profiles of the WebXR input profiles registry come down to three kinds:
+  a thumbstick with up to two face buttons (some with a touchpad as well), a touchpad with no thumbstick (a pair of
+  wands), and a single pointing controller with a touchpad. Each kind works as a pair and alone, in either hand.
+  - **A pair.** The left stick, or the left touchpad while a thumb is on it, walks and steers; its click latches a run,
+    and a thumb at the touchpad's rim runs. The left squeeze is the handbrake, the left trigger pings, and the upper
+    left face button rights the car at the wheel. The right stick snap-turns the body 30° per flick on foot (re-armed
+    when it comes back); a right touchpad on a controller with no thumbstick turns with a click to either side. The
+    right trigger accelerates, the right squeeze brakes, the lower face button pings, the upper one enters or leaves a
+    car, and the right stick's click is the microphone's mute. On a right controller with no upper face button, its
+    touchpad's click enters or leaves a car, and on foot its trigger does what is at hand.
+  - **Alone** (any hand, or none). Its stick or touchpad walks forward and back. A stick pushed sideways snap-turns (a
+    push in between is one or the other, never a strafe); a touchpad with no thumbstick turns only with a click to
+    either side, so a thumb resting at the edge is never a second turn, and its centre click does what is at hand. A
+    touchpad beside a thumbstick, on a controller with no upper face button, is the door instead (what is at hand, on
+    foot); on one with that button the button is the door. At the wheel it steers and drives,
+    the trigger accelerates and the squeeze brakes; the stick's click is the handbrake on a controller with an upper
+    face button (that button is its door), and on one without it the stick's click held for a second is its door. On
+    foot the trigger does what is at hand: a car's door in reach, else a ping where the head looks. Two controllers of
+    one hand (or of none) split by order: the first walks, the second turns.
+  - **Out of a car.** The upper face button, a touchpad's click, a pinch, and the held click (the left hand's stick or
+    touchpad click, or the stick's click of a lone controller with no upper face button, held for a second while the
+    car stays stopped) step out. Each is refused while the car is faster than 1.5 m/s: the controller that asked
+    gives a short buzz where its browser can, and the monitor shows a toast (`Stop the car to step out`); a held click
+    is refused once it has been held a second at speed, then waits for the car to stop. In the headset every refusal,
+    a hand's included, sounds a short falling two-note chime (captioned `[chime: step out, refused]`). A trigger
+    still held from opening the door, held as a controller wakes at the wheel, or held as a lone controller takes on
+    the throttle (however lightly), gives no throttle where it is: a press still travelling in is followed to the stop
+    (a squeeze of up to half a second), and from then on it drives only once pulled past a point 0.15 of its travel
+    above the lowest it has eased back to (so a jolt that dips a finger resting on it, even off it for a moment, does
+    not count). Let go for a tenth of a second, it counts from nothing again. From a resting finger or a worn trigger
+    a full pull is still full throttle; from a press eased only a little, a wobble near the stop gives little. That
+    point is taken afresh at each car and each takeover. So the car neither lurches on the way in nor creeps on a
+    resting finger or a worn trigger that rests a little above nothing.
+  - On foot the sticks walk where the headset looks, not where the body stands. A button held as a controller wakes
+    or comes back is no press. A latched run goes when no controller left can unlatch it (put down for hands, or a
+    lone touchpad). A standard pad held inside a headset walks where the headset looks too, and its right stick
+    snap-turns instead of turning smoothly (it never tilts: the headset owns the pitch). Their edges join the pad's,
+    under the same shield (a card waiting for your OK keeps the buttons).
+- **Hands, gaze and pinch, styluses, screens.** Anything that is not a controller (an articulated hand and its pinch,
+  a gaze-and-pinch headset's transient pointer, a controller with no axes, a stylus, a phone's screen, a gaze button)
+  is read through the session's select events. A quick, still pinch (under 0.4 s and 2.5 cm) is a tap: a car's door
+  in reach, else a ping where the head looks, and out of a car only once it has slowed as above. Holding a pinch and
+  drawing the hand away walks the way the hand moved: half speed from 6 cm, full from about 11.5 cm, a run past 21 cm.
+  The draw is measured from the neck (the eyes less their offset from it, turned with the head), so a lean, a nod or
+  a look around does not walk, and it is judged against the way the head faced when the drag began, so a glance aside
+  mid-drag changes nothing: within 50° of that forward or back it walks, further round and past 8 cm sideways it
+  snap-turns once. At the wheel the draw steers and drives. One pinch walks at a time; a second can still tap, and
+  when the first is let go the second starts afresh. A hand or a head that drops out of tracking stands the drag
+  still: back within a quarter of a second it resumes where it was, at the same speed and with no second snap, unless
+  the hand comes back on the far side of the way it was heading, which counts as a pass through the middle (it stands,
+  or steps up afresh the new way); gone longer the pinch is spent and walks no more until it is pinched again. A
+  pinch that is cancelled, whose source leaves, or that is held through the headset's menu or a recentre is dropped,
+  with no tap. A screen's tap and a gaze press always tap (they never walk). Not covered: a lone controller has no
+  mute or car reset, and one with no upper face button no handbrake; a pinch's ping still aims along the head; hand
+  microgestures are not read.
+- **The floor.** A session not granted a floor-level space runs in a plain local one, whose origin is where the head
+  began, and the rig lifts its floor by the body's eye height so the eyes stay at standing height.
 - **`hal` lists them** as rows of the `xr` transport while the session runs (`Tracked controller (left)`, `Gaze and
   pinch`, `Tracked hand (right)`), each resolved by the device resolver's headset stage; they cannot be paired, the
   session brings them. The HUD's hardware lines and the namespace's `Hardware/Cell/Bus/xr` topic carry the state
@@ -1292,8 +1343,11 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
-  quality governor), with a bar from Lite to Peak; and Sloane, ready to plan. It asks nothing of the network or the
-  model. It has **no
+  quality governor), with a bar from Lite to Peak; and Sloane as the brain readout has her: *Thinking on this device*
+  (the model kept in this page, or the one the app carries), *Thinking with a model on this machine* (a model server
+  here), *Thinking off this machine* (the gateway), else her default model's progress while it comes, else *Ready to
+  plan*, which her scripted planner always is. The row's title is the readout's whole line, the same one `ask` prints
+  as its brain row. Reading it asks nothing of the network or the model. It has **no
   close button, no skip and no key that puts it away**; the card says so. Sloane says each line aloud when the sound is on, and the configured model may reword a
   line when it answers in time and keeps the key or command the line needs.
 - **The six stages** (`src/09_Cognition/firstWalk.ts`), each finished by what the page sees, never by a button:
@@ -2813,9 +2867,10 @@ them that answers (`auto`):
   stands loaded stays that answer's. The console's asks and the swarm's steps run over it as over the model in this
   page (it has no address for the loopback rule to judge), and the cloud fallback never moves its prompts (`off: the
   model inside this app is never moved to the gateway`). Where the page has no such app around it (a browser), or the
-  app runs no model (the Windows and macOS apps answer the runner's commands with none), it lists nothing and an
-  answer is told there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) has the
-  runner and carries Qwen2.5 1.5B Instruct for it (The Linux app's model, below).
+  app runs no model (the Windows app answers the runner's commands with none), it lists nothing and an answer is told
+  there is none, so the script stands in. The Linux app (its `.deb`, `.rpm` and `.AppImage`) and the macOS app (its
+  `.dmg` and zipped `.app`) have the runner and carry Qwen2.5 1.5B Instruct for it (The Linux app's model, The macOS
+  app's model, below).
 - **`inpage`**: a model file you keep in this page, run by the page itself on this device (`09_Cognition/inPage.ts`,
   llama.cpp compiled to WebAssembly). No server, no address and no request: see A model in this page, below. It takes
   no server and no key (`ask connect inpage` alone chooses it), and picking a file switches to it.
@@ -3194,7 +3249,8 @@ Qwen2.5 0.5B Instruct, which the page gets by itself unless another provider or 
 kept (a model server on this machine still answers first), or in one tap on Sloane's card (The site's model, below).
 The Windows app's installer carries Qwen2.5 1.5B Instruct beside the app, and the NixOS package's launcher serves it
 beside its page; the page gets it the same way (The app's model, The launcher's model, below). The Linux app's packages
-carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, below).
+and the macOS app carry the same file, but there the app runs it itself (`native`, above; The Linux app's model, The
+macOS app's model, below).
 `dist/index.html`, the bare .exe and the OS media carry none. The parts:
 `09_Cognition/inPage.ts` (the provider), `inPagePlan.ts` (the table below), `inPageCaps.ts` (what the browser offers),
 `gguf.ts` (the header check), `modelStore.ts` (keeping the file), `siteModel.ts` (the site's model) and
@@ -3339,8 +3395,9 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   counted as verified above: `windows-app.yml` building the NSIS installer and the .msi with the model and checking
   each is at least nine tenths of its size, whose first runs are the pull request that adds it. Not verified: the
   installed app on a physical Windows machine, the copy's speed over the shell's text answers (about 240 reads), and
-  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Mac, Android
-  and iPhone apps carry no model yet; the Linux app carries the same file and runs it itself (the next entry).
+  how well and how fast the 1.5B model converses. The Windows arm64 app (from the build matrix) and the Android and
+  iPhone apps carry no model yet; the Linux and macOS apps carry the same file and run it themselves (the next two
+  entries).
 - **The Linux app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
   `tools/build/linuxAudit.mjs`). The Linux app's `.deb`, `.rpm` and `.AppImage` (the build matrix's `linux-x64` and
   `linux-arm64`) carry the same file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (986,048,768 bytes, about 0.9 GB; each
@@ -3380,7 +3437,7 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
     within the minute the card keeps asking (When the city cannot start).
 
   What is verified: the overlay naming the model, its licence and notice, and llama.cpp's texts for every Linux package
-  (`siteModel.test.ts`), the build steps, the Linux-only feature and the checks' order (`buildMatrix.test.ts`), each
+  (`siteModel.test.ts`), the build steps, the Linux jobs' feature and the checks' order (`buildMatrix.test.ts`), each
   check of `linuxAudit.mjs` and that each can fail (`linuxAudit.test.ts`), the packaged run's script
   (`nativeRunner.test.ts`) and the runner's own Rust tests. Rehearsed in the container that wrote it, with the tiny
   test model in place of the real one: a release build as `.deb`, `.rpm` and `.AppImage`, each package passing the
@@ -3394,6 +3451,60 @@ carry the same file, but there the app runs it itself (`native`, above; The Linu
   real model and need GLIBC_2.34 at most, and the installed x86-64 app answered with the real model, in its console
   too, where `ask stop` typed after the first words stopped the answer (24 of 24 checks). Not verified: the app on a
   real Linux desktop, how fast it answers there, and how fast it answers on Arm.
+- **The macOS app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/runner.rs` over `native/llm`,
+  `tools/build/macAudit.mjs`, `tools/build/macos-slices.cmake`). The macOS app (the build matrix's `macos-universal`:
+  one universal `.app` for Apple silicon and Intel, published as a `.dmg` and as a zipped `.app`) carries the same
+  file, `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`, and runs it in its own process as the Linux app does: both slices of its
+  shell are built with the `native-runner` feature, and the page asks it through `native` (above).
+  - In the app the file is `Crimson Noir Agent City.app/Contents/Resources/models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`,
+    with its `LICENSE` and `NOTICE` beside it, and llama.cpp's licence and notice are in
+    `Contents/Resources/licenses/llama.cpp/`. The app checks the file's size and SHA-256 once and stamps the check in
+    its data folder; nothing is copied into the page's storage. The `.dmg` and the zip are about 1 GB each.
+  - It needs macOS 11 (Big Sur) or later: both slices are built for it (`bundle.macOS.minimumSystemVersion` in
+    `src-tauri/tauri.conf.json`, and the same `MACOSX_DEPLOYMENT_TARGET` for Rust, cc and CMake).
+  - On Apple silicon the plan puts every layer on the GPU through Metal (`GPU` in `runner.rs`; ggml's Metal backend is
+    compiled into that slice with its shaders embedded, which `macAudit.mjs slices` checks); no Mac has run it yet. On
+    an Intel Mac the plan keeps the processor alone: that slice is built without Metal, and llama.cpp's CPU code in it
+    is built for processors with AVX2, FMA, F16C and BMI2 (about 2013 on, as on Linux x86-64). On an Intel Mac without
+    them the app still opens, but its model does not start: Sloane's card says "The model inside this app couldn’t
+    start:" and that the processor is older than the app's model needs.
+  - The app is neither signed nor notarized, so Gatekeeper refuses it at the first opening (macOS may call it damaged).
+    In Terminal, `xattr -dr com.apple.quarantine` on the `.app` clears that. On macOS 15 and later the only other
+    way is System Settings › Privacy & Security › Open Anyway after the refusal; right-click › Open works only up to
+    macOS 14. None of this has been tried on a Mac.
+  - The build matrix's macOS job fetches and checks the file as the Linux jobs do, and fails before any upload unless
+    `tools/build/macAudit.mjs` passes six checks. `package`: the `.app`, the `.app` inside the `.dmg` (attached
+    read-only) and the `.app` inside the zip each hold the model at exactly its size with its licence and notice and
+    llama.cpp's texts, nothing holds the tiny test model, and the `.dmg` and the zip are each under GitHub's 2 GiB.
+    `archs`: `lipo -archs` lists arm64 and x86_64. `libraries`: every library either slice loads (`otool -L`) is
+    macOS's own, under `/System/Library/` or `/usr/lib/`, none is OpenSSL, curl or OpenMP, and an `@rpath` library
+    must be inside the app. `minos`: neither slice needs a macOS newer than 11.0 (`otool -l`). `symbols`: each slice's
+    Apple linker map (which `src-tauri/build.rs` writes) keeps none of the download, HTTP or subprocess code of
+    llama.cpp's common library, the binary holds none of its strings, and neither slice imports a network call
+    (`nm -u -m`). `slices`: llama.cpp's build output shows Metal and no x86 flag for arm64, no Metal and the six x86
+    flags for x86_64, and only the arm64 slice holds Metal's shader strings.
+  - `native-llm.yml`'s Apple silicon job reads a few greedy tokens of the 1.5B model with the macOS plan (every layer on
+    the GPU) and prints the devices llama.cpp found and where the model's weights went, read from llama.cpp's own log of
+    its weight buffers (the GPU only when a buffer that is not the processor's holds some, so a listed GPU is not taken
+    as proof); a runner without Metal does not fail it, an answer without a token, or with no such log line, does.
+  - The city needs WebGPU from WKWebView, macOS's web view. Where it gives none, the app shows the recovery card,
+    which names WebKit; the console alone (Track B) reaches the same runner. Neither has been seen on a Mac.
+
+  What is verified: the six checks of `macAudit.mjs`, each passing a good input and failing a bad one by name, run end
+  to end over small universal Mach-O binaries built in the container with clang, ld64.lld and llvm-lipo and read with
+  llvm-otool, llvm-lipo and llvm-nm, which print as Apple's tools do (`macAudit.test.ts`; the `.dmg` is the one input
+  not made there). ld64.lld's map names archive members in classic ld64's form (`lib.rlib(member.o)`), so ld-prime's
+  (`lib.rlib[N](member.o)`, Xcode 15 on, the macOS runner's linker) is pinned from a fixture and from those maps
+  rewritten to it; the parse of a real ld-prime map is not verified until CI runs. Also verified: the build step, the
+  overlay, the per-slice settings as literals (the build step's four variables, and `macos-slices.cmake`'s condition,
+  FORCE lines and status lines), the build cache's key and the job's steps and their order (`buildMatrix.test.ts`); the
+  runner compiled for Linux and macOS alone, the plan's GPU on Apple silicon alone, the desktop test's plan, and how it
+  reads where the weights went from llama.cpp's log lines (Rust tests, `desktopShell.test.ts`, `nativeRunner.test.ts`).
+  llama.cpp's CMake configuration was run in the container for each slice as Darwin with `macos-slices.cmake`: the
+  x86_64 slice printed Metal off and the six flags, the arm64 slice kept Metal on. CI builds the app, runs the six
+  checks and runs the 1.5B model on Apple silicon; none of that had run when this was written. Not verified: the macOS
+  build itself, the app in WKWebView, how fast Metal answers, any run on an Intel Mac, and Gatekeeper with this unsigned
+  app.
 - **The launcher's model** (`siteModel.ts` `APP_MODEL` and `launcherServes`, `tools/nix/model.nix`,
   `tools/web/launch.mjs`, App.tsx's `launcherSource`). The NixOS package, the one `nix run` starts and the module
   installs, carries the app's model too, so Sloane talks from the first launch on a Linux desktop as well: the same
@@ -4667,20 +4778,23 @@ The current build (below) carries the same three files from every commit on main
   `hid_list` answers an empty list and the other four an error, so the page's code is one and the same. **Not yet
   tried on a physical Windows machine with a controller**: the Rust is type-checked for the Windows target (the
   Windows app workflow builds it), the page side is proved against a fake shell with the real driver end to end.
-- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux, the shell runs the model
-  it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends the page
-  three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its events on a
-  Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app before its
-  answer's request is kept and stops that answer as it arrives). The file is checked against its pin once and stamped
-  in the app's data folder; without the file no runner starts; a page that starts loading stops every answer it asked
-  for; and `app_model` answers nothing there, so the page never copies a model in. The Linux release builds turn the
-  feature on (the build matrix passes `--features native-runner` for `linux-x64` and `linux-arm64` alone; The Linux
-  app's model). Every other build (Windows, macOS, and a Linux build without the feature, such as `npm run app:build`:
-  the feature is off by default) registers the same three commands, which answer that there is none. Where the runner
-  is compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting
-  a debugger on it. `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it,
-  builds the Linux app with the runner and the tiny test model, and asks it through the page's own `shellRunner` and
-  `createNativeMind` inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
+- **The model the app runs itself.** Built with the `native-runner` cargo feature on Linux or macOS, the shell runs
+  the model it carries as the resource `models/<file>` itself (`src-tauri/src/runner.rs` over `native/llm`) and lends
+  the page three commands: `native_model` (what it carries and how that stands), `native_generate` (one answer, its
+  events on a Tauri channel of its own) and `native_stop` (a stop by the answer's number; one that reaches the app
+  before its answer's request is kept and stops that answer as it arrives). The file is checked against its pin once
+  and stamped in the app's data folder; without the file no runner starts; a page that starts loading stops every
+  answer it asked for; and `app_model` answers nothing there, so the page never copies a model in. The Linux and macOS
+  release builds turn the feature on (the build matrix passes `--features native-runner` for `linux-x64`, `linux-arm64`
+  and `macos-universal` alone; The Linux app's model, The macOS app's model): the plan keeps the processor alone on
+  Linux and on an Intel Mac and puts every layer on the GPU through Metal on Apple silicon (not yet run on a Mac). Every
+  other build (Windows, the phones, and a Linux or macOS build without the feature, such as `npm run app:build`: the
+  feature is off by default) registers the same three commands, which answer that there is none. Where the runner is
+  compiled, `main` first sets `GGML_NO_BACKTRACE`, so a failed check inside llama.cpp ends the app without starting a
+  debugger on it.
+  `native-e2e.yml` runs the shell's own Rust tests and clippy with the runner and without it, builds the Linux app
+  with the runner and the tiny test model, and asks it through the page's own `shellRunner` and `createNativeMind`
+  inside the page in WebKitGTK (`tools/browser/nativeE2e.mjs`).
 - **The air gap holds.** The page's policy and its loopback gate are unchanged in the app: Tauri's own IPC fetch is
   refused by the gate like any other host and Tauri falls back to its message channel, which is how the title bar's
   and the controller's commands travel. Nothing in the app reaches a host but this machine.
@@ -4711,7 +4825,7 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | `windows-arm64` | the same, cross-compiled (`--target aarch64-pc-windows-msvc`) | Windows x64 | built by the workflow; not run on a Windows on Arm machine |
 | `linux-x64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | Linux x64 with WebKitGTK 4.1 and GTK 3 development packages, cmake and libclang, and the model in `src-tauri/models/` | built by the workflow on `ubuntu-22.04`, the packages checked, and the `.deb` installed on the runner and asked for one short answer under a virtual display; not installed on a desktop; WebGPU in WebKitGTK unverified |
 | `linux-arm64` | `.deb`, `.rpm` and `.AppImage`, each with the native runner and Sloane's model | a Linux arm64 machine (no cross-compilation: WebKitGTK must be the target's own), with the same | built by the workflow on `ubuntu-22.04-arm` and the packages checked; not run on a device |
-| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized | macOS with Xcode | built by the workflow; not opened on a Mac. Gatekeeper asks once: right-click › Open, or `xattr -d com.apple.quarantine` |
+| `macos-universal` | one universal `.app` (Apple silicon and Intel; zipped) and `.dmg`, unsigned and not notarized, each with the native runner and Sloane's model, for macOS 11 or later | macOS with Xcode and cmake, and the model in `src-tauri/models/` | CI builds it on `macos-15` and checks the `.app`, the `.dmg`, the zip and both slices (`tools/build/macAudit.mjs`), and fails on any check; not yet run when this was written; not opened on a Mac. Gatekeeper refuses it at first: `xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway (macOS 15 on; right-click › Open up to 14); not tried on a Mac |
 | `android-apk` | an arm64-v8a `.apk`, signed with the Android debug key (so a phone with "install unknown apps" takes it), or with the keystore `CRIMSON_ANDROID_KEYSTORE` names (`…_PASSWORD`, `CRIMSON_ANDROID_KEY_ALIAS`, `…_KEY_PASSWORD`) | any OS with the Android SDK, an NDK and Java 17 (`ANDROID_HOME`, `NDK_HOME`, `JAVA_HOME`) | built by the workflow; not installed on a phone. WebGPU in the Android System WebView needs Android 12 or later and a current WebView |
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
 | `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
@@ -4744,7 +4858,10 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   Linux job first fetches and checks Sloane's model, then checks its packages, their glibc floor and the binary
   (`tools/build/linuxAudit.mjs`; The Linux app's model), and the x86-64 job installs its `.deb` on the runner and asks
   the installed app for one answer of at most 16 tokens through the page's own code in WebKitGTK under Xvfb
-  (`tools/browser/nativeE2e.mjs --packaged`). Each job publishes its files as the artifact `matrix-<id>` and its report;
+  (`tools/browser/nativeE2e.mjs --packaged`). The macOS job fetches and checks the same model, builds both slices with
+  the runner, and checks the `.app`, its `.dmg` and its zip, both slices, their libraries, their lowest macOS, their
+  symbols and how each slice was built (`tools/build/macAudit.mjs`; The macOS app's model); nothing starts the built
+  app there. Each job publishes its files as the artifact `matrix-<id>` and its report;
   a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
   tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches

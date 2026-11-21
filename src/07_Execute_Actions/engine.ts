@@ -99,7 +99,7 @@ import { RigView } from './rigView.ts'
 import { NetView, type RemotePose } from './netView.ts'
 import { STAFF_VIEW, StaffView } from './staffView.ts'
 import { HeadRig, aimRay, carriedYaw, eyeHeightFor, yawFacing, type AimRay } from './head.ts'
-import { XrMapper } from '../04_Connect_Hardware/xrInput.ts'
+import { buzz, XR_STEP_OUT_SPEED, XrMapper } from '../04_Connect_Hardware/xrInput.ts'
 import { xrSystemOf } from '../04_Connect_Hardware/xrSystem.ts'
 import { composerFor, XrPresence, type XrHost, type XrRendererLike } from './xrSession.ts'
 import { SimClient } from './simClient.ts'
@@ -2698,8 +2698,18 @@ export class Engine {
     const st = sim.state
     const driving = st.driving
     // Gamepads and touch first, so their presses are seen by take() this same frame. Under a headset the sticks are
-    // read against the head's own yaw (the pose is the headset's), not the body yaw Input keeps.
-    this.xrInput.headOffset = this.rig.headset ? this.rig.pose.yaw - input.yaw : 0
+    // read against the head's own yaw on foot (the pose is the headset's), not the body yaw Input keeps; at the wheel
+    // the car's way is forward. The headset's mapper is told what is at hand (xrInput.ts use): the wheel, a parked
+    // car's door, or neither, and whether the car is slow enough to step out of.
+    const xi = this.xrInput
+    if (this.rig.headset) {
+      xi.driving = driving >= 0
+      xi.headOffset = driving >= 0 ? 0 : this.rig.pose.yaw - input.yaw
+      xi.nearCar = driving < 0 && this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0
+      xi.stopped = driving < 0 || Math.abs(st.poses[driving * POSE.stride + POSE.speed]) < XR_STEP_OUT_SPEED
+    } else {
+      xi.driving = false; xi.headOffset = 0; xi.nearCar = false; xi.stopped = true
+    }
     // Whether this frame's poll is drained below (a home's card open, or the poll right after it closed): its menu and
     // keys buttons are dropped with it, so the start that closed the card does not open the pad's menu too.
     const draining = this.homeCard !== null || this.drainNext
@@ -2711,6 +2721,9 @@ export class Engine {
     // suspends the game's input) is dropped, so no press reaches a car's door, the clock or a ping. So is the poll
     // right after it closes, which still carries the press that closed it.
     if (this.homeCard !== null || this.drainNext) { input.drain(); this.drainNext = false }
+    // A headset's door (a button, a click) that would have stepped out of a moving car: not done (the controller that
+    // asked was buzzed), and said (refuseStepOut).
+    if (xi.takeRefused()) this.refuseStepOut()
     // The pad's menu and keys buttons, asked of the host (Input.takeUi, which a drain leaves alone): handed over below,
     // unless this poll was drained, or a headset is on (neither the menu nor the keys would show inside it).
     const padUi = input.takeUi()
@@ -3899,19 +3912,35 @@ export class Engine {
     try { this.onHalt?.(reason) } catch { /* likewise */ }
   }
 
+  /**
+   * A step out of a moving car refused under a headset: the refusal's chime in the wearer's ears (the page's panels do
+   * not show inside the headset, and a hand has no actuator to buzz), and a toast for anyone at the monitor.
+   */
+  private refuseStepOut(): void {
+    this.audio.chime('refused', 'step out')
+    this.toast('Headset', 'Stop the car to step out')
+  }
+
   /** The headset's side of the engine (xrSession.ts XrHost). */
   private xrHost(): XrHost {
     return {
       frame: (nowMs) => this.frame(nowMs),
       sources: (list) => this.input.hal.setHeadset(list),
-      select: () => {
-        // A pinch (or a hand's select) with no controller: the interaction at hand, else a ping where the head looks.
+      select: (src) => {
+        // A tap with no controller (a quick pinch, a screen's tap): the interaction at hand, else a ping where the head
+        // looks; out of a car only once it has stopped, since a corrective pinch at speed is easily made by mistake
+        // (buzzed on a pointer that has an actuator, a stylus or a trigger; told on the monitor).
         const st = this.sim.state
+        if (st.driving >= 0 && Math.abs(st.poses[st.driving * POSE.stride + POSE.speed]) >= XR_STEP_OUT_SPEED) {
+          buzz(src)
+          this.refuseStepOut()
+          return
+        }
         const near = st.driving >= 0 || this.nearestCar(st.avatar.x, st.avatar.z, ENTER_RANGE, true) >= 0
         this.input.press(near ? 'interact' : 'ping')
       },
       started: (mode, blend) => {
-        this.rig.setHeadset(composerFor(this.gpu.renderer as unknown as XrRendererLike))
+        this.rig.setHeadset(composerFor(this.gpu.renderer as unknown as XrRendererLike), this.xr.floorless)
         if (this.pacer) this.pacer.passthrough = true
         this.applyTier()
         this.marked = false
