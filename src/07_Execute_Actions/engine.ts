@@ -605,7 +605,7 @@ export class Engine {
   private readonly wornSaved = new Float32Array(RIG_SLOTS * 2)
   /** Ghost view: the physics shapes as code over the finished frame (G, or the console's ghost). */
   private readonly ghost: GhostView
-  /** Matrix mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
+  /** Rain mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
   private matrixOn = false
   /** When the last frame was drawn, ms (the ghost view's fade runs on drawn frames). */
   private lastDrawnMs = Number.NaN
@@ -1615,7 +1615,7 @@ export class Engine {
   }
 
   /**
-   * Matrix mode on or off (01_Initialize_World/matrixMode.ts): falling code on every surface, drawn in world space by
+   * Rain mode on or off (01_Initialize_World/matrixMode.ts): falling code on every surface, drawn in world space by
    * the surfaces' own materials (the sky untouched), and in the physics realm the pedestrians' mask reduced to the
    * static world, so people and cars pass through each other while the ground still holds them. The page's uniform
    * and the realm's crowd take the same global state (the uniform is set every frame; the realm is told now).
@@ -2993,7 +2993,7 @@ export class Engine {
       if (st.craft) this.craftView?.sync(st.craft)
       this.fresh = false
     }
-    // Matrix mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
+    // Rain mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
     // floating origin anchored to this camera. Every surface's uniform and the cull's Params take it from here.
     this.world.matrixMode.set(st.simTime, this.matrixOn, cam.position.x, cam.position.z)
     // Who is drawn for this camera, over the newest pedestrian frame from the worker.

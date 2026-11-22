@@ -232,7 +232,7 @@ export interface World {
   /** Seconds on the shared signal clock (drivers and pedestrians read the same value). */
   signalClock: UniformNode<'float', number>
   /**
-   * Matrix mode (matrixMode.ts): the global-state uniform every surface here reads (the buildings, the streets, the
+   * Rain mode (matrixMode.ts): the global-state uniform every surface here reads (the buildings, the streets, the
    * lake, the props, a region's meshes), which the fleet, the rigs and the crowd take too; the engine sets it once a
    * frame and tells the physics realm the mode. The sky never takes it: it is drawn as ever, in every mode.
    */
@@ -670,7 +670,7 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const signalClock = uniform(0)
   // Where the real lamp light reaches (below): the focus and the farthest lit lamp's distance, for the ground's pools.
   const realLight: RealLight = { focus: uniform(new Vector2()), radius: uniform(0) }
-  // Matrix mode's one uniform: every surface below takes it; the sky (next) does not.
+  // Rain mode's one uniform: every surface below takes it; the sky (next) does not.
   const matrixMode = createMatrixMode()
 
   const skyParams = { turbidity: 3.2, rayleigh: 1.6, mieCoefficient: 0.004, mieDirectionalG: 0.78, cloudCoverage: detail.cloudCoverage }

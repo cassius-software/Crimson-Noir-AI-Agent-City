@@ -265,7 +265,7 @@ export type SimCommand =
   | { c: 'tune'; key: keyof CarTuning; value: number }
   | { c: 'blind'; on: boolean; ttlMs?: number }
   /**
-   * Matrix mode (01_Initialize_World/matrixMode.ts) for the crowd: on, the pedestrians keep only the static world's
+   * Rain mode (01_Initialize_World/matrixMode.ts) for the crowd: on, the pedestrians keep only the static world's
    * physics layer (crowd.wgsl physicsMaskFor), so people and cars phase through them while the ground and the lots
    * still hold them; the First-Law sensing and the Sanctuary are untouched. The page's own surfaces take the mode
    * from the same global state, so the drawing and the simulation agree.

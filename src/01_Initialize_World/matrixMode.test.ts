@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? Matrix mode has no GPU oracle under Node, so what can be pinned is pinned: the global
+ * Why does this file exist? Rain mode has no GPU oracle under Node, so what can be pinned is pinned: the global
  * state's layout and packer (the one word both pipelines read), the floating origin's snap and bounds, the physics
  * mask and its layers (the CPU twin of crowd.wgsl physicsMaskFor), the WGSL surface's shape (the three triplanar
  * planes, the camera-relative grid, the early return with the mode off, the shared uniform read as the shaders of

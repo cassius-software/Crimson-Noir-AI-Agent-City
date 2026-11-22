@@ -34,7 +34,7 @@ import { texture } from 'three/tsl'
 import { SunShadowNode } from 'three/addons/lights/SunShadowNode.js'
 import type { SunLight } from 'three/addons/lights/SunLight.js'
 
-// Vite's `?raw` import, for Node: the world, the crowd, the fleet and the rigs take matrix mode, whose WGSL comes that way.
+// Vite's `?raw` import, for Node: the world, the crowd, the fleet and the rigs take rain mode, whose WGSL comes that way.
 registerHooks({
   load(url, context, nextLoad) {
     if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? Matrix mode, the page's half: the global state of globalState.ts (x = time, y = matrix
+ * Why does this file exist? Rain mode, the page's half: the global state of globalState.ts (x = time, y = matrix
  * mode, z and w = the floating origin) as three's vec4 uniform, set once a frame from the shared clock, the mode and
  * the camera (createMatrixMode) and read by every material that takes the mode; and applyMatrixMode, the TSL helper
  * any MeshStandardNodeMaterial takes, which calls the WGSL surface (matrixMesh.wgsl) with the fragment's world
@@ -13,7 +13,7 @@
  * - Stage 01 so the world's props (world.ts), the fleet (07_Execute_Actions/fleetView.ts) and the crowd
  *   (03_Spawn_Agents/crowd.ts) can all take it; it imports only three.
  * - Pure: it builds nodes and never needs a renderer, so the graph is tested under Node.
- * What breaks if it is removed? The materials have no matrix mode, the crowd's Params has no global word, and the
+ * What breaks if it is removed? The materials have no rain mode, the crowd's Params has no global word, and the
  * console's `matrix` knob and the M key drive nothing.
  */
 import { Vector4 } from 'three/webgpu'
@@ -65,7 +65,7 @@ const matrixSurface = wgslFn(surfaceSource, [matrixRandom] as unknown as Paramet
 const applied = new WeakMap<MeshStandardNodeMaterial, { colour: Node; globalState: UniformNode<'vec4', Vector4> }>()
 
 /**
- * Gives `material` matrix mode: with the uniform's y at 1 the fragment is the surface matrixMesh.wgsl computes from
+ * Gives `material` rain mode: with the uniform's y at 1 the fragment is the surface matrixMesh.wgsl computes from
  * its world position and geometric normal (the code's glow and a tenth of the base colour), unlit, so it goes to
  * emissiveNode and the colour the lights act on is dimmed to nothing; the existing emissive (a lamp's head, a
  * window) is dimmed with it. With y at 0 the material is exactly as it was: the surface returns the base colour and
