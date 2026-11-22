@@ -4,7 +4,7 @@
 // Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 /**
  * Why does this file exist? Two workflows publish after each green ci on main: web.yml puts the web copy on GitHub
- * Pages and current.yml puts every download (the nine targets of tools/build/matrix.mjs, the UEFI media among them)
+ * Pages and current.yml puts every download (the ten targets of tools/build/matrix.mjs, the UEFI media among them)
  * on the `current` pre-release. Each can skip, wait or fail without the other, and a run that publishes nothing can
  * still end green: on 21 November 2026 the web copy, the downloads and main stood at three commits for hours with
  * every run green. This script looks at what is published and says, in red when it must, whether everything comes
@@ -21,11 +21,12 @@
  *   `in-sync`  the web copy, the release's record, every required target, the tag and the bytes all name that commit;
  *   `settling` something is behind, and something can still mend it: ci passed on that commit a few minutes ago and
  *              no run of that publisher begun since has ended, a publisher's run has not ended (and is not older
- *              than a run can be, its wait for runners included), the web copy was published minutes ago (the host
- *              may serve the copy before for ten minutes), or, for the web copy alone, ci is still running on a
- *              newer commit (web.yml publishes main's tip alone, so it waits for that one). While a current run
- *              has not ended, files that are not yet the ones the record names are behind too: a publish moves the
- *              tag, then replaces each file under its name, and writes the record last;
+ *              than a run can be, its wait for runners included), or the web copy was published minutes ago (the
+ *              host may serve the copy before for ten minutes). What has never been published at all (a copy from
+ *              before copies were stamped, a target new to the tool) waits for ci while it runs on a newer commit:
+ *              it arrives with the first publish of a commit that has it. While a current run has not ended, files
+ *              that are not yet the ones the record names are behind too: a publish moves the tag, then replaces
+ *              each file under its name, and writes the record last;
  *   `drift`    something is behind and nothing is on its way: exit 1, one error line for each thing, each with the
  *              commit it is at and the workflow to run by hand;
  *   `unknown`  a source could not be read after three tries (every read of GitHub and of the site is made again
@@ -129,8 +130,11 @@ export function verdict(facts, grace = GRACE) {
 
   // The web copy: its stamp names the commit, and the build the host names is the stamp's.
   const stamp = facts.web.stamp
+  // What has never been published: a copy from before copies were stamped, a target the release has never held.
+  const never = []
   if (!stamp) {
     behind.web.push('the web copy has no build.json, so it was published before copies were stamped with their commit (or not by web.yml)')
+    never.push(...behind.web)
     rows.push(['web copy', '', 'no build.json'])
   } else {
     if (stamp.commit !== G) behind.web.push(`the web copy is built from ${short(stamp.commit)}, not ${short(G)}`)
@@ -161,6 +165,7 @@ export function verdict(facts, grace = GRACE) {
       const said = t ? `${id} is built from ${short(t.commit)}, not ${short(G)}` : `${id} has no files on the release`
       if (best) warnings.push(`${said} (best effort: it never turns a publish red)`)
       else behind.current.push(said)
+      if (!best && !t) never.push(said)
     }
     // A publish moves the tag first, then replaces each file under its own name (the old one deleted, the new one
     // uploaded), and writes the record last (staged for the seconds that takes). So while a current run has not
@@ -198,8 +203,9 @@ export function verdict(facts, grace = GRACE) {
     held = !rel.staged && s.commit === G && required.every((id) => s.targets[id]?.commit === G)
   }
 
-  // What can still mend "behind": ci passed moments ago, a publisher that has not ended, a publish minutes old, or
-  // (the web copy alone, while web.yml publishes main's tip alone) ci still running on a newer commit. "Moments ago"
+  // What can still mend "behind": ci passed moments ago, a publisher that has not ended, a publish minutes old. Both
+  // publishers build the newest commit ci passed on (current.mjs pick and web-pick), so ci still running on a newer
+  // commit mends nothing here: that commit is not green yet, and the one that is should be up. "Moments ago"
   // covers the time a publisher takes to begin, so it ends for a publisher once a run of it begun since ci passed
   // has ended: that run was its answer (a run skipped whole was for another ci run, one that did not pass), and a
   // look started by that very run's end must not read "on its way" where nothing is.
@@ -207,27 +213,30 @@ export function verdict(facts, grace = GRACE) {
   const fresh = (workflow) => Boolean(facts.green.at) && age(facts.green.at) < grace.start && !answered(workflow)
   const waiting = []
   const settle = (list, why) => { for (const p of list) waiting.push(`${p} (${why})`) }
+  // What has never been published cannot come from publishing the green commit again when that commit is the one
+  // without it (a new target is in the tool before it is in any commit ci passed on): it arrives with the first
+  // publish of a commit that has it. So while ci is still running on a newer commit, that much is on its way, and a
+  // run by hand, which would build the green commit, is not the advice. Anything else behind is judged as ever.
+  const newer = running('ci', grace.ci, (r) => r.sha !== G)
+  const blame = (list, mend) => {
+    for (const p of list) {
+      if (newer && never.includes(p)) waiting.push(`${p} (never published yet, and ci is still running on ${short(newer.sha)}: it arrives with the first publish of a commit that has it)`)
+      else problems.push(`${p}: ${mend}`)
+    }
+  }
   if (behind.web.length) {
     const web = running('web', grace.web)
-    const ci = running('ci', grace.ci, (r) => r.sha !== G)
     if (fresh('web')) settle(behind.web, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
     else if (web) settle(behind.web, 'a web run has not ended')
     else if (facts.served && age(facts.served) < grace.served) settle(behind.web, `a web run published ${Math.max(0, Math.round(age(facts.served)))} min ago, and the host may serve the copy before for ten`)
-    else if (ci) settle(behind.web, `ci is still running on ${short(ci.sha)}, and the web copy waits for main's tip`)
-    else {
-      // web.yml publishes main's tip alone, by hand too: when ci has not passed on the tip, a run by hand would
-      // publish a commit nothing vouches for, so that is said in place of the advice.
-      const mend = facts.tip && facts.tip !== G
-        ? `ci has not passed on main's tip (${short(facts.tip)}), the one commit web.yml publishes, so the web copy follows when ci passes there (a web run by hand would publish that tip untested)`
-        : 'Actions > web > Run workflow, on main'
-      for (const p of behind.web) problems.push(`${p}: ${mend}`)
-    }
+    // A run by hand publishes the newest commit ci passed on, which is the one named here (leave "tip" unticked).
+    else blame(behind.web, 'Actions > web > Run workflow, on main')
   }
   if (behind.current.length) {
     const mend = `Actions > current > Run workflow, on main${held ? ', with "force" ticked (the release already holds that commit, so a run without it builds nothing)' : ''}`
     if (publishing) settle(behind.current, 'a current run has not ended')
     else if (fresh('current')) settle(behind.current, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
-    else for (const p of behind.current) problems.push(`${p}: ${mend}`)
+    else blame(behind.current, mend)
   }
   return { status: problems.length ? 'drift' : waiting.length ? 'settling' : 'in-sync', problems, waiting, warnings, rows }
 }

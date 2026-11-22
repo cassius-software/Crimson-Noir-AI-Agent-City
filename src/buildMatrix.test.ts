@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the cross-platform build matrix (tools/build/matrix.mjs, `npm run build:matrix`,
- * .github/workflows/build-matrix.yml): the nine targets in the plan's order, each a program and an argument vector
+ * .github/workflows/build-matrix.yml): the ten targets in the plan's order, each a program and an argument vector
  * (never a shell line, so cmd.exe and sh run the same thing), the page built once and never again by a Tauri step
  * (and not at all for the UEFI application alone), the installers' own version beside the app's pre-release one (the
  * .msi's WiX version, the .rpm's Version and Release, packaged from the built binary), what blocks a target on a
@@ -287,7 +287,9 @@ test('the aarch64 and riscv64 media and boot: BOOTAA64.EFI or BOOTRISCV64.EFI on
   // header and written out flat by the linker itself, with nothing in the file that varies between two builds.
   const flags = /\[target\.riscv64gc-unknown-none-elf\]\nrustflags = \[([^\]]*)\]/.exec(cargo)?.[1].split(', ').map((f) => JSON.parse(f)) ?? []
   assert.deepEqual(flags.filter((f) => f !== '-C'), ['relocation-model=pie', 'link-arg=-pie', 'link-arg=--no-dynamic-linker', 'link-arg=-znotext', 'link-arg=-znorelro', 'link-arg=--no-relax', 'link-arg=--build-id=none', 'link-arg=--oformat=binary'])
-  assert.match(readFileSync(join(os, 'boot', 'build.rs'), 'utf8'), /if env::var\("CARGO_CFG_TARGET_ARCH"\)\.as_deref\(\) == Ok\("riscv64"\) \{\n\s+let script = Path::new\(env!\("CARGO_MANIFEST_DIR"\)\)\.join\("riscv64\.ld"\);\n\s+println!\("cargo:rerun-if-changed=\{\}", script\.display\(\)\);\n\s+println!\("cargo:rustc-link-arg-bins=-T\{\}", script\.display\(\)\);/)
+  // The script goes to the bare-metal image alone: a hosted riscv64 build (the workspace's tests on a RISC-V Linux
+  // machine) is the note in main.rs, and the script names a symbol only the image defines.
+  assert.match(readFileSync(join(os, 'boot', 'build.rs'), 'utf8'), /if env::var\("CARGO_CFG_TARGET_ARCH"\)\.as_deref\(\) == Ok\("riscv64"\) && env::var\("CARGO_CFG_TARGET_OS"\)\.as_deref\(\) == Ok\("none"\) \{\n\s+let script = Path::new\(env!\("CARGO_MANIFEST_DIR"\)\)\.join\("riscv64\.ld"\);\n\s+println!\("cargo:rerun-if-changed=\{\}", script\.display\(\)\);\n\s+println!\("cargo:rustc-link-arg-bins=-T\{\}", script\.display\(\)\);/)
   // The header: a PE32+ file for a 64-bit RISC-V machine, an EFI application, at address 0 with nothing to relocate
   // by the firmware; the entry applies the image's own relative relocations and refuses any other kind.
   const layer = readFileSync(join(os, 'boot', 'src', 'arch', 'riscv64.rs'), 'utf8')

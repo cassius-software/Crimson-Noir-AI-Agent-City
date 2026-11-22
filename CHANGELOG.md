@@ -23,8 +23,12 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`tools/build/current.mjs` `choose`, `pick --tested --attempt`), and builds that commit when GitHub's answer for
   the run says ci, finished and passed on main in this repository. When the answer says anything else, the newest
   commit the list shows is built all the same, with a warning, and the run is red, not green, when that builds
-  nothing. The other cause, the web workflow publishing a tested commit only while it is main's tip, is not changed
-  here and follows in its own change.
+  nothing. The other cause was the web workflow publishing a tested commit only while it was main's tip: on a day of
+  merges the tip is seldom the commit a ci run just passed on, so the copy waited for a later run that might fail or
+  be hours away. `web.yml` now takes its commit from the same tool (`current.mjs web-pick`): the newest commit on
+  main that ci passed on, the tip or not, asked again just before the deploy (`web-confirm`), where a copy that a
+  newer green commit has overtaken stops, so the copy never steps back. A run by hand publishes that same commit;
+  with "tip" ticked it publishes main as it is, as a run by hand did before.
   The web copy now says which commit it is: each publish by `web.yml` puts `build.json` beside the page (commit,
   version, the build's name, the ci run and the publishing run; `tools/web/pwa.mjs`), outside the page, the worker's
   copy and the build's name, so the same page is still the same build byte for byte. A new workflow, `sync`
@@ -33,7 +37,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   any required target, the tag `current`, a recorded file's size or SHA-256, or the disk GUID inside a UEFI disk
   image (which `build-image.sh` derives from the commit) does not name the newest commit on main that ci passed on,
   unless something is still on its way to mend it (a publisher's run that has not ended, its files replaced one by
-  one among that; a publish minutes old; ci still running on a newer commit). A publisher's run that ended having
+  one among that; a publish minutes old; or, for what has never been published at all, such as a copy from before
+  copies were stamped or a target new to the build matrix, ci still running on a newer commit, since that arrives
+  with the first publish of a commit that has it). A publisher's run that ended having
   built nothing is its answer, so the look that run's end starts is red at once. Main's newest green commit, the web
   copy or the release unread after three tries is red too; a disk image unread is a warning. It mends nothing by
   itself: its red lines say which workflow to run by hand. A unit test now holds the product's version equal wherever it is typed again
@@ -43,9 +49,9 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `ad3b3b9`, read from the release, being the one that commit derives, and by the pull request's own `sync` run,
   which read the real site and release and said what was so: the web copy unstamped with a web run not ended, the
   downloads a commit behind with a current run not ended, both disk images read. Not yet seen: the `sync` workflow on
-  main, a publish that carries `build.json`, and the `current` workflow started by a ci run under the new rule; the
-  first web copy published after this change is the first with a stamp, and until then the check reports the web
-  copy as unstamped.
+  main, a publish that carries `build.json`, and the `web` and `current` workflows started by a ci run under the new
+  rule (a pull request cannot start them); the first web copy published after this change is the first with a stamp,
+  and until then the check reports the web copy as unstamped, waiting while ci runs on the merge.
 - **Crimson Noir OS boots on riscv64 (`uefi-riscv64`), the build matrix's tenth target.** Rust has no riscv64 UEFI
   target and its linker writes no RISC-V PE file, so the boot crate is built for the bare-metal target
   `riscv64gc-unknown-none-elf`, linked position-independent at address 0 (`crimson_noir_os/boot/riscv64.ld`) and
@@ -67,8 +73,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (`SELFTEST PASS`, the tutorial passed, `golden` matched, powered off), the ISO to the self-test, a second clean bake
   byte for byte, a forced breakpoint and a forced bad load on the fault screen, the terminal's 640 by 360 picture
   pixel for pixel the x86-64 image's, and the x86-64 and aarch64 images through the same boot test after the change
-  (the x86-64 application's bytes are the ones main builds). Not booted on RISC-V hardware, where the screen needs a
-  firmware that offers the graphics output protocol; a riscv64 build of the page's desktop app is not part of this.
+  (the x86-64 application's bytes are the ones main builds). An independent review of this change found five small
+  faults, fixed with it and changing no byte of the image: the linker script reached a hosted riscv64 build too (the
+  workspace's tests on a RISC-V Linux machine would not have linked); on OpenSBI each log line ends CR CR LF, which
+  the source now says and `boot_test.py` folds when it prints the log; `boot_test.py` left its work folder, with the
+  firmware's variable store, behind on every run; the `sync` check would have been red from the merge until the
+  first publish of the new target (see the entry above); and three places still counted nine targets. Not booted on
+  RISC-V hardware, where the screen needs a firmware that offers the graphics output protocol; a riscv64 build of
+  the page's desktop app is not part of this.
 - **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
   commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
   `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages

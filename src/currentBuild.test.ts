@@ -1126,6 +1126,111 @@ test('pick: a run named as the one that started it is believed only as ci, finis
   } finally { console.error = error }
 })
 
+test('the web copy follows the same rule: web-pick is the newest commit ci passed on, main\'s tip or not, and web-confirm stops a copy that a newer green commit has overtaken', () => {
+  const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
+  // 21 November 2026, the other half: ci passed on c2 while main was already at c3. web.yml published only main's
+  // tip, so that run published nothing, and the copy stood at c1 behind a green run. Now c2 is published.
+  const moved = fakeGitHub([c1, c2, c3], { green: [c1, c2] })
+  const picked = c.webPick({ tested: String(ciId(c2)), nth: '1', repo: REPO }, moved.gh)
+  assert.equal(picked.sha, c2)
+  assert.equal(picked.ci, ciUrl(c2))
+  assert.equal(picked.note, `main is at ${c3}, where ci has not passed yet: ${c2}, the newest commit it passed on, is published, and the tip follows when ci passes there`)
+  assert.deepEqual(c.webConfirm({ picked: c2, repo: REPO }, moved.gh), { deploy: true })
+  assert.deepEqual(moved.s.writes, [], 'both only read')
+  // The tip itself green: that commit, and nothing to say.
+  const tip = fakeGitHub([c1, c2], { green: [c1, c2] })
+  assert.deepEqual(c.webPick({ tested: String(ciId(c2)), repo: REPO }, tip.gh), { sha: c2, ci: ciUrl(c2), note: '' })
+  // ci's list trailing the run that started this one, as on that day: the run's own answer counts, at the pick and
+  // again at the deploy, where a list that shows only an older commit is no reason to hold the copy back.
+  const lag = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+  const seen = c.webPick({ tested: String(ciId(c2)), repo: REPO }, lag.gh)
+  assert.equal(seen.sha, c2)
+  assert.match(seen.note, new RegExp(`^ci's list of runs does not show run ${ciId(c2)} yet; GitHub's answer for that run says it passed on ${c2}, which is published$`))
+  assert.deepEqual(c.webConfirm({ picked: c2, repo: REPO }, lag.gh), { deploy: true })
+  const empty = fakeGitHub([c1, c2], { green: [c2], listed: [] })
+  assert.equal(c.webPick({ tested: String(ciId(c2)), repo: REPO }, empty.gh).sha, c2)
+  assert.deepEqual(c.webConfirm({ picked: c2, repo: REPO }, empty.gh), { deploy: true }, 'a list that shows nothing yet')
+  // A run by hand names no run: the list's newest. A burst: the list's newer commit, whichever run started this one.
+  assert.equal(c.webPick({ repo: REPO }, moved.gh).sha, c2)
+  const burst = fakeGitHub([c1, c2, c3], { green: [c1, c2, c3] })
+  assert.equal(c.webPick({ tested: String(ciId(c2)), repo: REPO }, burst.gh).sha, c3)
+  // It never steps back: between the pick and the deploy ci passed on a newer commit, or someone re-ran an old run's
+  // failed jobs, which keeps the old pick. That commit's own run publishes it; this one stops, and says so.
+  const overtaken = c.webConfirm({ picked: c2, repo: REPO }, burst.gh)
+  assert.equal(overtaken.deploy, false)
+  assert.equal(overtaken.unsure, undefined)
+  assert.equal(overtaken.why, `built ${c2}, but ci has since passed on ${c3}, which is newer: that commit's own run publishes it, and the copy never steps back`)
+  // No commit ci passed on: nothing is published; red only when the run that started this one was not confirmed.
+  const none = fakeGitHub([c1, c2], { green: [] })
+  assert.deepEqual(c.webPick({ repo: REPO }, none.gh), { skip: 'ci has not passed on any commit on main: nothing is published' })
+  const failed = c.webPick({ tested: String(ciId(c2)), repo: REPO }, none.gh)
+  assert.equal(failed.unconfirmed, true)
+  assert.match(failed.skip, /^the ci run that started this run is not taken as a pass on main \(GitHub says run \d+ is \.github\/workflows\/ci\.yml, completed, failure, .*\), and ci's list shows no commit on main it passed on: nothing is published, /)
+  // A run not confirmed while the list has a green commit: that commit, with a warning.
+  const doubted = c.webPick({ tested: String(ciId(c3)), repo: REPO }, moved.gh)
+  assert.equal(doubted.sha, c2)
+  assert.match(doubted.warn, new RegExp(`^the ci run that started this run is not taken as a pass on main \\(.*\\); ${c2}, the newest commit ci's list of runs shows, is published all the same$`))
+  // GitHub cannot order the two commits: not a yes. Nothing goes up, and the run is red.
+  burst.s.fail = (argv) => (argv[argv.length - 1] === `repos/${REPO}/compare/${c2}...${c3}?per_page=1` ? { ok: true, out: JSON.stringify({ status: 'diverged' }), err: '' } : null)
+  const unsure = c.webConfirm({ picked: c2, repo: REPO, wait: 0 }, burst.gh)
+  assert.equal(unsure.deploy, false)
+  assert.equal(unsure.unsure, true)
+  assert.match(unsure.why, /^GitHub could not say which is newer, /)
+  assert.deepEqual(c.webConfirm({ picked: 'main', repo: REPO }, moved.gh), { deploy: false, why: 'not a commit: main', unsure: true })
+
+  // The command line, as web.yml reads it: outputs on stdout, the reasons on stderr, red for an unanswered question.
+  const out: string[] = []
+  const err: string[] = []
+  const [log, error] = [console.log, console.error]
+  console.log = (...a: unknown[]) => { out.push(a.join(' ')) }
+  console.error = (...a: unknown[]) => { err.push(a.join(' ')) }
+  try {
+    assert.equal(c.main(['web-pick', '--tested', String(ciId(c2)), '--attempt', '1', '--repo', REPO], moved.gh), 0)
+    assert.deepEqual(out.splice(0), [`sha=${c2}\nci=${ciUrl(c2)}`])
+    assert.match(err.splice(0).join('\n'), /^::notice::main is at /)
+    assert.equal(c.main(['web-pick', '--repo', REPO], none.gh), 0, 'nothing green: nothing published, and not red by itself')
+    assert.deepEqual(out.splice(0), [])
+    assert.match(err.splice(0).join('\n'), /^::notice::ci has not passed on any commit on main/)
+    assert.equal(c.main(['web-pick', '--tested', String(ciId(c2)), '--repo', REPO], none.gh), 1, 'the run that started it was not a pass, and nothing else is green')
+    assert.match(err.splice(0).join('\n'), /^::error::the ci run that started this run is not taken as a pass on main/)
+    assert.equal(c.main(['web-confirm', '--sha', c2, '--repo', REPO], moved.gh), 0)
+    assert.deepEqual(out.splice(0), ['deploy=true'])
+    burst.s.fail = null
+    assert.equal(c.main(['web-confirm', '--sha', c2, '--repo', REPO], burst.gh), 0, 'overtaken: nothing to deploy, and that is not a failure')
+    assert.deepEqual(out.splice(0), [], 'no deploy=true, so the deploy step is skipped')
+    assert.match(err.splice(0).join('\n'), /^::notice::built [0-9a-f]{40}, but ci has since passed on /)
+    assert.equal(c.main(['web-confirm', '--sha', 'main', '--repo', REPO], moved.gh), 1)
+    assert.deepEqual(out.splice(0), [])
+    assert.match(err.splice(0).join('\n'), /^::error::not a commit: main$/)
+  } finally { console.log = log; console.error = error }
+})
+
+test('web.yml asks the tool at both ends: web-pick with the run that started it, web-confirm before the deploy; by hand it is the newest green commit unless "tip" is ticked', () => {
+  const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
+  const job = (name: string) => (yml.split(new RegExp(`^ {2}${name}:$`, 'm'))[1] ?? '').split(/^ {2}[a-z-]+:$/m)[0]
+  const tool = /- uses: actions\/checkout@v4\n {8}with:\n {10}persist-credentials: false\n {10}sparse-checkout: tools\n {6}- uses: actions\/setup-node@v4\n {8}with:\n {10}node-version: '22'\n/
+  const pick = job('pick')
+  // The tool comes from the workflow's own commit, a checkout of tools/ alone (it loads from that: see below).
+  assert.match(pick, tool)
+  assert.match(pick, /\n {10}STARTED_BY: \$\{\{ github\.event\.workflow_run\.id \}\}\n {10}STARTED_ATTEMPT: \$\{\{ github\.event\.workflow_run\.run_attempt \}\}\n {10}TIP: \$\{\{ inputs\.tip \}\}\n/)
+  assert.match(pick, /\n {12}args=\(--tested "\$STARTED_BY" --attempt "\$STARTED_ATTEMPT"\)\n/)
+  assert.match(pick, /\n {10}node tools\/build\/current\.mjs web-pick "\$\{args\[@\]\}" \| tee -a "\$GITHUB_OUTPUT"\n/)
+  assert.match(pick, /\n {6}sha: \$\{\{ steps\.pick\.outputs\.sha \}\}\n {6}ci: \$\{\{ steps\.pick\.outputs\.ci \}\}\n/)
+  // By hand: on main alone; the tip as it is only when asked for in so many words, and never from a ci event.
+  assert.match(yml, /\n {2}workflow_dispatch:\n {4}inputs:\n {6}tip:\n {8}description: [^\n]+\n {8}type: boolean\n {8}default: false\n/)
+  assert.match(pick, /\n {10}if \[ "\$EVENT" = workflow_dispatch \]; then\n {12}\[ "\$GITHUB_REF" = refs\/heads\/main \] \|\| \{ echo "::error::run it on main: the web copy follows main alone"; exit 1; \}\n {12}if \[ "\$TIP" = true \]; then\n/)
+  assert.equal(pick.split('echo "sha=').length - 1, 1, 'one place names a commit without asking the tool: main as it is, by hand')
+  assert.doesNotMatch(yml, /\$tip\b|git\/ref\/heads\/main/, 'the workflow no longer asks for main\'s tip itself')
+  // Before the deploy the question is asked again, by the same tool, and the deploy step waits on its answer.
+  const deploy = job('deploy')
+  assert.match(deploy, tool)
+  assert.match(deploy, /\n {10}if \[ "\$EVENT" = workflow_dispatch \] && \[ "\$TIP" = true \]; then\n {12}echo "deploy=true" >> "\$GITHUB_OUTPUT"\n {12}exit 0\n {10}fi\n {10}node tools\/build\/current\.mjs web-confirm --sha "\$PICKED" \| tee -a "\$GITHUB_OUTPUT"\n/)
+  assert.match(deploy, /\n {6}- id: deployment\n {8}if: steps\.tip\.outputs\.deploy == 'true'\n {8}uses: actions\/deploy-pages@v4\n/)
+  assert.ok(deploy.indexOf('web-confirm') < deploy.indexOf('actions/deploy-pages@v4'))
+  // The copy is stamped with the ci run that passed on the commit published, which need not be the run that started this one.
+  assert.match(job('build'), /\n {10}BUILD_CI: \$\{\{ needs\.pick\.outputs\.ci \}\}\n/)
+})
+
 test('the command line: pick prints the outputs or nothing, --strict fails a refused commit; publish exits 1 when a required target failed (after publishing the rest) and 0 when only the iOS build did', () => {
   const t = scratch()
   const out: string[] = []

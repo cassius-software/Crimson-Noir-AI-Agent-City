@@ -125,7 +125,7 @@ The core crate's modules:
 | `config.rs` | The configuration parser, validator, lock and generator |
 | `matrix.rs` | The Global Matrix, the world, spawning and the scripted self-test run |
 | `kernels.rs` | The branch-free hot path: the scalar reference tick, the SIMD tick (four agents a register), the relaxation and the sorting network's comparator |
-| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on x86_64, plain lane loops on both UEFI targets |
+| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on a hosted x86_64, plain lane loops in all three images (the x86-64 one builds with SSE off) |
 | `sort.rs` | The bitonic network and its 0-1 proof |
 | `render.rs` | The integer-only rasterizer |
 | `scene.rs` | The room, built from the matrix |

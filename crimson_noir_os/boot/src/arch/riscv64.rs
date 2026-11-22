@@ -179,7 +179,10 @@ fn serial_read() -> Option<u8> {
     }
 }
 
-/// The serial line as a `core::fmt::Write` (newlines sent as CR LF).
+/// The serial line as a `core::fmt::Write`. A newline is sent as CR LF, as on the other machines, so the line reads
+/// right through an SBI that passes bytes on untouched. OpenSBI (the SBI under QEMU's `virt` machine, and under most
+/// boards) puts a CR before every LF itself, so there the line carries CR CR LF: a terminal shows it the same, and
+/// tools/boot_test.py folds it when it prints the log.
 pub struct Serial;
 
 impl Write for Serial {

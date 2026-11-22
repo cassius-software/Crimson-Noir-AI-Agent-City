@@ -26,6 +26,12 @@
  *   the exit is 1, because the commit that run passed on may have been passed over. When GitHub cannot say whether a
  *   commit is on main, or which of two green commits is the newer, it exits 1 rather than pass a commit over.
  *   `--strict` exits 1 when refused (not on main, nothing green), for a run by hand.
+ * - `web-pick [--tested <ci run id> [--attempt <n>]]` and `web-confirm --sha <commit>`: the same rule for the web copy
+ *   (web.yml), so the copy and the downloads are built from one commit. `web-pick` prints `sha=` and `ci=` for the
+ *   newest commit on main that ci passed on, whether or not it is main's tip; `web-confirm`, run just before the
+ *   deploy, prints `deploy=true` unless ci's list by then shows a newer commit passed (that commit's own run
+ *   publishes it, and a re-run of an old run's jobs cannot put an older copy back). Each exits 1 when GitHub leaves
+ *   the question unanswered.
  * - `publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move]
  *   [--summary <file>] [--dry-run] [--reused-pick]`:
  *   <dir> holds the run's artifacts, one folder each (`matrix-<id>`, and `windows-installer-*`, `windows-msi-*`,
@@ -670,6 +676,47 @@ export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5
 }
 
 /**
+ * Which commit the web copy is built from (web.yml), by the rule the downloads follow: the newest commit on main that
+ * ci passed on, the run that started this one counted by GitHub's answer for it (see choose). Not "the commit ci
+ * tested, while it is main's tip", which web.yml asked until 22 November 2026: on a day of merges the tip is seldom
+ * the commit a ci run just passed on, so the copy stood still for hours while the downloads moved on. Returns
+ * { sha, ci, note, warn } or { skip, unconfirmed }: nothing is published when ci has passed on no commit of main, and
+ * that is red when the run that started this one was not confirmed as a pass (`unconfirmed`), as in pick.
+ */
+export function webPick({ tested = '', nth = '', repo, wait = 5000 }, gh) {
+  const tip = mainTip(gh, repo)
+  const { green, lagged, why } = choose({ tested, nth, repo, wait }, gh, tip)
+  const doubt = why ? `the ci run that started this run is not taken as a pass on main (${why})` : ''
+  if (!green) {
+    return doubt
+      ? { skip: `${doubt}, and ci's list shows no commit on main it passed on: nothing is published, and the commit that run passed on may have been passed over (Actions > web > Run workflow, on main, publishes the newest commit ci's list shows)`, unconfirmed: true }
+      : { skip: 'ci has not passed on any commit on main: nothing is published' }
+  }
+  const notes = []
+  if (lagged) notes.push(`ci's list of runs does not show run ${tested} yet; GitHub's answer for that run says it passed on ${green.sha}, which is published`)
+  if (green.sha !== tip) notes.push(`main is at ${tip}, where ci has not passed yet: ${green.sha}, the newest commit it passed on, is published, and the tip follows when ci passes there`)
+  return { sha: green.sha, ci: green.ci, note: notes.join('; '), ...(doubt ? { warn: `${doubt}; ${green.sha}, the newest commit ci's list of runs shows, is published all the same` } : {}) }
+}
+
+/**
+ * Asked again just before the deploy, minutes after webPick: whether `picked` may still go up. It may unless ci's
+ * list shows a newer commit of main passed (that commit's own run publishes it; a re-run of an old run's failed jobs,
+ * which keeps the old pick, stops here, so the copy never steps back). A list that trails the run that picked shows
+ * an older commit or none, and that is no reason to hold the copy back. Returns { deploy: true } or { deploy: false,
+ * why, unsure }: `unsure` says GitHub could not order the two commits, which is red, since an unanswered question is
+ * not a yes.
+ */
+export function webConfirm({ picked, repo, wait = 5000 }, gh) {
+  if (!SHA.test(picked ?? '')) return { deploy: false, why: `not a commit: ${picked}`, unsure: true }
+  const listed = newestGreen(gh, repo, mainTip(gh, repo), { wait })
+  if (!listed || listed.sha === picked) return { deploy: true }
+  const order = compare(gh, repo, picked, listed.sha, { wait })
+  if (order === 'behind' || order === 'identical') return { deploy: true }
+  if (order === 'ahead') return { deploy: false, why: `built ${picked}, but ci has since passed on ${listed.sha}, which is newer: that commit's own run publishes it, and the copy never steps back` }
+  return { deploy: false, why: `GitHub could not say which is newer, ${picked} (built here) or ${listed.sha} (the newest commit in ci's list of runs): ${order ?? 'no answer'}; nothing is published (Actions > web > Run workflow, on main, publishes the newest commit ci passed on)`, unsure: true }
+}
+
+/**
  * Publishes (or, with dryRun, plans) the current build; see the header. Returns { status, plan, tag } where status is
  * `published`, `planned` (a dry run) or `stale` (the release already holds a newer commit: nothing written).
  */
@@ -781,12 +828,29 @@ export function main(argv, gh = realGh) {
   const flag = (name) => argv.includes(`--${name}`)
   const [cmd] = argv
   const repo = arg('repo') ?? process.env.GH_REPO
-  if (!['pick', 'publish'].includes(cmd) || flag('help')) {
-    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--tested <ci run id> [--attempt <n>]] [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
+  if (!['pick', 'publish', 'web-pick', 'web-confirm'].includes(cmd) || flag('help')) {
+    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--tested <ci run id> [--attempt <n>]] [--force] [--strict]\n       node tools/build/current.mjs web-pick [--tested <ci run id> [--attempt <n>]]\n       node tools/build/current.mjs web-confirm --sha <commit>\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
     return cmd && !flag('help') ? 1 : 0
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo ?? '')) { console.error('::error::GH_REPO (or --repo owner/name) must name the repository'); return 1 }
   try {
+    if (cmd === 'web-pick') {
+      const r = webPick({ tested: arg('tested') ?? '', nth: arg('attempt') ?? '', repo }, gh)
+      if (r.skip) {
+        console.error(`${r.unconfirmed ? '::error::' : '::notice::'}${r.skip}`)
+        return r.unconfirmed ? 1 : 0
+      }
+      if (r.warn) console.error(`::warning::${r.warn}`)
+      if (r.note) console.error(`::notice::${r.note}`)
+      console.log(`sha=${r.sha}\nci=${r.ci}`)
+      return 0
+    }
+    if (cmd === 'web-confirm') {
+      const r = webConfirm({ picked: arg('sha'), repo }, gh)
+      if (r.deploy) { console.log('deploy=true'); return 0 }
+      console.error(`${r.unsure ? '::error::' : '::notice::'}${r.why}`)
+      return r.unsure ? 1 : 0
+    }
     if (cmd === 'pick') {
       const r = pick({ sha: arg('sha'), tested: arg('tested') ?? '', nth: arg('attempt') ?? '', force: flag('force'), repo }, gh)
       if (r.skip) {

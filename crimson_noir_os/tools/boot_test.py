@@ -315,7 +315,13 @@ def main():
         except subprocess.TimeoutExpired:
             q.kill()
     print("serial log:")
-    print(open(log, errors="replace").read()[-4000:])
+    # Line ends as they came, then folded: on riscv64 the SBI adds a CR to the image's own CR LF, and read as text
+    # each CR CR LF would print as two lines.
+    text = open(log, "rb").read().decode(errors="replace").replace("\r\r\n", "\n").replace("\r\n", "\n")
+    print(text[-4000:])
+    # The work folder holds the firmware's variable store (32 or 64 MiB on the virt machines) and, unless --log says
+    # otherwise, the log just printed: nothing in it is wanted after this.
+    shutil.rmtree(work, ignore_errors=True)
     sys.exit(0 if ok else 1)
 
 

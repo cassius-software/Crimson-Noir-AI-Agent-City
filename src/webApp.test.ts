@@ -947,7 +947,7 @@ test('build.json names the commit a published copy comes from: written only when
 test('the web workflow tells the build which commit it is: the one pick chose, the ci run that passed on it and its own run', () => {
   const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
   const build = (yml.split(/^ {2}build:$/m)[1] ?? '').split(/^ {2}[a-z-]+:$/m)[0]
-  assert.match(build, /\n {8}env:\n {10}BUILD_COMMIT: \$\{\{ needs\.pick\.outputs\.sha \}\}\n {10}BUILD_CI: \$\{\{ github\.event\.workflow_run\.html_url \}\}\n {10}BUILD_RUN: \$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}\n {8}run: npm run build:web\n/)
+  assert.match(build, /\n {8}env:\n {10}BUILD_COMMIT: \$\{\{ needs\.pick\.outputs\.sha \}\}\n {10}BUILD_CI: \$\{\{ needs\.pick\.outputs\.ci \}\}\n {10}BUILD_RUN: \$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}\n {8}run: npm run build:web\n/)
   assert.equal(yml.split('BUILD_COMMIT').length - 1, 1, 'set where the page is built, and nowhere else')
   // The commit that is checked out is the commit that is named.
   assert.match(build, /- uses: actions\/checkout@v4\n {8}with:\n {10}ref: \$\{\{ needs\.pick\.outputs\.sha \}\}\n/)

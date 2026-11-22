@@ -152,14 +152,12 @@ test('21 November 2026: ci passed on a commit, the web copy took it and the down
   assert.equal(skipped.status, 'drift')
   assert.deepEqual(skipped.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: Actions > web > Run workflow, on main`])
   assert.deepEqual(judge({ ...web, tip: C2 }).problems, skipped.problems, 'main\'s tip is that commit: a run by hand mends it')
-  // Main's tip is a newer commit ci did not pass on: web.yml publishes the tip alone, by hand too, so the advice
-  // would publish an untested commit. Red all the same, with that said in the advice's place.
-  const untested = judge({ ...web, tip: C3 })
-  assert.equal(untested.status, 'drift')
-  assert.deepEqual(untested.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: ci has not passed on main's tip (${C3.slice(0, 7)}), the one commit web.yml publishes, so the web copy follows when ci passes there (a web run by hand would publish that tip untested)`])
+  // Main's tip is a newer commit ci did not pass on: since 22 November web.yml publishes the newest commit ci passed
+  // on, the tip or not, so the advice is the same, and a run by hand mends it.
+  assert.deepEqual(judge({ ...web, tip: C3 }).problems, skipped.problems)
 })
 
-test('behind is not drift while something can still mend it: a publisher\'s run that has not ended, a web copy published minutes ago, ci still running on a newer commit; each only for so long', () => {
+test('behind is not drift while something can still mend it: a publisher\'s run that has not ended, a web copy published minutes ago; each only for so long, and ci running on a newer commit mends nothing that was published before', () => {
   const behindRelease = (runs: Run[], now = at('18:00')): Verdict => {
     const release = releaseAt(C1)
     return judge({ ...inSync(), now, release, media: mediaOf(release), runs })
@@ -184,13 +182,11 @@ test('behind is not drift while something can still mend it: a publisher\'s run 
   assert.match(served.waiting[0], /\(a web run published 14 min ago, and the host may serve the copy before for ten\)$/)
   assert.equal(behindWeb({ served: at('17:45') }).status, 'drift')
   assert.equal(behindWeb({ served: null }).status, 'drift')
-  // web.yml publishes main's tip alone, so while ci runs on a newer commit the web copy waits for that one.
+  // web.yml publishes the newest commit ci passed on, the tip or not: ci still running on a newer commit is no
+  // reason for a copy of an older one to be up.
   const tip = behindWeb({ runs: [{ workflow: 'ci', created: at('17:30'), sha: C3 }] })
-  assert.equal(tip.status, 'settling')
-  assert.match(tip.waiting[0], new RegExp(`\\(ci is still running on ${C3.slice(0, 7)}, and the web copy waits for main's tip\\)$`))
-  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('13:31'), sha: C3 }] }).status, 'settling', '269 minutes')
-  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('13:30'), sha: C3 }] }).status, 'drift', '270 minutes (90 of jobs, 180 of waiting): that ci hung')
-  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('17:30'), sha: C2 }] }).status, 'drift', 'a second ci run on the very commit is not a newer one')
+  assert.equal(tip.status, 'drift')
+  assert.deepEqual(tip.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: Actions > web > Run workflow, on main`])
   // Both behind, one on its way: red for the other.
   const release = releaseAt(C1)
   const half = judge({ ...inSync(), web: { stamp: stampOf(C1), probe: cacheOf(C1) }, served: at('16:00'), release, media: mediaOf(release), runs: [{ workflow: 'current', created: at('17:30'), sha: C2 }] })
@@ -208,6 +204,51 @@ test('behind is not drift while something can still mend it: a publisher\'s run 
   assert.equal(one.problems.length, 1)
   assert.match(one.problems[0], /^the web copy is built from /)
   assert.ok(one.waiting.length > 0 && one.waiting.every((w) => w.endsWith('(ci passed 9 min ago)')), 'the downloads are still on their way')
+})
+
+test('what has never been published waits for ci on a newer commit: an unstamped copy and a target new to the tool arrive with the first publish of a commit that has them', () => {
+  // The hours after this check and a tenth target reach main: ci is still running on the merge (C3); the newest
+  // commit it passed on (C2) is from before, so its web copy carries no stamp and its release has no uefi-riscv64.
+  // Publishing C2 again would bring neither, so that is not the advice, and nothing is wrong yet.
+  const release = releaseAt(C2)
+  delete release.state.targets['uefi-riscv64']
+  release.assets = release.assets.filter((a) => !/riscv64/.test(a.name))
+  const media = mediaOf(release)
+  const ci: Run = { workflow: 'ci', created: at('17:30'), sha: C3 }
+  const first: Facts = { ...inSync(), web: { stamp: null, probe: cacheOf(C2) }, served: at('16:00'), release, media, runs: [ci] }
+  const v = judge(first)
+  assert.equal(v.status, 'settling')
+  assert.deepEqual(v.problems, [])
+  const why = `(never published yet, and ci is still running on ${C3.slice(0, 7)}: it arrives with the first publish of a commit that has it)`
+  assert.deepEqual(v.waiting, [
+    `the web copy has no build.json, so it was published before copies were stamped with their commit (or not by web.yml) ${why}`,
+    `uefi-riscv64 has no files on the release ${why}`,
+  ])
+  // Only while that ci can still end: with none running, or one that hung, or one on the green commit itself, red,
+  // with the run by hand named.
+  for (const runs of [[], [{ ...ci, created: at('13:30') }], [{ ...ci, sha: C2 }]] as Run[][]) {
+    const red = judge({ ...first, runs })
+    assert.equal(red.status, 'drift', JSON.stringify(runs))
+    assert.deepEqual(red.problems, [
+      'the web copy has no build.json, so it was published before copies were stamped with their commit (or not by web.yml): Actions > web > Run workflow, on main',
+      'uefi-riscv64 has no files on the release: Actions > current > Run workflow, on main',
+    ])
+  }
+  assert.equal(judge({ ...first, runs: [{ ...ci, created: at('13:31') }] }).status, 'settling', '269 minutes (90 of jobs, 180 of waiting): that ci can still end')
+  // Only what was never there. A target the release holds at an older commit, or a stamped copy of one, was
+  // published before and can be again: red, ci running or not.
+  const older = releaseAt(C2)
+  older.state.targets['uefi-riscv64'] = { ...older.state.targets['uefi-riscv64'], commit: C1 }
+  const stale = judge({ ...inSync(), release: older, media: mediaOf(older), runs: [ci] })
+  assert.equal(stale.status, 'drift')
+  assert.match(stale.problems[0], new RegExp(`^uefi-riscv64 is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: Actions > current > Run workflow, on main`))
+  // And never the best-effort build, which is a warning either way.
+  const noIos = releaseAt(C2)
+  delete noIos.state.targets['ios-ipa']
+  noIos.assets = noIos.assets.filter((a) => !/ios/i.test(a.name))
+  const ios = judge({ ...inSync(), release: noIos, media: mediaOf(noIos), runs: [ci] })
+  assert.equal(ios.status, 'in-sync')
+  assert.deepEqual(ios.warnings, ['ios-ipa has no files on the release (best effort: it never turns a publish red)'])
 })
 
 test('a web copy without its stamp, or whose build.txt and build.json name two builds, is behind; a missing release too', () => {
@@ -677,12 +718,12 @@ test('the look a publisher\'s end starts sees that publisher\'s answer: a curren
   assert.equal(s.verdict(await s.gather({ repo: REPO, now: at('17:02'), wait: 0 }, early.gh, early.get)).status, 'settling')
 })
 
-test('a web run that passed is a publish only when its deploy step ran: one that found main had moved on published nothing, and the look its end starts is red, not "served minutes ago"', async () => {
+test('a web run that passed is a publish only when its deploy step ran: one whose deploy was skipped published nothing, and the look its end starts is red, not "served minutes ago"', async () => {
   const run = (id: number, begun: string, ended: string) => ({ id, status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C2, run_started_at: at(begun), created_at: at(begun), updated_at: at(ended) })
   const behind = { site: { 'build.txt': { status: 200, body: `${cacheOf(C1)}\n` }, 'build.json': { status: 200, body: JSON.stringify(stampOf(C1)) } }, media: bothImages(C2) }
-  // ci passed on C2 at 17:00. Its web run waited for a runner, found main at C3 (where ci failed), published nothing
-  // and ended green at 17:30. Nothing is on its way: red at the look that run's end starts, with why a run by hand
-  // would not mend it.
+  // ci passed on C2 at 17:00. Its web run ended green at 17:30 without its deploy step (as a run does that finds a
+  // newer commit passed meanwhile, or as runs did before 22 November when main had moved on). Nothing is on its
+  // way: red at the look that run's end starts, with the run by hand that mends it.
   for (const jobs of [MOVED_ON, DECLINED]) {
     const w = world({ ...behind, history: [C1, C2, C3], runs: { web: [run(97, '17:00', '17:30')] }, jobs: { 97: jobs } })
     const io = standIns(w)
@@ -690,7 +731,7 @@ test('a web run that passed is a publish only when its deploy step ran: one that
     assert.equal(f.served, null)
     const v: Verdict = s.verdict(f)
     assert.equal(v.status, 'drift')
-    assert.deepEqual(v.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: ci has not passed on main's tip (${C3.slice(0, 7)}), the one commit web.yml publishes, so the web copy follows when ci passes there (a web run by hand would publish that tip untested)`])
+    assert.deepEqual(v.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: Actions > web > Run workflow, on main`])
   }
   // The same run, having published: the host may serve the copy before for ten minutes, so that settles.
   const did = standIns(world({ ...behind, runs: { web: [run(97, '17:00', '17:30')] } }))

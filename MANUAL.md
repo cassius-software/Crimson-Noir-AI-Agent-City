@@ -4958,8 +4958,9 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   run that built nothing at once); a run of the publisher has not ended (GitHub gives a run's creation alone, so a
   run counts while it is younger than its jobs' limits and three hours of waiting for runners: 3 hours 35 minutes
   for web, 5 hours 25 minutes for current); the web copy was published less than fifteen minutes ago, by a web run
-  whose deploy step ran (GitHub Pages may serve the copy before for ten); or, for the web copy alone, ci is still
-  running on a newer commit (the web workflow publishes main's tip alone, so it waits for that one). While a
+  whose deploy step ran (GitHub Pages may serve the copy before for ten); or the thing has never been published at
+  all (a copy from before copies were stamped, a target new to the build matrix) and ci is still running on a newer
+  commit, since it arrives with the first publish of a commit that has it. While a
   current run has not ended, a file that is not yet the one the record names is behind too, not broken: a publish
   moves the tag, then replaces each file under its own name, and writes the record last. Otherwise each thing that
   is behind is one red line with the commit it is at and what to do, and when main's newest green commit, the web
@@ -4971,10 +4972,10 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   table of every published thing and its commit.
   It runs after each run of web or current on main, every hour (GitHub may start a scheduled run late), and by hand
   (Actions > sync > Run workflow); it only reads, with read access alone. It mends nothing by itself: a red run says
-  which publisher to run by hand. One case it reports and cannot advise away: when ci has passed on a commit and
-  failed on a newer one at main's tip, the downloads follow the green commit and the web copy waits for the tip, so
-  the two stay apart, in red, until ci passes on main's tip. Not yet seen: the workflow on main (its first runs are
-  this change's own pull request, which only reports).
+  which publisher to run by hand. Both publishers follow one rule, the newest commit on main that ci passed on,
+  main's tip or not (`tools/build/current.mjs`: `pick` for the downloads, `web-pick` for the web copy), so a commit
+  ci failed on at the tip holds neither of them back. Not yet seen: the workflow on main (its first runs are this
+  change's own pull request, which only reports).
 - **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
   everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
   notes it would write, and the log what it would upload, keep and delete.
@@ -5042,12 +5043,16 @@ by `tools/web/pwa.mjs`:
 Serve the folder over https, open the address in Safari, then Share > Add to Home Screen: the city opens full screen
 from its icon, with the touch controls (Controls). Two ways to serve it:
 - **GitHub Pages (a public address).** Once, in GitHub: the repository's Settings > Pages > Source: GitHub Actions.
-  From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the commit ci
-  tested, and only while it is still main's tip, so during a burst of merges it publishes once, after the last one's
-  ci passes, and never a commit ci has not passed. Actions > web > Run workflow publishes main by hand, without
-  waiting for ci. Each publish puts `build.json` beside the page: the commit the copy is built from, the version, the
-  build's name as `build.txt` gives it, the ci run that passed on that commit (empty for a run by hand) and the run
-  that published it. The page and its worker never read it and the worker never keeps it (it always comes from the
+  From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the newest commit
+  on main that ci passed on, whether or not main has moved on since (`tools/build/current.mjs web-pick`, the rule
+  the downloads follow; until 22 November 2026 only main's tip was published, and on a day of merges the copy stood
+  still for hours behind commits ci had passed). Just before the deploy it asks again (`web-confirm`): when ci has
+  since passed on a newer commit, that commit's own run publishes it and this one stops, so the copy never steps
+  back and never shows a commit ci has not passed. Actions > web > Run workflow, on main, publishes the same
+  commit by hand; with "tip" ticked it publishes main as it is, without waiting for ci, for the day ci itself is
+  what is broken. Each publish puts `build.json` beside the page: the commit the copy is built from, the version, the
+  build's name as `build.txt` gives it, the ci run that passed on that commit (empty for a run by hand with "tip")
+  and the run that published it. The page and its worker never read it and the worker never keeps it (it always comes from the
   network), and it is no part of the build's name, so the same page is the same build whatever it says; a build made
   on your own machine has none. It is what the `sync` workflow reads to tell whether the web copy and the downloads
   come from one commit (The current build, In step with the web copy). The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
