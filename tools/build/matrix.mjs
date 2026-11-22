@@ -167,6 +167,72 @@ export function macEnv() {
   }
 }
 
+/** Where Tauri leaves the macOS bundles: `macos/<name>.app` and, moved there once it is whole, `dmg/<name>.dmg`. */
+const macBundle = (...parts) => join(ROOT, 'src-tauri', 'target', TRIPLES.macUniversal, 'release', 'bundle', ...parts)
+
+/**
+ * Whether the macOS bundle step stopped at its disk image: an .app made since `began` (ms) and no .dmg in the dmg
+ * folder. Tauri bundles the .app first and the .dmg last, with a script (bundle_dmg.sh, run in the .app's folder)
+ * that copies the .app into a writable image `rw.<pid>.<name>.dmg`, mounts it, unmounts it (three tries, about six
+ * seconds of patience) and compresses it; only a whole .dmg is moved into the dmg folder, which Tauri empties before
+ * each try. A failed compile leaves no new .app, so it is not this, and is not tried again.
+ */
+export function dmgAlone({ began = 0, apps = macBundle('macos'), dmgs = macBundle('dmg') } = {}) {
+  const names = (dir) => (existsSync(dir) ? readdirSync(dir) : [])
+  // Two seconds of grace: a file system may keep a folder's time to the second.
+  const fresh = names(apps).some((n) => n.endsWith('.app') && statSync(join(apps, n)).mtimeMs >= began - 2000)
+  return fresh && !names(dmgs).some((n) => n.endsWith('.dmg'))
+}
+
+/**
+ * Why the macOS bundle step is run again (the warning's words). Seen once on a hosted Mac (run 44983349249): the
+ * script failed eleven seconds in, before its long compression, and left an image attached, while the same commit's
+ * other macOS build passed. Tauri prints nothing of the script unless it is verbose, so the later tries are.
+ */
+export const DMG_WHY = 'the .app is made and the .dmg is not, as a hosted Mac does now and then to a disk image it has only just made'
+
+/**
+ * The disk images `hdiutil info` lists as attached whose file lies under one of `under` (folders), each with its
+ * device: what a failed .dmg step can leave behind. hdiutil prints one block per image between lines of `=`, with
+ * `image-path : <file>` and then the image's devices, one a line, `/dev/diskN` first. Pure, so that reading is pinned.
+ */
+export function leftImages(info, under) {
+  const roots = under.map((u) => (u.endsWith('/') ? u : `${u}/`))
+  const out = []
+  for (const block of String(info).split(/^=+[ \t]*$/m)) {
+    const image = /^image-path\s*:\s*(.+?)\s*$/m.exec(block)?.[1]
+    const dev = /^(\/dev\/disk\d+)(?=\s|$)/m.exec(block)?.[1]
+    if (image && dev && roots.some((r) => image.startsWith(r))) out.push({ image, dev })
+  }
+  return out
+}
+
+/** The working images a failed .dmg step leaves beside the .app: `rw.<pid>.<name>.dmg`. */
+export const isWorkingImage = (name) => /^rw\.\d+\..+\.dmg$/.test(name)
+
+/**
+ * Before the macOS bundle step is run again: an image the failed try left attached is named and detached, and its
+ * working file beside the .app (as large as the app) is removed, so the next try starts with nothing of the last one
+ * mounted or kept. On another system it does nothing; with nothing left it says so.
+ */
+function detachLeft(say = console.log) {
+  if (process.platform !== 'darwin') return
+  const bundle = macBundle()
+  const info = run('hdiutil', ['info'], { capture: true })
+  if (!info.ok) say(`    hdiutil info did not run (${(info.err || info.out).trim() || 'no reason given'}): nothing is detached`)
+  const left = info.ok ? leftImages(info.out, [bundle, join('/private', bundle)]) : []
+  if (info.ok && left.length === 0) say('    no disk image of the failed try is still attached')
+  for (const { image, dev } of left) {
+    const r = run('hdiutil', ['detach', dev, '-force'], { capture: true })
+    say(r.ok ? `    the failed try left ${basename(image)} attached at ${dev}: detached` : `    the failed try left ${basename(image)} attached at ${dev}, and it would not detach: ${(r.err || r.out).trim()}`)
+  }
+  const apps = macBundle('macos')
+  for (const n of existsSync(apps) ? readdirSync(apps).filter(isWorkingImage) : []) {
+    rmSync(join(apps, n), { force: true })
+    say(`    removed the working image ${n}`)
+  }
+}
+
 /**
  * The macOS build: the runner compiled into both slices of the universal binary (Metal on Apple silicon, the processor
  * alone on Intel: macEnv), the model and its licence checked present, the .app and the .dmg with the model, then the
@@ -177,7 +243,10 @@ function macPlan() {
   return [
     ...modelNeeds(),
     rustupTarget(TRIPLES.macArm64, TRIPLES.macX64),
-    { ...tauri('build', '--config', NO_PAGE_BUILD, '--config', MODEL_CONFIG, '--features', 'native-runner', '--target', TRIPLES.macUniversal, '--bundles', 'app,dmg'), env: macEnv() },
+    {
+      ...tauri('build', '--config', NO_PAGE_BUILD, '--config', MODEL_CONFIG, '--features', 'native-runner', '--target', TRIPLES.macUniversal, '--bundles', 'app,dmg'),
+      env: macEnv(), again: 2, when: dmgAlone, why: DMG_WHY, mend: detachLeft, louder: ['--verbose'],
+    },
     { kind: 'tidy', paths: () => [join(release(TRIPLES.macArm64), 'models'), join(release(TRIPLES.macX64), 'models')], what: 'the copies of the model beside each slice\'s binary' },
   ]
 }
@@ -338,8 +407,30 @@ function tauriInit(platform) { return step(process.execPath, [npmCli(), 'run', '
  * leaves that target's download a commit behind. A build that is really broken fails each time, and so still fails.
  */
 function fetches(s, again = 1) { return { ...s, again } }
-/** How long a step that downloads waits before it is run again, ms. */
+/** How long a step waits before it is run again, ms. */
 export const AGAIN_MS = 60_000
+/** Why a step that downloads is run again (the warning's words). */
+const FETCH_WHY = 'it downloads as it runs'
+
+/**
+ * Runs a step, and runs it again while it fails and may be: `again` more times at most, a pause before each, and
+ * only while `when` (if the step has one; it is told when the step began) says the failure is the kind another try
+ * can mend. Before each new try the step's `mend` clears what the last one left, and the try takes the step's
+ * `louder` arguments as well, so a failure that stays says more about itself than the first did. `once(argv)` runs
+ * the step and answers `{ ok }`; what the last try answered is returned, so a failure that stays is still the
+ * target's.
+ */
+export function tried(s, once, { id = '', pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), say = console.log, now = Date.now } = {}) {
+  const began = now()
+  let r = once(s.argv)
+  for (let left = s.again ?? 0; !r.ok && left > 0 && (s.when?.({ began }) ?? true); left--) {
+    say(`::warning::${id}: ${show(s.cmd, s.argv, s.cwd)} failed; ${s.why ?? FETCH_WHY}, so it is run again in ${AGAIN_MS / 1000} s (${left} more ${left === 1 ? 'try' : 'tries'})`)
+    s.mend?.(say)
+    pause(AGAIN_MS)
+    r = once(s.louder ? [...s.argv, ...s.louder] : s.argv)
+  }
+  return r
+}
 function rustupTarget(...triples) { return fetches(step('rustup', ['target', 'add', ...triples]), 2) }
 
 /** Moves a file, by renaming it where both paths are on one file system and by copying and deleting it elsewhere. */
@@ -569,14 +660,8 @@ export function main(argv) {
           console.log(`  ${show(s.cmd, s.argv, s.cwd)}`)
           for (const [k, v] of Object.entries(s.env ?? {})) console.log(`    with ${k}=${v}`)
           if (dryRun) continue
-          const once = () => run(s.cmd, s.argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } })
-          let r = once()
-          // A step that downloads is run again before it fails the target (fetches above).
-          for (let left = s.again ?? 0; !r.ok && left > 0; left--) {
-            console.log(`::warning::${t.id}: ${show(s.cmd, s.argv, s.cwd)} failed; it downloads as it runs, so it is run again in ${AGAIN_MS / 1000} s (${left} more ${left === 1 ? 'try' : 'tries'})`)
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, AGAIN_MS)
-            r = once()
-          }
+          // A step that downloads, and the macOS bundle step, are run again before they fail the target (tried).
+          const r = tried(s, (argv) => run(s.cmd, argv, { cwd: s.cwd ?? ROOT, env: { ...process.env, ...(s.env ?? {}) } }), { id: t.id })
           if (!r.ok) throw new Error(`${show(s.cmd, s.argv, s.cwd)} failed`)
         } else if (s.kind === 'need') {
           console.log(`  need ${relative(ROOT, s.path)}`)

@@ -2900,6 +2900,18 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   packages) and runs such a step again a minute later, once (rustup twice), before the target fails; a build that is
   really broken fails each time and still fails. Pinned in `buildMatrix.test.ts`. Not yet seen to rescue a build:
   no package host has refused one since.
+- **The macOS build makes its disk image again when a try leaves it unmade.** On 2026-11-22 one of the two macOS
+  builds of one commit failed (`matrix / macos-universal`, run 44983349249) while the other passed: Tauri's
+  `bundle_dmg.sh` stopped eleven seconds in, before its long compression, Tauri printed only that the script failed
+  (it prints the script's own words only when verbose), and the job's cleanup found a `diskimages-helper` still
+  running, which is a disk image left attached. The script fills a writable image, mounts it, and gives up when it
+  will not unmount within three tries, about six seconds; that is the likeliest reading of those eleven seconds, and
+  it is not proved, since the script's words were not kept. `tools/build/matrix.mjs` now runs the macOS bundle step
+  again, a minute later and up to twice, only when the `.app` is new and no `.dmg` was made (`dmgAlone`: a failed
+  compile is not tried again). Before each new try it detaches the image the failed one left attached (`hdiutil
+  info`, read by `leftImages`) and removes that image's working file beside the `.app`; the new tries are verbose, so
+  a failure that stays says why. One loop (`tried`) now runs these and the downloading steps. Pinned in
+  `buildMatrix.test.ts`, in Node. Not verified on a Mac: no build there has needed a second try since.
 - **The current downloads say what an iPhone should use.** The release notes said of the `.ipa` only that it "must be
   re-signed", and its row read like an iPhone build. They now carry a line of their own: on an iPhone or iPad, open
   the web copy in Safari (iOS 26 or newer); the `.ipa` is unsigned, no iPhone installs it as it is, and it is a build

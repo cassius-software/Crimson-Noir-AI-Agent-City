@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -31,7 +31,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const SCRIPT = join(ROOT, 'tools', 'build', 'matrix.mjs')
 const WORKFLOW = readFileSync(join(ROOT, '.github', 'workflows', 'build-matrix.yml'), 'utf8')
 
-interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string; again?: number }
+interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string; again?: number; when?: (at: { began: number }) => boolean; why?: string; mend?: (say: (line: string) => void) => void; louder?: string[] }
 interface Target { id: string; artifact: string; hosts: string[]; arch?: string; tools?: string[]; env?: string[]; unsupported?: string; note?: string; plan?: (ctx: object) => Step[] }
 interface Host { platform: string; arch: string; env: Record<string, string>; has: (cmd: string) => boolean }
 
@@ -53,15 +53,25 @@ test('the nine targets, in the order the plan names them, each saying what it ma
   assert.ok(Object.isFrozen(TARGETS))
 })
 
-test('a step that downloads is run again before it fails its target: rustup\'s targets and the two mobile builds, and nothing else', () => {
+test('a step that downloads is run again before it fails its target: rustup\'s targets and the two mobile builds; so is the macOS bundle step, and nothing else', () => {
   const again: string[] = []
   for (const t of TARGETS) {
     if (!t.plan) continue
     for (const s of t.plan(CTX)) {
       if (s.kind !== 'run') continue
       const downloads = s.cmd === 'rustup' || ((t.id === 'android-apk' || t.id === 'ios-ipa') && s.argv?.[2] === 'build')
-      assert.equal(s.again, downloads ? (s.cmd === 'rustup' ? 2 : 1) : undefined, `${t.id}: ${s.cmd} ${s.argv?.slice(1, 4).join(' ')}`)
+      const image = t.id === 'macos-universal' && s.argv?.[1] === 'build'
+      assert.equal(s.again, downloads ? (s.cmd === 'rustup' ? 2 : 1) : image ? 2 : undefined, `${t.id}: ${s.cmd} ${s.argv?.slice(1, 4).join(' ')}`)
       if (downloads) again.push(`${t.id}: ${s.cmd === 'rustup' ? 'rustup' : s.argv![1]}`)
+      // Only the macOS step is tried again on a condition, mended first and louder after: a download just runs again.
+      assert.equal(typeof s.when, image ? 'function' : 'undefined', t.id)
+      assert.equal(typeof s.mend, image ? 'function' : 'undefined', t.id)
+      assert.deepEqual(s.louder, image ? ['--verbose'] : undefined, t.id)
+      assert.equal(s.why, image ? m.DMG_WHY : undefined, t.id)
+      if (image) {
+        assert.equal(s.when, m.dmgAlone)
+        assert.ok(s.argv!.includes('app,dmg'), 'the step that makes the .dmg')
+      }
     }
   }
   // A package host that answered 429 once failed the Android build: both mobile builds, and every target rustup adds.
@@ -69,8 +79,157 @@ test('a step that downloads is run again before it fails its target: rustup\'s t
   assert.ok(again.includes('android-apk: rustup') && again.includes('ios-ipa: rustup') && again.includes('uefi-x64: rustup'))
   const source = readFileSync(SCRIPT, 'utf8')
   assert.equal(m.AGAIN_MS, 60_000)
-  assert.match(source, /for \(let left = s\.again \?\? 0; !r\.ok && left > 0; left--\) \{\n[^\n]*::warning::[^\n]*\n\s+Atomics\.wait\(new Int32Array\(new SharedArrayBuffer\(4\)\), 0, 0, AGAIN_MS\)\n\s+r = once\(\)\n/, 'the step is run again after the pause, and a failure that stays is still the target\'s')
-  assert.match(source, /if \(!r\.ok\) throw new Error\(`\$\{show\(s\.cmd, s\.argv, s\.cwd\)\} failed`\)/)
+  // The run loop hands every step to tried, and a failure that stays is still the target's.
+  assert.match(source, /const r = tried\(s, \(argv\) => run\(s\.cmd, argv, \{ cwd: s\.cwd \?\? ROOT, env: \{ \.\.\.process\.env, \.\.\.\(s\.env \?\? \{\}\) \} \}\), \{ id: t\.id \}\)\n\s+if \(!r\.ok\) throw new Error\(`\$\{show\(s\.cmd, s\.argv, s\.cwd\)\} failed`\)/)
+})
+
+test('tried: a failing step is run again only as often as it may be, after a pause, and what the last try answered stands', () => {
+  const say: string[] = []
+  const pauses: number[] = []
+  const opts = { id: 'android-apk', pause: (ms: number) => { pauses.push(ms) }, say: (line: string) => { say.push(line) }, now: () => 5000 }
+  const step = (extra: object = {}): Step => ({ kind: 'run', cmd: '/usr/bin/node', argv: ['tauri.js', 'android', 'build'], ...extra })
+  const runs = (answers: boolean[]) => { const seen: string[][] = []; return { seen, once: (argv: string[]) => { seen.push(argv); return { ok: answers[seen.length - 1] } } } }
+
+  // A step that passes runs once; one with no `again` fails at once.
+  let r = runs([true])
+  assert.deepEqual(m.tried(step({ again: 2 }), r.once, opts), { ok: true })
+  assert.equal(r.seen.length, 1)
+  r = runs([false, true])
+  assert.deepEqual(m.tried(step(), r.once, opts), { ok: false })
+  assert.equal(r.seen.length, 1)
+  assert.deepEqual([say, pauses], [[], []])
+
+  // A download: run again after the pause, with the same arguments, and the warning says why and how many are left.
+  r = runs([false, false, true])
+  assert.deepEqual(m.tried(step({ again: 2 }), r.once, opts), { ok: true })
+  assert.deepEqual(r.seen, [['tauri.js', 'android', 'build'], ['tauri.js', 'android', 'build'], ['tauri.js', 'android', 'build']])
+  assert.deepEqual(pauses, [m.AGAIN_MS, m.AGAIN_MS])
+  assert.deepEqual(say, [
+    '::warning::android-apk: node tauri.js android build failed; it downloads as it runs, so it is run again in 60 s (2 more tries)',
+    '::warning::android-apk: node tauri.js android build failed; it downloads as it runs, so it is run again in 60 s (1 more try)',
+  ])
+
+  // A failure that stays is the step's: `again` more tries and no more.
+  r = runs([false, false, false, true])
+  assert.deepEqual(m.tried(step({ again: 2 }), r.once, opts), { ok: false })
+  assert.equal(r.seen.length, 3)
+
+  // A condition: asked after each failure with the time the step began, and a "no" ends the tries there.
+  say.length = 0; pauses.length = 0
+  const asked: number[] = []
+  const answers = [true, false]
+  r = runs([false, false, false])
+  assert.deepEqual(m.tried(step({ again: 2, when: ({ began }: { began: number }) => { asked.push(began); return answers.shift()! } }), r.once, opts), { ok: false })
+  assert.deepEqual([r.seen.length, asked, pauses.length], [2, [5000, 5000], 1])
+  r = runs([false, true])
+  assert.deepEqual(m.tried(step({ again: 2, when: () => false }), r.once, opts), { ok: false })
+  assert.equal(r.seen.length, 1, 'a failure of another kind is not tried again')
+
+  // Mended before each new try, in the order warning, mend, pause, try; the new tries are louder and the first is not.
+  say.length = 0; pauses.length = 0
+  const order: string[] = []
+  r = runs([false, false, true])
+  const loud = m.tried(
+    step({ again: 2, why: 'the image is busy', louder: ['--verbose'], mend: (tell: (line: string) => void) => { order.push('mend'); tell('    mended') } }),
+    (argv: string[]) => { order.push(`run ${argv.length}`); return r.once(argv) },
+    { ...opts, id: 'macos-universal', pause: () => { order.push('pause') } },
+  )
+  assert.deepEqual(loud, { ok: true })
+  assert.deepEqual(order, ['run 3', 'mend', 'pause', 'run 4', 'mend', 'pause', 'run 4'])
+  assert.deepEqual(r.seen[0], ['tauri.js', 'android', 'build'])
+  assert.deepEqual(r.seen[1], ['tauri.js', 'android', 'build', '--verbose'])
+  assert.deepEqual(r.seen[2], ['tauri.js', 'android', 'build', '--verbose'])
+  assert.deepEqual(say, [
+    '::warning::macos-universal: node tauri.js android build failed; the image is busy, so it is run again in 60 s (2 more tries)',
+    '    mended',
+    '::warning::macos-universal: node tauri.js android build failed; the image is busy, so it is run again in 60 s (1 more try)',
+    '    mended',
+  ])
+})
+
+test('the macOS bundle step is tried again only when the .app is new and the .dmg is missing', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cn-dmg-'))
+  try {
+    const apps = join(dir, 'macos')
+    const dmgs = join(dir, 'dmg')
+    const at = (began: number) => m.dmgAlone({ began, apps, dmgs })
+    // Nothing bundled (a failed compile): not this failure.
+    assert.equal(at(0), false)
+    mkdirSync(dmgs)
+    assert.equal(at(0), false)
+    // The .app made, the working image left beside it, the dmg folder holding only Tauri's script: this failure.
+    mkdirSync(join(apps, 'Crimson Noir Agent City.app'), { recursive: true })
+    writeFileSync(join(apps, 'rw.7001.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), 'x')
+    writeFileSync(join(dmgs, 'bundle_dmg.sh'), '#!/bin/sh\n')
+    const made = statSync(join(apps, 'Crimson Noir Agent City.app')).mtimeMs
+    assert.equal(at(0), true)
+    assert.equal(at(made), true)
+    assert.equal(at(made + 1500), true, 'a folder time kept to the second is still this try\'s')
+    // An .app older than the step (a stale one, with the compile failing now): not this failure.
+    assert.equal(at(made + 60_000), false)
+    // A whole .dmg in the dmg folder: the image was made, so whatever failed was not it.
+    writeFileSync(join(dmgs, 'Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), 'x')
+    assert.equal(at(0), false)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  assert.equal(m.dmgAlone({ apps: join(dir, 'gone'), dmgs: join(dir, 'gone') }), false)
+  assert.match(m.DMG_WHY, /^the \.app is made and the \.dmg is not/)
+
+  assert.equal(m.isWorkingImage('rw.7001.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), true)
+  for (const n of ['Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg', 'rw.dmg', 'rw.x.y.dmg', 'rw.12.name.dmg.txt', 'Crimson Noir Agent City.app']) assert.equal(m.isWorkingImage(n), false, n)
+})
+
+test('leftImages reads what hdiutil info lists as attached, and keeps only the images under the bundle folder', () => {
+  const bundle = '/Users/runner/work/City/City/src-tauri/target/universal-apple-darwin/release/bundle'
+  const INFO = [
+    'framework       : 692.40.2',
+    'driver          : 15.7.2',
+    '================================================',
+    `image-path      : ${bundle}/macos/rw.7120.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg`,
+    'image-alias     : /Users/runner/work/City/City/src-tauri/target/universal-apple-darwin/release/bundle/macos/rw.7120.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg',
+    'shadow-path     : <none>',
+    'icon-path       : /System/Library/PrivateFrameworks/DiskImages.framework/Resources/CDiskImage.icns',
+    'image-type      : read/write',
+    'system-image    : false',
+    'blockcount      : 2134016',
+    'blocksize       : 512',
+    'writeable       : TRUE',
+    'autodiskmount   : TRUE',
+    'removable       : TRUE',
+    'image-encrypted : false',
+    'mounting user   : runner',
+    'mounting mode   : <unknown> (no BSD-level information)',
+    'process ID      : 7120',
+    '/dev/disk4\tApple_partition_scheme\t',
+    '/dev/disk4s1\tApple_partition_map\t',
+    '/dev/disk4s2\tApple_HFS\t/Volumes/dmg.Xy12Ab',
+    '================================================',
+    'image-path      : /Library/Developer/CoreSimulator/Volumes/iOS_23F77/sim.dmg',
+    'image-type      : read-only',
+    '/dev/disk6\tGUID_partition_scheme\t',
+    '/dev/disk6s1\tApple_APFS\t',
+    '================================================',
+    `image-path      : ${bundle}/dmg/orphan with no device.dmg`,
+    'image-type      : read/write',
+    '',
+  ].join('\n')
+  assert.deepEqual(m.leftImages(INFO, [bundle]), [{ image: `${bundle}/macos/rw.7120.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg`, dev: '/dev/disk4' }])
+  // A folder named with or without its slash; a neighbour whose name only begins the same is not under it.
+  assert.equal(m.leftImages(INFO, [`${bundle}/`]).length, 1)
+  assert.deepEqual(m.leftImages(INFO, [bundle.slice(0, -3)]), [])
+  assert.deepEqual(m.leftImages(INFO, ['/somewhere/else', '/Library/Developer/CoreSimulator']), [{ image: '/Library/Developer/CoreSimulator/Volumes/iOS_23F77/sim.dmg', dev: '/dev/disk6' }])
+  // Nothing attached, or words that are not hdiutil's: nothing to detach.
+  assert.deepEqual(m.leftImages('framework       : 692.40.2\ndriver          : 15.7.2\n', [bundle]), [])
+  assert.deepEqual(m.leftImages('', [bundle]), [])
+
+  // The mending is the Mac's alone, reads hdiutil's own list, detaches by device and removes only working images.
+  const source = readFileSync(SCRIPT, 'utf8')
+  const mend = source.slice(source.indexOf('function detachLeft('), source.indexOf('function macPlan('))
+  assert.match(mend, /if \(process\.platform !== 'darwin'\) return\n/)
+  assert.match(mend, /run\('hdiutil', \['info'\], \{ capture: true \}\)/)
+  assert.match(mend, /run\('hdiutil', \['detach', dev, '-force'\], \{ capture: true \}\)/)
+  assert.match(mend, /readdirSync\(apps\)\.filter\(isWorkingImage\)/)
 })
 
 test('every plan is programs with argument vectors, never a shell line; every Tauri step says the page is already built; the page is built under this Node', () => {
