@@ -3,7 +3,7 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
  * Why does this file exist? It pins the cross-platform build matrix (tools/build/matrix.mjs, `npm run build:matrix`,
- * .github/workflows/build-matrix.yml): the nine targets in the plan's order, each a program and an argument vector
+ * .github/workflows/build-matrix.yml): the ten targets in the plan's order, each a program and an argument vector
  * (never a shell line, so cmd.exe and sh run the same thing), the page built once and never again by a Tauri step
  * (and not at all for the UEFI application alone), the installers' own version beside the app's pre-release one (the
  * .msi's WiX version, the .rpm's Version and Release, packaged from the built binary), what blocks a target on a
@@ -32,7 +32,7 @@ const SCRIPT = join(ROOT, 'tools', 'build', 'matrix.mjs')
 const WORKFLOW = readFileSync(join(ROOT, '.github', 'workflows', 'build-matrix.yml'), 'utf8')
 
 interface Step { kind: string; cmd?: string; argv?: string[]; cwd?: string; path?: string; paths?: string[]; hint?: string }
-interface Target { id: string; artifact: string; hosts: string[]; arch?: string; tools?: string[]; env?: string[]; unsupported?: string; note?: string; plan?: (ctx: object) => Step[] }
+interface Target { id: string; artifact: string; hosts: string[]; arch?: string; tools?: string[]; env?: string[]; unsupported?: string; note?: string; plan?: (ctx: object) => Step[]; collect?: (ctx: object) => [string, string][] }
 interface Host { platform: string; arch: string; env: Record<string, string>; has: (cmd: string) => boolean }
 
 const TARGETS: readonly Target[] = m.TARGETS
@@ -43,8 +43,8 @@ const CTX = { out: '/tmp/out', version: '1.0.0-stable-beta', media: true, dryRun
 /** The targets that carry the app's model and run it themselves. */
 const CARRIERS = ['linux-x64', 'linux-arm64', 'macos-universal']
 
-test('the nine targets, in the order the plan names them, each saying what it makes', () => {
-  assert.deepEqual(IDS, ['windows-x64', 'windows-arm64', 'linux-x64', 'linux-arm64', 'macos-universal', 'android-apk', 'ios-ipa', 'uefi-x64', 'uefi-arm64'])
+test('the ten targets, in the order the plan names them, each saying what it makes', () => {
+  assert.deepEqual(IDS, ['windows-x64', 'windows-arm64', 'linux-x64', 'linux-arm64', 'macos-universal', 'android-apk', 'ios-ipa', 'uefi-x64', 'uefi-arm64', 'uefi-riscv64'])
   for (const t of TARGETS) {
     assert.match(t.artifact, /\S/, t.id)
     if (t.unsupported) assert.deepEqual(t.hosts, [], `${t.id} builds nowhere`)
@@ -158,10 +158,24 @@ test('every plan is programs with argument vectors, never a shell line; every Ta
     if (t.id.startsWith('uefi-')) {
       // The UEFI application carries no page, and its media come from the repository's own script, given the target.
       assert.equal((t as Target & { page?: boolean }).page, false, t.id)
-      const triple = t.id === 'uefi-x64' ? 'x86_64-unknown-uefi' : 'aarch64-unknown-uefi'
+      // riscv64 has no UEFI target in Rust: its triple is the bare-metal one (arch/riscv64.rs carries the PE header).
+      const triple = { 'uefi-x64': 'x86_64-unknown-uefi', 'uefi-arm64': 'aarch64-unknown-uefi', 'uefi-riscv64': 'riscv64gc-unknown-none-elf' }[t.id]!
       assert.ok(steps.some((s) => s.cmd === 'cargo' && s.argv!.includes(triple)), t.id)
+      assert.deepEqual(steps.find((s) => s.cmd === 'rustup')!.argv, ['target', 'add', triple], `${t.id}: the target is added first`)
       const media = steps.find((s) => s.cmd === 'sh')!
-      if (t.id === 'uefi-arm64') assert.equal(media.argv![2], triple, 'build-image.sh is told the aarch64 target')
+      if (t.id !== 'uefi-x64') assert.equal(media.argv![2], triple, `${t.id}: build-image.sh is told the target`)
+      // Each architecture's media in a folder of its own, so one checkout holds all three.
+      assert.equal(media.argv![1], join('target', { 'uefi-x64': 'image', 'uefi-arm64': 'image-aarch64', 'uefi-riscv64': 'image-riscv64' }[t.id]!), t.id)
+      // What is collected: the application under the name the firmware looks for, and the media under the architecture's.
+      const [efi, ...rest] = t.collect!(CTX).map(([from, name]: [string, string]) => [relative(ROOT, from).replace(/\\/g, '/'), name])
+      assert.deepEqual(efi, {
+        'uefi-x64': ['crimson_noir_os/target/x86_64-unknown-uefi/release/crimson_boot.efi', 'BOOTX64.EFI'],
+        'uefi-arm64': ['crimson_noir_os/target/aarch64-unknown-uefi/release/crimson_boot.efi', 'BOOTAA64.EFI'],
+        // The linker writes the riscv64 application itself, under the name a bare-metal program gets.
+        'uefi-riscv64': ['crimson_noir_os/target/riscv64gc-unknown-none-elf/release/crimson_boot', 'BOOTRISCV64.EFI'],
+      }[t.id], t.id)
+      const stem = { 'uefi-x64': 'crimson_noir_os', 'uefi-arm64': 'crimson_noir_os-aarch64', 'uefi-riscv64': 'crimson_noir_os-riscv64' }[t.id]!
+      assert.deepEqual(rest.map(([, name]: string[]) => name), [`${stem}.img`, `${stem}.iso`], t.id)
     }
     if (t.id === 'ios-ipa') {
       // Xcode's "Build Rust Code" phase asks the running Tauri CLI for its options, so only `tauri ios build` drives
@@ -203,7 +217,7 @@ test('the installers\' own version: the numbers alone for WiX and rpm\'s Version
   assert.match(m.installerVersion(pkg.version), /^\d{1,3}\.\d{1,3}\.\d{1,5}$/, 'WiX: major and minor up to 255, patch up to 65535')
 })
 
-test('what blocks a target on this or that machine: the operating system, the architecture, a variable, a program; UEFI aarch64 builds wherever cargo is, from its own machine layer', () => {
+test('what blocks a target on this or that machine: the operating system, the architecture, a variable, a program; UEFI aarch64 and riscv64 build wherever cargo is, each from its own machine layer', () => {
   assert.equal(m.blocker(TARGETS[2], LINUX), null, 'linux-x64 on Linux x64')
   assert.match(m.blocker(TARGETS[3], LINUX), /needs a arm64 machine/)
   assert.equal(m.blocker(TARGETS[3], host('linux', 'arm64')), null)
@@ -216,7 +230,10 @@ test('what blocks a target on this or that machine: the operating system, the ar
   assert.match(m.blocker(TARGETS[6], host('win32', 'x64')), /builds on macOS, not on Windows/)
   assert.equal(m.blocker(TARGETS[7], host('win32', 'x64')), null, 'the UEFI application builds anywhere cargo is')
   assert.match(m.blocker(TARGETS[7], { ...LINUX, has: (c: string) => c !== 'rustup' }), /needs rustup on PATH/)
-  for (const h of [host('linux', 'x64'), host('linux', 'arm64'), host('win32', 'x64'), host('darwin', 'arm64')]) assert.equal(m.blocker(TARGETS[8], h), null, `uefi-arm64 on ${h.platform} ${h.arch}`)
+  for (const h of [host('linux', 'x64'), host('linux', 'arm64'), host('win32', 'x64'), host('darwin', 'arm64')]) {
+    assert.equal(m.blocker(TARGETS[8], h), null, `uefi-arm64 on ${h.platform} ${h.arch}`)
+    assert.equal(m.blocker(TARGETS[9], h), null, `uefi-riscv64 on ${h.platform} ${h.arch}`)
+  }
   assert.ok(TARGETS.every((t) => !t.unsupported), 'no target is unsupported')
   // The port is real: arch.rs picks one machine layer per architecture behind the same names, and the aarch64 one
   // speaks to an Arm machine (the generic timer, VBAR, the UART the ACPI SPCR table names) with no x86 in it.
@@ -224,45 +241,91 @@ test('what blocks a target on this or that machine: the operating system, the ar
   const dispatch = readFileSync(join(boot, 'arch.rs'), 'utf8')
   assert.match(dispatch, /#\[cfg\(target_arch = "x86_64"\)\]\nmod x86_64;/)
   assert.match(dispatch, /#\[cfg\(target_arch = "aarch64"\)\]\nmod aarch64;/)
+  assert.match(dispatch, /#\[cfg\(target_arch = "riscv64"\)\]\nmod riscv64;/)
+  // The two machines whose keyboard is the serial console share one decoder.
+  assert.match(dispatch, /#\[cfg\(any\(target_arch = "aarch64", target_arch = "riscv64"\)\)\]\nmod serial_keys;/)
   const x86 = readFileSync(join(boot, 'arch', 'x86_64.rs'), 'utf8')
   const arm64 = readFileSync(join(boot, 'arch', 'aarch64.rs'), 'utf8')
+  const riscv = readFileSync(join(boot, 'arch', 'riscv64.rs'), 'utf8')
+  const keys = readFileSync(join(boot, 'arch', 'serial_keys.rs'), 'utf8')
   assert.match(x86, /asm!\("out dx, al"/)
   for (const needle of ['cntvct_el0', 'msr vbar_el1', 'msr vbar_el2', 'b"SPCR"', '.balign 2048', 'esr_el1', 'far_el1']) assert.ok(arm64.includes(needle), `aarch64.rs: ${needle}`)
   assert.doesNotMatch(arm64, /\b(out dx|in al|rdtsc|lidt|lgdt)\b/, 'no x86 in the aarch64 layer')
-  // Both layers give image.rs the same names.
-  for (const name of ['pub fn serial_init(', 'pub struct Serial', 'pub fn ticks(', 'pub const CLOCK', 'pub const TAKEN', 'pub fn cli(', 'pub fn halt(', 'pub unsafe fn take_over(', 'pub struct Keyboard', 'pub fn poll_keys(', 'pub struct Fault', 'pub fn describe(']) {
-    assert.ok(x86.includes(name) && arm64.includes(name), name)
+  // The riscv64 one speaks to a RISC-V machine: the SBI console, the time CSR, its own trap vector.
+  for (const needle of ['"ecall"', 'rdtime', 'csrw stvec', 'scause', 'sepc', 'stval', '0x4442_434e']) assert.ok(riscv.includes(needle), `riscv64.rs: ${needle}`)
+  assert.doesNotMatch(riscv, /\b(out dx|in al|rdtsc|lidt|lgdt|cntvct_el0|vbar_el[12]|esr_el1)\b/, 'no x86 and no Arm in the riscv64 layer')
+  // All three layers give image.rs the same names; the serial-console pair take Keyboard from the shared decoder.
+  for (const name of ['pub fn serial_init(', 'pub struct Serial', 'pub fn ticks(', 'pub const CLOCK', 'pub const TAKEN', 'pub fn cli(', 'pub fn halt(', 'pub unsafe fn take_over(', 'pub fn poll_keys(', 'pub struct Fault', 'pub fn describe(']) {
+    assert.ok(x86.includes(name) && arm64.includes(name) && riscv.includes(name), name)
+  }
+  assert.ok(x86.includes('pub struct Keyboard') && keys.includes('pub struct Keyboard'))
+  for (const layer of [arm64, riscv]) {
+    assert.ok(layer.includes('pub use super::serial_keys::Keyboard;'))
+    assert.ok(layer.includes('super::serial_keys::poll(kb, keys, serial_read)'))
+    assert.ok(!layer.includes('KEY_PAGE_UP'), 'one decoder, not a copy in each layer')
   }
   const image = readFileSync(join(boot, 'image.rs'), 'utf8')
   assert.doesNotMatch(image, /arch::(rdtsc|load_gdt|load_idt|ps2_byte|FaultFrame)\b/, 'image.rs calls only the shared names')
 })
 
-test('the aarch64 media and boot: BOOTAA64.EFI on the ESP, its own identity, the same reproducible link, and the boot test on QEMU\'s Arm virt machine with edk2, typing over the serial line', () => {
+test('the aarch64 and riscv64 media and boot: BOOTAA64.EFI or BOOTRISCV64.EFI on the ESP, each its own identity, a reproducible link, and the boot test on QEMU\'s virt machines with edk2, typing over the serial line', () => {
   const os = join(ROOT, 'crimson_noir_os')
   const image = readFileSync(join(os, 'tools', 'build-image.sh'), 'utf8')
   assert.match(image, /target=\$\{2:-x86_64-unknown-uefi\}/)
   assert.match(image, /aarch64-unknown-uefi\) boot=BOOTAA64\.EFI; arch_id="aarch64:" ;;/)
   assert.match(image, /x86_64-unknown-uefi\) boot=BOOTX64\.EFI; arch_id="" ;;/, 'the x86-64 media keep the identity they had')
+  assert.match(image, /riscv64gc-unknown-none-elf\) boot=BOOTRISCV64\.EFI; arch_id="riscv64:" ;;/)
+  // The riscv64 application is the file the linker wrote (no .efi), and whatever was built must begin as a PE file does.
+  assert.match(image, /if \[ "\$target" = riscv64gc-unknown-none-elf \]; then efi="\$here\/target\/\$target\/release\/crimson_boot"; fi/)
+  assert.match(image, /\[ "\$\(head -c 2 "\$efi"\)" = MZ \] \|\| \{ echo "build-image\.sh: \$efi is not a UEFI application \(no PE header\)" >&2; exit 1; \}/)
   assert.match(image, /mcopy -m -i "\$esp" "\$stage\/\$boot" "::\/EFI\/BOOT\/\$boot"/)
   const cargo = readFileSync(join(os, '.cargo', 'config.toml'), 'utf8')
   for (const triple of ['x86_64-unknown-uefi', 'aarch64-unknown-uefi']) {
     assert.match(cargo, new RegExp(`\\[target\\.${triple}\\]\\nrustflags = \\["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"\\]`), triple)
   }
+  // riscv64: no UEFI target in Rust, so the bare-metal one, linked position-independent behind the image's own PE
+  // header and written out flat by the linker itself, with nothing in the file that varies between two builds.
+  const flags = /\[target\.riscv64gc-unknown-none-elf\]\nrustflags = \[([^\]]*)\]/.exec(cargo)?.[1].split(', ').map((f) => JSON.parse(f)) ?? []
+  assert.deepEqual(flags.filter((f) => f !== '-C'), ['relocation-model=pie', 'link-arg=-pie', 'link-arg=--no-dynamic-linker', 'link-arg=-znotext', 'link-arg=-znorelro', 'link-arg=--no-relax', 'link-arg=--build-id=none', 'link-arg=--oformat=binary'])
+  // The script goes to the bare-metal image alone: a hosted riscv64 build (the workspace's tests on a RISC-V Linux
+  // machine) is the note in main.rs, and the script names a symbol only the image defines.
+  assert.match(readFileSync(join(os, 'boot', 'build.rs'), 'utf8'), /if env::var\("CARGO_CFG_TARGET_ARCH"\)\.as_deref\(\) == Ok\("riscv64"\) && env::var\("CARGO_CFG_TARGET_OS"\)\.as_deref\(\) == Ok\("none"\) \{\n\s+let script = Path::new\(env!\("CARGO_MANIFEST_DIR"\)\)\.join\("riscv64\.ld"\);\n\s+println!\("cargo:rerun-if-changed=\{\}", script\.display\(\)\);\n\s+println!\("cargo:rustc-link-arg-bins=-T\{\}", script\.display\(\)\);/)
+  // The header: a PE32+ file for a 64-bit RISC-V machine, an EFI application, at address 0 with nothing to relocate
+  // by the firmware; the entry applies the image's own relative relocations and refuses any other kind.
+  const layer = readFileSync(join(os, 'boot', 'src', 'arch', 'riscv64.rs'), 'utf8')
+  for (const needle of ['.ascii "MZ"', '.ascii "PE\\0\\0"', '.short 0x5064 ', '.short 0x020b ', '.short 10 ', '.zero 128 ', 'lla a0, ImageBase', 'li t1, 3 ', 'bne t0, t1, 4f', 'li a0, 0x8000000000000001', 'csrs sstatus, t0', 'call efi_main']) assert.ok(layer.includes(needle), `riscv64.rs: ${needle}`)
+  const script = readFileSync(join(os, 'boot', 'riscv64.ld'), 'utf8')
+  assert.match(script, /^ENTRY\(_entry\)$/m)
+  assert.match(script, /\. = 0;\n {2}ImageBase = \.;\n {2}\.head : \{ KEEP\(\*\(\.head\)\) \}\n {2}\. = ALIGN\(0x1000\);/)
+  assert.match(script, /\.rela\.dyn : \{ __rela_start = \.; \*\(\.rela \.rela\.\*\) __rela_end = \.; \}/)
+  assert.match(script, /SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary/, 'the licence tool does not head a linker script: it carries its header by hand')
+  // The image's root compiles as the image for a UEFI target or for this one bare-metal target, and nowhere else.
+  const root = readFileSync(join(os, 'boot', 'src', 'main.rs'), 'utf8')
+  assert.equal(root.match(/any\(target_os = "uefi", all\(target_arch = "riscv64", target_os = "none"\)\)/g)?.length, 9)
+  assert.doesNotMatch(root.replace(/any\(target_os = "uefi", all\(target_arch = "riscv64", target_os = "none"\)\)/g, ''), /cfg[^\n]*target_(os|arch)/)
   const harness = readFileSync(join(os, 'tools', 'boot_test.py'), 'utf8')
-  assert.match(harness, /p\.add_argument\("--arch", choices=\["x86_64", "aarch64"\], default="x86_64"/)
+  assert.match(harness, /p\.add_argument\("--arch", choices=\["x86_64", "aarch64", "riscv64"\], default="x86_64"/)
   for (const needle of ['qemu-system-aarch64', '"-machine", "virt"', 'AAVMF_CODE.fd', '"ramfb"', 'server=on,wait=on', 'virtio-blk-pci', 'scsi-cd']) assert.ok(harness.includes(needle), `boot_test.py: ${needle}`)
+  for (const needle of ['qemu-system-riscv64', '/usr/share/qemu-efi-riscv64/RISCV_VIRT_CODE.fd', '/usr/share/qemu-efi-riscv64/RISCV_VIRT_VARS.fd', 'if=pflash,format=raw,unit=0,readonly=on,file={RISCV_CODE}', 'if=pflash,format=raw,unit=1,file={vars_fd}', 'virt = a.arch in ("aarch64", "riscv64")']) assert.ok(harness.includes(needle), `boot_test.py: ${needle}`)
+  assert.doesNotMatch(harness, /qemu-system-riscv64[^\n]*"-bios"/, 'QEMU loads its own OpenSBI under edk2')
   // The boot steps build-release.yml runs on x86-64 run on both architectures in the build matrix's UEFI jobs.
   assert.match(WORKFLOW, /python3 -I tools\/boot_test\.py "\$media\.img" --arch "\$arch" --timeout 300 --wait "SELFTEST PASS"/)
   assert.match(WORKFLOW, /--step 'type:golden\\n' --step wait:MATCH --step 'type:halt\\n' --step 'wait:POWER OFF' --step exit/)
   assert.match(WORKFLOW, /python3 -I tools\/boot_test\.py "\$media\.iso" --arch "\$arch" --timeout 300 --wait "SELFTEST PASS"/)
-  assert.match(WORKFLOW, /qemu-system-x86 ovmf qemu-system-arm qemu-efi-aarch64/)
+  assert.match(WORKFLOW, /qemu-system-x86 ovmf qemu-system-arm qemu-efi-aarch64 qemu-system-misc qemu-efi-riscv64$/m)
+  // Each UEFI job bakes and boots its own architecture's files.
+  assert.match(WORKFLOW, /uefi-riscv64\) triple=riscv64gc-unknown-none-elf; media=\.\.\/out\/uefi-riscv64\/crimson_noir_os-riscv64; efi=\.\.\/out\/uefi-riscv64\/BOOTRISCV64\.EFI; built=crimson_boot ;;/)
+  assert.match(WORKFLOW, /uefi-arm64\) triple=aarch64-unknown-uefi; media=\.\.\/out\/uefi-arm64\/crimson_noir_os-aarch64; efi=\.\.\/out\/uefi-arm64\/BOOTAA64\.EFI; built=crimson_boot\.efi ;;/)
+  assert.match(WORKFLOW, /\*\) triple=x86_64-unknown-uefi; media=\.\.\/out\/uefi-x64\/crimson_noir_os; efi=\.\.\/out\/uefi-x64\/BOOTX64\.EFI; built=crimson_boot\.efi ;;/)
+  assert.match(WORKFLOW, /cmp "\$efi" "target\/\$triple\/release\/\$built" \|\| \{ echo "::error::the UEFI application is not reproducible"; exit 1; \}/)
+  assert.match(WORKFLOW, /uefi-arm64\) arch=aarch64; media=\.\.\/out\/uefi-arm64\/crimson_noir_os-aarch64 ;;\n\s+uefi-riscv64\) arch=riscv64; media=\.\.\/out\/uefi-riscv64\/crimson_noir_os-riscv64 ;;\n\s+\*\) arch=x86_64; media=\.\.\/out\/uefi-x64\/crimson_noir_os ;;/)
   // Baked twice from a clean build, as build-release.yml bakes the x86-64 media: the bytes must be the same.
   assert.match(WORKFLOW, /cargo clean -p crimson_boot --release --target "\$triple"\n {10}sh tools\/build-image\.sh "\$RUNNER_TEMP\/again" "\$triple"/)
   assert.ok(WORKFLOW.indexOf('Bake the UEFI media again') < WORKFLOW.indexOf('Boot the disk image in QEMU'))
 })
 
 test('select: all, host (this machine\'s desktop app and the UEFI application), a list of ids, and an unknown id named with the choices', () => {
-  assert.equal(m.select('all').targets.length, 9)
+  assert.equal(m.select('all').targets.length, 10)
   assert.equal(m.select('all').named, false)
   assert.deepEqual(m.select('host', { platform: 'win32', arch: 'x64' }).targets.map((t: Target) => t.id), ['windows-x64', 'uefi-x64'])
   assert.deepEqual(m.select(undefined, { platform: 'linux', arch: 'x64' }).targets.map((t: Target) => t.id), ['linux-x64', 'uefi-x64'])
@@ -271,10 +334,10 @@ test('select: all, host (this machine\'s desktop app and the UEFI application), 
   const picked = m.select('uefi-x64, linux-x64')
   assert.deepEqual(picked.targets.map((t: Target) => t.id), ['uefi-x64', 'linux-x64'])
   assert.equal(picked.named, true)
-  assert.throws(() => m.select('nope,linux-x64'), /unknown target: nope \(one of windows-x64, .*uefi-arm64, all, host\)/)
+  assert.throws(() => m.select('nope,linux-x64'), /unknown target: nope \(one of windows-x64, .*uefi-arm64, uefi-riscv64, all, host\)/)
 })
 
-test('the command line: --list names the nine; a dry run of all exits 0, builds the page in the plan and writes nothing; the UEFI targets alone build no page; a named target this machine cannot build exits 1; an unknown one exits 1', () => {
+test('the command line: --list names the ten; a dry run of all exits 0, builds the page in the plan and writes nothing; the UEFI targets alone build no page; a named target this machine cannot build exits 1; an unknown one exits 1', () => {
   const node = (...args: string[]) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: ROOT, encoding: 'utf8' })
   const list = node('--list')
   assert.equal(list.status, 0, list.stderr)
@@ -289,8 +352,9 @@ test('the command line: --list names the nine; a dry run of all exits 0, builds 
     assert.match(dry.stdout, /^ {2}page: node .*vite\.js build$/m)
     assert.match(dry.stdout, /^planned {5}uefi-x64$/m, 'the UEFI application builds on any machine with cargo')
     assert.match(dry.stdout, /^planned {5}uefi-arm64$/m, 'and so does the aarch64 one')
+    assert.match(dry.stdout, /^planned {5}uefi-riscv64$/m, 'and the riscv64 one')
     assert.ok(!existsSync(join(out, 'matrix.json')), 'a dry run writes no report')
-    const uefi = node('--targets', 'uefi-x64,uefi-arm64', '--dry-run', '--out', out)
+    const uefi = node('--targets', 'uefi-x64,uefi-arm64,uefi-riscv64', '--dry-run', '--out', out)
     assert.equal(uefi.status, 0, uefi.stderr)
     assert.match(uefi.stdout, /^ {2}page: not needed/m)
     assert.doesNotMatch(uefi.stdout, /vite\.js build/)
@@ -305,12 +369,13 @@ test('the command line: --list names the nine; a dry run of all exits 0, builds 
     assert.equal(summary.status, 0, summary.stderr)
     assert.match(summary.stdout, /^\| `windows-x64` \| built elsewhere \| .* windows-app\.yml builds it/m)
     assert.match(summary.stdout, /^\| `uefi-arm64` \| no report \|/m, 'a job builds it now: no report in an empty folder')
-    assert.equal((summary.stdout.match(/^\| `/gm) ?? []).length, 9)
+    assert.match(summary.stdout, /^\| `uefi-riscv64` \| no report \|/m)
+    assert.equal((summary.stdout.match(/^\| `/gm) ?? []).length, 10)
   } finally { rmSync(out, { recursive: true, force: true }) }
 })
 
 test('the workflow: every buildable target but Windows x64 on a runner of its own, the same command a person runs, GitHub\'s own actions alone, a pull-request trigger so it runs before it is merged, and the release upload on a v* tag', () => {
-  const jobs = [['windows-arm64', 'windows-latest'], ['linux-x64', 'ubuntu-22.04'], ['linux-arm64', 'ubuntu-22.04-arm'], ['macos-universal', 'macos-15'], ['android-apk', 'ubuntu-24.04'], ['ios-ipa', 'macos-15'], ['uefi-x64', 'ubuntu-24.04'], ['uefi-arm64', 'ubuntu-24.04']]
+  const jobs = [['windows-arm64', 'windows-latest'], ['linux-x64', 'ubuntu-22.04'], ['linux-arm64', 'ubuntu-22.04-arm'], ['macos-universal', 'macos-15'], ['android-apk', 'ubuntu-24.04'], ['ios-ipa', 'macos-15'], ['uefi-x64', 'ubuntu-24.04'], ['uefi-arm64', 'ubuntu-24.04'], ['uefi-riscv64', 'ubuntu-24.04']]
   for (const [id, runner] of jobs) {
     assert.match(WORKFLOW, new RegExp(`^ {10}- target: ${id}\\n {12}runner: ${runner}$`, 'm'), id)
   }

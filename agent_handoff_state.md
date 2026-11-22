@@ -18,7 +18,7 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
   version is 1.0.0-stable-beta (from 1.4.0, as directed; it sorts below the earlier tags) and `CHANGELOG.md` records
   every release. The Windows app did not reach that release on its own: the release workflow made the tag with its
   own token, for which GitHub starts no tag-push run; windows-app.yml now takes the tag as an input and
-  build-release.yml dispatches it. Phase 21 (the V2 overhaul: matrix mode, Lakefront Metro, the zero-copy bridge;
+  build-release.yml dispatches it. Phase 21 (the V2 overhaul: rain mode, Lakefront Metro, the zero-copy bridge;
   PRs #17 to #19) is in that release too.
 - Phase 19 (the commercial release overhaul: the data-oriented SIMD core, the zero-trust self-heal sandbox, dual
   licensing and brand assets; PRs #9 to #12, with #6, #7 and #8 before them) is merged into main and released as
@@ -49,7 +49,7 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     table), `tutorial.rs` (the 5-Whys film: memory march of the arena's untouched part + the seal probe, the scripted
     run against GOLDEN_PROOF, containment from that run with live row-zero reads, the screen read-back, the bitonic
     sort animated comparator by comparator with the 0-1 proof; ESC skips the film, never the checks; any failure is
-    the fault screen), `term.rs` (the Sith Lord Terminal: a bounds-checked Forth over the arrays; caps/role read-only,
+    the fault screen), `term.rs` (the terminal, since named the Crimson Terminal: a bounds-checked Forth over the arrays; caps/role read-only,
     `ask` requests judged by the kernels; knobs within the validator's ranges; `cfg`/`digest` read-only with a live
     SHA-256 re-check; step budget = loop breaker; Rule 110 runs in it). 41 core tests (+3 ignored preview tools).
     The image runs it all: QEMU boot -> SELFTEST PASS 6.8 s -> the film (about 14 fps under TCG) -> PASSED 76 s ->
@@ -75,7 +75,7 @@ Written under the operator's Phase 13 protocol ("if you approach limits, write y
     real image (all refused), golden MATCH, digest holds, halt powers off (96.7 s). ISO: ESC skip still runs every
     check (PASSED at 21 s), golden MATCH, halt (26.4 s). Readout panels now size to their lines.
   - The Crimson Noir OS is at stable beta. Remaining work is optional: a signed Secure Boot shim, USB keyboards
-    without legacy emulation, renaming the terminal before any commercial release ("Sith" is a trademark).
+    without legacy emulation, renaming the terminal before any commercial release (its first name held a third-party trademark; done in Phase 17, it is the Crimson Terminal).
 - The local tag `stable-beta` exists only locally (GitHub refused the tag push, HTTP 403).
 - Machine: 4 CPUs, 16 GB. Do not run several Rapier-heavy experiments and a multi-agent workflow at once (exit 137 once).
 
@@ -180,8 +180,8 @@ FFI: GOP framebuffer, keyboard) booted in QEMU with OVMF and screenshotted, and 
 (qemu-system-x86, ovmf, mesa-vulkan-drivers for lavapipe, mtools). Honest limits to state: wgpu cannot run bare-metal
 (the UEFI image runs the CPU kernels; the hosted runtime runs WGSL); "provable ASI containment" is not achievable, only
 the narrow invariants the tests prove; a Linux kernel stays GPL-2.0 (the image carries none: it is a standalone UEFI
-program); no code earns regulatory approval; the rendering is stylized, not photorealistic; "Sith" is a third-party
-trademark to clear before a commercial release.
+program); no code earns regulatory approval; the rendering is stylized, not photorealistic; the terminal's first name
+held a third-party trademark (it is the Crimson Terminal since Phase 17).
 
 ## Review findings on Phase 12 (adversarial workflow; [k/n] = verifiers who confirmed)
 

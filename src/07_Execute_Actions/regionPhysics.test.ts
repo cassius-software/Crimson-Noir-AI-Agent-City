@@ -34,7 +34,7 @@ import { cityStreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { createSimHost } from './simHost.ts'
 import { homeFrames, homesAt } from '../01_Initialize_World/properties.ts'
 
-// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's matrix mode (01_Initialize_World/
+// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): the world's rain mode (01_Initialize_World/
 // matrixMode.ts) imports its WGSL that way, so the modules that take it are imported once the hook is in place.
 registerHooks({
   load(url, context, nextLoad) {
