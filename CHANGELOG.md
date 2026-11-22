@@ -15,6 +15,33 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Nightglass slice 2, first part: Lens shaders lowered to WGSL, proved against the reference renderer.** A new
+  `wgsl.ts` in `src/07_Execute_Actions/terminal/nightglass/` turns a verified Lens module of any stage (compute,
+  vertex, fragment) into WGSL text, pure and deterministic: a typed tree printed in one regular form, every value a
+  typed `let`, literals as exact bit patterns. It makes WGSL compute what the reference renderer computes wherever the
+  spec pins a result, without leaning on the freedoms WGSL leaves an implementation: NaN rules in min, max, clamp,
+  step and sign tested on the bits; saturating float-to-integer casts; exact integer-to-float; integer division and
+  remainder by zero; round half to even; the library exact at its edges (zeros, infinities, NaN, domains); loops held
+  to 65,536 turns with a counter per depth; raw word blocks; images (texel, put, extent, and sample with an explicit
+  level or an implicit one from the raw coordinate's fine rates, a NaN rate giving the lowest level); derivatives;
+  discard with helper lanes; the vertex entry's attribute limits, which read zero where the reference reads none, and
+  its position started as NaN where a path leaves it unwritten; flat ports; and the 208-byte hidden block the back end
+  will bind at set 3. What WGSL may approximate (the library's accuracy, filtering, the implicit level's arithmetic)
+  is named in the spec's ledger. `index.ts` exports `toWgsl`, `positionSure` and `WGSL_HIDDEN`. Only the `stepwise`
+  arithmetic option is still refused, by name. The limits change for the GPU back end: 11 uniform bindings in a
+  stage (WebGPU's 12, less one the back end keeps), at most 8,064 bytes of shader variables (WGSL's 8,192 less 128 for
+  loop counters), and a fragment lens that reads `front-facing` counts it as one of the 16 values between stages; the
+  spec's Limits paragraph names all three limits below WebGPU's defaults, and a test holds it to the code. A WGSL
+  parser, checker and evaluator in `lowered.test.ts` runs every lowered module in two modes, one resolving each WGSL
+  freedom as the reference does and one taking each the wrong way, and compares it with the reference renderer: 400
+  seeded compute modules (1,360,243 words bit for bit, 39,263 approximated components within WGSL's accuracy rules),
+  nine hand-written families over special values, and 120 modules each of images and raw words, vertices and
+  fragment quads. An independent four-way review with a skeptic per reviewer confirmed 12 of 23 findings (one
+  sampling bug, one spec sentence, ten test gaps found by planting mutations), all fixed here, and a second pass of
+  103 planted mutations led to tests that hold the differential's own checker to the ledger. 438 tests in the folder.
+  Nothing in the page uses it yet: the WebGPU back end and the browser check that compares its pictures with the
+  reference renderer's are the second part of slice 2.
+
 - **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
   repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
   (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0
