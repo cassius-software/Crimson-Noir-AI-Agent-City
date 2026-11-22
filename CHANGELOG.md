@@ -15,6 +15,66 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The console has files, programs and a shell of its own.** The Ring-0 console (`~`, and full screen at `?boot=tty`)
+  now carries a small operating system of its own behind the same prompt (`src/07_Execute_Actions/terminal/os/`). A
+  console command typed alone runs exactly as before (`oslayer.test.ts` compares twelve of them with a console that has
+  no layer) and every other line goes to the shell, whose messages start `ash:` as the console's did; a console command
+  can stand in a shell line and runs through the same handler (`stats --once | grep fps`, `laws > laws.txt`,
+  `time 18:30 && time`). The shell reads quotes, variables and their `${}` forms, `$( )`, whole-number `$(( ))`,
+  file-name patterns, pipes, redirections, here-documents, `;`, `&&`, `||`, `&`, `if`, `while`, `until` and `for`, runs
+  scripts (a runnable file in `~/bin` runs by its name), reads `/etc/profile` and `~/.profile` when it starts, and has
+  24 commands of its own, among them `exit`, which closes the console and gives up the rest of the line, of a sourced
+  file and of what was typed with it (`cd /nowhere || exit; rm -r *` removes nothing, on one line or two); `man sh` says
+  what it lacks (functions, `case`, subshells, `set`, arrays, backquotes, aliases). `/bin` holds 67 programs (the file,
+  text and system tools, `diff`, `cmp`, `comm`, `grep`, `sed` and `sh`) and the manual 70 pages in one checked shape,
+  the pages saying under NOTES what a program does not do. Under them: a kernel of generator tasks run in turns of at
+  most 256 calls, inside a budget of calls and a deadline the page hands it (30 ms for a typed line, then 4 ms every 16
+  ms while it has work, the clock read every 8 calls), so a program that never waits still hands the page back at the
+  deadline; descriptors, 64 KiB pipes, a terminal, a group per job, and Ctrl+C for the foreground job alone; a file
+  system of drivers with an 8 MiB disk at `/`, read-only `/bin` and `/usr`, a 4 MiB `/tmp` and generated `/proc`, `/sys`
+  and `/dev`, a write past a cap refused by name with nothing changed; and a regular-expression engine of its own that
+  keeps every path alive at once, so a search costs at most 2 x instructions x (characters + 1) steps (`(a+)+$` on
+  thirty `a`s and a `b` gives up within 5,000 steps), can pause mid-search for the other tasks and for Ctrl+C, and
+  refuses back-references. The city reads as files (`terminal/cityfs.ts`): `/proc/city` holds what `stats`, `laws`,
+  `kernel` and the rest print, the crowd and the cars as rows of numbers, and the namespace as a tree; a write under
+  `/sys/city` (`echo 18:30 > /sys/city/time`) runs the same command with the same checks and tier locks, and neither
+  earns a command's check. A console command the shell runs, or a file read or written, never answers a proposal (only
+  `act ok`, `act no`, `y` or `n` typed alone do), and at most 32 of them run in one turn of the layer, the rest waiting
+  for the next (a turn given because an answer arrived keeps the share it has and its time, each such turn is a task of
+  its own so the page draws between answers, and Ctrl+C drops a command still waiting, one run under `timeout` too), so
+  a loop cannot flood the engine's queue of commands or hold the page. A key, a token or a passphrase handed to a
+  console command through the shell is kept as dots in the history, and in what `history` lists, as it was typed
+  (quoted, escaped, with extra blanks, after `sh -c`, or over two lines; a key the shell builds from parts, `sk-$(...)`,
+  is in no typed line as such); the reply to `read` stays out of the history; `jobs` and `ps -f` still list a job's line
+  as typed. The disk is kept between visits in the page's own IndexedDB (`consoleDisk.ts`), one store for both consoles:
+  an image sealed with SHA-256 and refused whole when any check fails, stored with a generation so a tab that fell
+  behind writes nothing over a newer disk, never written over when it could not be read, and copied to a row of its own,
+  never over an earlier copy and eight at most, before anything replaces an image that failed its check; a file left
+  where one of the system's file systems is mounted is moved aside to a free name instead of costing the whole disk, and
+  `umount` leaves `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted. Every wait on the store is bounded at 4 s,
+  and a save the store does not answer counts as failed. The disk holds at most 4,096 files and directories, and its
+  image is made in one walk of the tree that sizes it and one that writes it, copying each byte once: a few
+  milliseconds, and with the browser's digest and the store's own copy a save of a disk near its 8 MiB takes a frame or
+  two on a laptop (its restore at boot about as much), which is why saves are spaced by that cost. It is saved 1.5 s after a
+  change (longer past 1 MiB, and at least 50 times as long as its last image took to make), when the page is hidden or
+  starts to go (that save is one write committed at once, skipped when another tab has said it saved a newer disk, says
+  to the other tabs that it saved as soon as it is committed, and cuts short a timed save still with the store; a
+  change made in the last moment before a reload can still be lost, more likely on a large disk, where a change is sure
+  to be kept across a reload only once its timed save has landed, 1.5 s for each MiB in use), and before `boot`,
+  `map` or **Back to the city** reloads the page, which waits up to 4 s for it, once. A timed save is sealed, and the
+  saved disk's seal checked before it is restored, with the browser's own SHA-256 where the page has it and it answers
+  within 4 s. When files can no longer be kept, the console says so once. A shell line that holds `|`, `;`, `&`, `<` or
+  `>`, or starts with a loop or `if`, earns a computers check when it is back at the prompt within 30 ms without an
+  error; the console commands inside it earn none of their own. In the city, the key left of 1 closes the console only
+  when pressed alone on an empty line, and only where it types `` ` ``, `^`, `²`, `§` or `½` or is a dead key, so `~`, a
+  `^` or `` ` `` after text, and whatever else a layout puts on that key are typed like any other character (the repeats
+  of a held key that opened the console are not); Esc closes it from any line. The folder imports nothing from outside
+  itself and names no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 559 in 20 files under
+  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 57 in `terminal/oslayer.test.ts`, 18
+  in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one is not exercised by them), and 9
+  in `consoleWiring.test.ts`, which pins the terminal's and the page's side from their source. Not yet: attaching a
+  folder of the computer, full-screen programs and app windows, networking, programs written in Crimson Noir Script.
+  `docs/console-operating-layer.md` is the design and `MANUAL.md`, "Files, programs and the shell", the use.
 - **Ten console lessons in Crimson Noir Script: the tutorial's second stage.** After the first walk ends at the
   console, `tutorial` lists ten optional lessons (your first line; names that remember; kinds of numbers; choosing and
   repeating; your own words; reading the city; the walls; switches inside numbers; four at once; under the hood), and

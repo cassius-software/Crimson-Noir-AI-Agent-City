@@ -4,5 +4,11 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/07_Execute_Actions/terminal/os/**"],
+      "rules": { "require-yield": "off" }
+    }
+  ]
 }

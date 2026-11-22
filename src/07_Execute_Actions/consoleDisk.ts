@@ -1,0 +1,308 @@
+// Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
+// SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
+// Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
+/**
+ * Why does this file exist? It is where the console's disk (terminal/os/, the files under / and the home directory)
+ * is kept between visits: one image in the page's own IndexedDB, written whole. Three things could lose a person's
+ * files, and each is closed here. Two tabs of the site: every image is stored with a generation number, and a save
+ * is one transaction that reads the stored generation and is undone unless it is the one this page loaded or last
+ * saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk. A save made as the page
+ * goes cannot wait for a read (a page being reloaded runs nothing more, and its storage work ends with it): it is one
+ * write, committed at once, and skipped as 'stale' when another page has said (by a message between the site's pages)
+ * that it saved a newer generation. It says so itself as soon as it is committed, since its page may never see it
+ * answer, and it cuts short this page's timed save still with the store (which answers as it does: its image holds all
+ * the timed one held), so the write that matters is not held up behind a read. A store that could
+ * not be read (the browser refused it, the read failed, it never answered): the load is refused, so the console can
+ * say at once that its files are not kept, and saving is refused for the visit, because an image that may still be
+ * there must not be replaced by an empty disk. An image that fails the system's own checks: it is copied under
+ * another key before anything is saved, so it can be looked at later, and never over a copy kept before (up to
+ * REFUSED_MAX of them). A console made again in the same page (the terminal mounted anew) loads the disk afresh: it
+ * gets what was last saved, never the first read of it. Nothing here waits on the browser for longer than OPEN_MS:
+ * the load (opening and reading), each save and each copy set aside are given up on after it, so the console can tell
+ * the person when a store stops answering instead of waiting on it for good; a write that lands after that still keeps
+ * this page's generation in step with the stored one.
+ * The image is the page's own data in the page's own storage: nothing here sends anything anywhere.
+ * What breaks if it is removed? The console's files last only as long as the page: a reload starts an empty disk.
+ */
+import type { DiskStore } from './terminal/commands.ts'
+
+/** The database and its one object store; the saved image and the copies of refused ones are rows of it. */
+export const CONSOLE_DISK_DB = 'civic-simulation:console-disk'
+const STORE = 'disk'
+const IMAGE = 'image'
+/** The first refused image is kept under this key; each later, different one under `refused:` and its last bytes. */
+const REFUSED = 'refused'
+/** The most refused images kept: past it, a refused image is not copied and the stored one is left where it is. */
+export const REFUSED_MAX = 8
+/** How long the browser gets to answer (to open the database and read the image, to save, to copy an image aside). */
+export const OPEN_MS = 4000
+
+/** A stored image: the bytes and the count of saves that made them. */
+interface Row { gen: number; bytes: Uint8Array }
+
+const request = <T>(r: IDBRequest<T>): Promise<T> => new Promise((resolve, reject) => {
+  r.onsuccess = () => resolve(r.result)
+  r.onerror = () => reject(r.error ?? new Error('the request failed'))
+})
+
+const finished = (t: IDBTransaction): Promise<void> => new Promise((resolve, reject) => {
+  t.oncomplete = () => resolve()
+  t.onerror = () => reject(t.error ?? new Error('the transaction failed'))
+  t.onabort = () => reject(t.error ?? new Error('the transaction was aborted'))
+})
+
+/** A stored row as an image, or null when the row is not one (nothing stored, or a shape this code did not write). */
+function rowOf(value: unknown): Row | null {
+  if (typeof value !== 'object' || value === null) return null
+  const { gen, bytes } = value as { gen?: unknown; bytes?: unknown }
+  if (typeof gen !== 'number' || !Number.isSafeInteger(gen) || gen < 1) return null
+  if (bytes instanceof Uint8Array) return { gen, bytes }
+  if (bytes instanceof ArrayBuffer) return { gen, bytes: new Uint8Array(bytes) }
+  return null
+}
+
+const same = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.length && a.every((x, i) => x === b[i])
+
+/** The key a refused image is kept under when the first holds another: its last eight bytes (its seal's end) in hex. */
+const asideKey = (image: Uint8Array): string =>
+  `${REFUSED}:${Array.from(image.subarray(Math.max(0, image.length - 8)), (x) => x.toString(16).padStart(2, '0')).join('')}`
+
+/**
+ * The console's disk store over a browser's IndexedDB (`factory`: window.indexedDB, or nothing where the browser has
+ * none). `wait` is the timer every wait on the browser is bounded by (the page's setTimeout). Nothing is opened until
+ * `load`.
+ */
+export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: () => void, ms: number) => unknown, name: string = CONSOLE_DISK_DB): DiskStore {
+  let db: IDBDatabase | null = null
+  /** The generation this page loaded or last saved: 0 when nothing was stored. */
+  let gen = 0
+  /** The highest generation this page has asked to write, landed or not: each new write's is above it. */
+  let asked = 0
+  /** The highest generation another page of the site has said it saved. */
+  let heard = 0
+  /** Where the site's pages say what they saved; none where the browser has no such channel. */
+  let channel: BroadcastChannel | null = null
+  /** This store's own mark on what it says, so it never takes its own word for another page's. */
+  const self = `${Math.random()}`
+  /**
+   * This page's timed save while it is with the store, if one is: a save made as the page goes cuts it short (write),
+   * since the browser would run that save only after it, and a page that is going never finishes it.
+   */
+  let timed: { readonly t: IDBTransaction; by: Promise<'kept' | 'stale'> | null } | null = null
+  /** Whether the stored image is known (read, or known absent): only then may it be written over. */
+  let known = false
+  let loading: Promise<Uint8Array | null> | null = null
+
+  /**
+   * One wait of OPEN_MS on the browser: `race(p)` settles as `p` does, or is refused with 'the storage did not answer'
+   * once the wait is over; `over` says whether it is, for what `p` started (a database that opens after it is closed).
+   */
+  const bound = (): { race<T>(p: Promise<T>): Promise<T>; readonly over: boolean } => {
+    let over = false
+    const late = new Promise<never>((_, reject) => {
+      wait(() => {
+        over = true
+        reject(new Error('the storage did not answer'))
+      }, OPEN_MS)
+    })
+    // The browser usually answers first, and then nothing waits on this refusal: it must not be reported as unhandled.
+    late.catch(() => {})
+    return { race: (p) => Promise.race([p, late]), get over() { return over } }
+  }
+
+  /** Opens the database; `stopped` says whether the console has stopped waiting, so a late connection is closed. */
+  const open = (stopped: () => boolean): Promise<IDBDatabase> => new Promise((resolve, reject) => {
+    if (!factory) { reject(new Error('this browser has no storage for the page')); return }
+    let settled = false
+    const settle = (fn: () => void): void => { if (!settled) { settled = true; fn() } }
+    let opening: IDBOpenDBRequest
+    try {
+      opening = factory.open(name, 1)
+    } catch (e) {
+      settle(() => reject(e instanceof Error ? e : new Error(String(e))))
+      return
+    }
+    opening.onupgradeneeded = () => {
+      if (!opening.result.objectStoreNames.contains(STORE)) opening.result.createObjectStore(STORE)
+    }
+    opening.onerror = () => settle(() => reject(opening.error ?? new Error('the storage refused to open')))
+    opening.onblocked = () => settle(() => reject(new Error('the storage is held by another page')))
+    opening.onsuccess = () => {
+      const opened = opening.result
+      // Another page that needs the database changed must not wait on this one.
+      opened.onversionchange = () => opened.close()
+      if (settled || stopped()) opened.close()
+      else settle(() => resolve(opened))
+    }
+  })
+
+  /** Listens, once, for what the site's other pages say they saved. */
+  const listen = (): void => {
+    if (channel !== null || typeof BroadcastChannel !== 'function') return
+    try {
+      channel = new BroadcastChannel(`${name}:saved`)
+    } catch {
+      return
+    }
+    channel.onmessage = (e: MessageEvent) => {
+      const said = e.data as { from?: unknown; gen?: unknown } | null
+      if (typeof said !== 'object' || said === null || said.from === self) return
+      if (typeof said.gen === 'number' && Number.isSafeInteger(said.gen)) heard = Math.max(heard, said.gen)
+    }
+    // A runtime that keeps a process alive for an open channel (a test's) need not keep it for this one.
+    const held = channel as unknown as { unref?: () => void }
+    held.unref?.()
+  }
+
+  const load = async (): Promise<Uint8Array | null> => {
+    listen()
+    // One wait bounds the opening and the read together: a browser that answers neither must not hold the console up.
+    const limit = bound()
+    try {
+      db ??= await limit.race(open(() => limit.over))
+      const row = rowOf(await limit.race(request(db.transaction(STORE, 'readonly').objectStore(STORE).get(IMAGE))))
+      gen = row?.gen ?? 0
+      known = true
+      return row?.bytes ?? null
+    } catch (e) {
+      // Unread is not the same as empty: nothing is written over what may still be there, and the caller is told.
+      known = false
+      throw e instanceof Error ? e : new Error(String(e))
+    }
+  }
+
+  /**
+   * One save's transaction. A timed save reads the stored generation and writes the image only over the one this page
+   * loaded or last saved: the read and the write are asked for together, and a newer generation there undoes the whole
+   * transaction, the write with it. The read compares with this page's generation as it stands when the read answers:
+   * the browser runs the site's writing transactions one after another in the order they were asked for, so by then
+   * every earlier write of this page has landed (and moved the page's generation with it, even one the console gave up
+   * on) or failed, and only another page's write differs. With `now` (the page is going) there is no read: the write is
+   * committed at once, unless another page has said it saved a newer generation, and said to the other pages as soon as
+   * it is asked for, while this page still runs (a page being reloaded never sees it complete); a timed save of this
+   * page still with the store is then cut short, and answers with this write's answer, since this image holds all of
+   * its. Every write's generation is above any this page asked for before, so a late write and the next never store
+   * the same one.
+   */
+  const write = (into: IDBDatabase, image: Uint8Array, now: boolean): Promise<'kept' | 'stale'> => {
+    if (heard > gen) return Promise.resolve('stale')
+    const t = into.transaction(STORE, 'readwrite')
+    const done = finished(t)
+    const store = t.objectStore(STORE)
+    const row: Row = { gen: Math.max(gen, asked) + 1, bytes: image }
+    asked = row.gen
+    let stale = false
+    const mine = now ? null : { t, by: null as Promise<'kept' | 'stale'> | null }
+    if (!now) {
+      const reading = store.get(IMAGE)
+      reading.onsuccess = () => {
+        // Another page saved since this one loaded: its disk is newer, and this page writes nothing over it.
+        if ((rowOf(reading.result)?.gen ?? 0) === gen) return
+        stale = true
+        try {
+          t.abort()
+        } catch {
+          // Already over (it failed meanwhile): what it answers below says so.
+        }
+      }
+    }
+    store.put(row, IMAGE)
+    if (now) {
+      // Committed now, not when the page's task ends: the page is going, and what it has not committed goes with it.
+      try {
+        t.commit?.()
+      } catch {
+        // Already committing.
+      }
+      // Said now, while the page still runs: a page being reloaded or closed never sees this write complete, and a page
+      // that is behind must not write its own disk over this one later.
+      try {
+        channel?.postMessage({ from: self, gen: row.gen })
+      } catch {
+        // No other page hears it.
+      }
+    }
+    const answer = done.then(() => {
+      gen = Math.max(gen, row.gen)
+      try {
+        channel?.postMessage({ from: self, gen: row.gen })
+      } catch {
+        // No other page hears it: each still reads the generation before a timed save.
+      }
+      return 'kept' as const
+    }, (e: unknown) => {
+      if (stale) return 'stale' as const
+      // Cut short by a save made as the page goes, whose image holds everything this one's did: that save's answer.
+      if (mine?.by) return mine.by
+      throw e instanceof Error ? e : new Error(String(e))
+    })
+    if (now && timed !== null) {
+      const ahead = timed
+      timed = null
+      ahead.by = answer
+      // Only once this write and its commit are asked for: cut short before them, a reload loses both in a browser.
+      try {
+        ahead.t.abort()
+      } catch {
+        // Already committing: it lands, and this write follows it.
+      }
+    }
+    if (mine !== null) {
+      timed = mine
+      const over = (): void => { if (timed === mine) timed = null }
+      done.then(over, over)
+    }
+    return answer
+  }
+
+  /**
+   * Copies a refused image aside in one transaction, never over a different copy: the first under REFUSED, each later
+   * one under its own key (asideKey). The same bytes again add nothing. False when REFUSED_MAX copies are kept already,
+   * or when its key holds another image.
+   */
+  const aside = async (into: IDBDatabase, image: Uint8Array): Promise<boolean> => {
+    const t = into.transaction(STORE, 'readwrite')
+    const done = finished(t)
+    done.catch(() => {})
+    const store = t.objectStore(STORE)
+    const first = rowOf(await request(store.get(REFUSED)))
+    let key = REFUSED
+    if (first !== null) {
+      if (same(first.bytes, image)) return true
+      key = asideKey(image)
+      const there = rowOf(await request(store.get(key)))
+      if (there !== null) return same(there.bytes, image)
+      const keys = await request(store.getAllKeys())
+      const kept = keys.filter((k) => k === REFUSED || (typeof k === 'string' && k.startsWith(`${REFUSED}:`))).length
+      if (kept >= REFUSED_MAX) return false
+    }
+    store.put({ gen: Math.max(1, gen), bytes: image }, key)
+    await done
+    return true
+  }
+
+  return {
+    // Asked again while a read is on its way: that read. Asked again after it (a new session of the console): a new one,
+    // so a disk saved since is what comes back, with its generation.
+    load: () => (loading ??= load().finally(() => { loading = null })),
+    async save(image, now = false) {
+      if (!known || db === null) return 'failed'
+      try {
+        // A store that never answers is a failed save, so the console counts it and can say when it gives up.
+        return await bound().race(write(db, image, now))
+      } catch {
+        return 'failed'
+      }
+    },
+    async setAside(image) {
+      if (db === null) return false
+      try {
+        return await bound().race(aside(db, image))
+      } catch {
+        // The copy could not be kept (or the store did not answer): the caller leaves the stored image where it is.
+        return false
+      }
+    },
+  }
+
+}

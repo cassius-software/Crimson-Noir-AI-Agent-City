@@ -116,7 +116,8 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the console brid
   const tty = between(app, 'function TtyShell({ vram }: { vram: string | null }) {', 'function App() {')
   // One bridge for the shell's life (terminal/consoleBridge.ts), made as it mounts: nothing is loaded until an ask.
   assert.match(tty, /const \[bridge\] = useState\(\(\) => ttyBridge\(vram\)\)/)
-  assert.match(tty, /<Terminal bridge=\{bridge\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} \/>/)
+  // The console's own disk (consoleDisk.ts) is the one thing it keeps: files typed here come back on the next visit.
+  assert.match(tty, /<Terminal bridge=\{bridge\} fullscreen onOpenChange=\{noop\} onBoot=\{reboot\} onMap=\{remap\} disk=\{CONSOLE_DISK\(\)\} \/>/)
   assert.match(tty, /bg-black/)
   assert.doesNotMatch(tty, /canvas|Engine|navigator\.gpu|Worker|audio|Hud|TouchControls|Concierge|BootVeil|useEffect|requestAnimationFrame/, 'no city at all')
   const ttyBridge = between(app, 'function ttyBridge(vram: string | null): TerminalBridge {', 'function reboot(track: BootTrack): void {')
@@ -134,7 +135,7 @@ test('app: ?boot=tty mounts the full-screen terminal alone over the console brid
   const gui = between(app, "function GuiShell({ options, plan, mentored, restarted = false, walk, voice, speaker, link, access, prefersMore, onAccess, adapterHint = '' }: {", 'export default App')
   assert.ok(gui.includes('Engine.create(canvas, { ...options, region }, onStage)'))
   assert.equal(app.match(/Engine\.create\(/g)?.length, 1)
-  assert.match(gui, /<Terminal ref=\{termRef\} bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} onLine=\{fw\.line\} \/>/)
+  assert.match(gui, /<Terminal ref=\{termRef\} bridge=\{bridge\} onOpenChange=\{onTermOpen\} onBoot=\{reboot\} onMap=\{remap\} onLine=\{fw\.line\} disk=\{CONSOLE_DISK\(\)\} \/>/)
   // A touch screen has no tilde key: the touch menu's Console item opens it through the handle.
   assert.match(gui, /onConsole: \(\) => termRef\.current\?\.open\(\)/)
 })

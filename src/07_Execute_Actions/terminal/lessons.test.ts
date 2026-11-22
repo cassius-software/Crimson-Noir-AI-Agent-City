@@ -50,7 +50,7 @@ const THE_LINE = 'not yet: that is the line, but it did not do what this lesson 
 /** Every try of a lesson, run on the real console: what it printed meets the try, and an exact `out` is the line's own first lines. */
 function checkLesson(b: TerminalBridge, session: ReturnType<typeof replSession>, n: number, where: string): void {
   LESSONS[n - 1]!.tries.forEach((t, i) => {
-    const printed = run(t.type, b, [], { machine: session.machine, noir: session.noir }).lines
+    const printed = run(t.type, b, [], { ...session, lesson: undefined }).lines
     assert.ok(passes(t, t.type, printed), `${where}, lesson ${n} try ${i + 1}: ${t.type}\n${printed.map((l) => `[${l.kind}] ${l.text}`).join('\n')}`)
     if (t.out) assert.deepEqual(outs(printed).slice(0, t.out.length), [...t.out], `${where}, lesson ${n} try ${i + 1}`)
     if (t.err) assert.equal(printed.filter((l) => l.kind === 'err').length, 1, `${where}, lesson ${n} try ${i + 1}: one error`)
@@ -186,7 +186,7 @@ test('without a console session a lesson prints whole; without a store the marks
   for (const t of LESSONS[0]!.tries) assert.ok(run(t.type, broken, [], u).lines.every((l) => l.kind !== 'err'), t.type)
   assert.match(run('tutorial', broken, [], u).lines[1]!.text, /, 1 of 10 finished:$/, 'kept for this visit')
   // A session made before lessons existed (no lesson field) gets one on first use.
-  const old = { machine: replSession().machine, noir: replSession().noir }
+  const old = { ...replSession(), lesson: undefined }
   assert.deepEqual(texts(run('tutorial 2', consoleAlone(), [], old).lines).slice(-3, -1), ['try 1 of 5, type this line:', '  noir let apples = 3; print(apples);'])
 })
 
