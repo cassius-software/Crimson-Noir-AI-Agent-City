@@ -5658,9 +5658,10 @@ the production page finds no physics object in the page and has every crafted me
   the page, runs its script to the end with no error and, given no GPU adapter there, gets the no-adapter card in an
   iPhone's words, with no other browser named. Safari 27.2 on macOS 15, which has no WebGPU, gets the card that says
   macOS 26 brings it. Safari 27.2 on macOS 26 gives the page and a worker a GPU device and reads a compute pass back
-  right; a drawing probe then asks for seventeen small pieces of the renderer's work, each on a device of its own.
+  right; on a Mac of its own, a drawing probe draws seventeen small pieces of the renderer's work, each on a device
+  of its own.
 - **Not judged on GitHub's Macs: the city running in Safari.** Their GPU is a virtual one. On every start there the
-  page's device was lost about 2.6 s in, and the Mac's kernel log names the cause: the virtual GPU hung, was
+  page's device was lost within five seconds, and the Mac's kernel log names the cause: the virtual GPU hung, was
   restarted, and the kernel then took no more GPU work from Safari. The check reads that from the kernel's own lines
   and reports the city as NOT JUDGED, a warning on the run: not passed, and not the page's failure. With the GPU gone
   the page must still show its card or its still-starting line, with Restart, and that is checked.

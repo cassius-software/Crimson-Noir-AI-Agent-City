@@ -23,15 +23,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   each on a GPU device of its own, read back where there is a pixel to read). A probe first finds what the browser
   offers, and that decides what the page owes it: a browser with a working GPU owes a running city; one with no
   adapter, or no WebGPU, owes the card for exactly that, and on an iPhone a card that names no other browser.
-  **What CI has shown** (the runs of 2026-11-21): Safari 26.5 in the iOS Simulator, which WebKit gives no adapter,
-  loads the page, runs its script to the end with no error and gets the no-adapter card in an iPhone's words; Safari
-  27.2 on macOS 15, which has no WebGPU, gets the card that says macOS 26 brings it; Safari 27.2 on macOS 26 gives the
-  page and a worker a GPU device, reads a compute pass back right, and in one run drew all fifteen kinds of work the
-  probe then had. **What CI has not shown is the city running in Safari.** A hosted Mac's GPU is a virtual one
-  (WebKit gives a virtual Mac WebGPU only under its own switch, `WebKitAllowWebGPUOnVMs`), and on every start there
-  the page's device was lost about 2.6 s in, with no words from WebKit. The Mac's kernel log says why: `GPU hang:
-  AppleParavirtGPU`, restarts of the GPU, then `Deny submissions/ignore app[com.apple.WebKit]`; the same hang once
-  came during the probe's own small drawing. So where the kernel writes that hang down (`--virtual-gpu`, `hangOf`),
+  **What CI has shown** (the runs of 2026-11-21 and 22): Safari 26.5 in the iOS Simulator, which WebKit gives no
+  adapter, loads the page, runs its script to the end with no error and gets the no-adapter card in an iPhone's
+  words; Safari 27.2 on macOS 15, which has no WebGPU, gets the card that says macOS 26 brings it; Safari 27.2 on
+  macOS 26 gives the page and a worker a GPU device, reads a compute pass back right, and on a Mac of its own draws
+  all seventeen kinds of work the probe has. **What CI has not shown is the city running in Safari.** A hosted Mac's
+  GPU is a virtual one (WebKit gives a virtual Mac WebGPU only under its own switch, `WebKitAllowWebGPUOnVMs`), and
+  on every start there the page's device was lost within five seconds, with no words from WebKit. The Mac's kernel
+  log says why: `GPU hang: AppleParavirtGPU`, restarts of the GPU, then `Deny submissions/ignore
+  app[com.apple.WebKit]`; the same hang once came during the probe's own small drawing, when the probe still shared
+  a Mac with the city. So where the kernel writes that hang down (`--virtual-gpu`, `hangOf`),
   the check reports what it took as NOT JUDGED, a warning on the run, never a pass and never the page's failure,
   says when the hang came and during what, and still requires the page to be left with words and Restart; on a Mac
   that is no virtual machine nothing is excused. `--trace` keeps the WebGPU calls of a start, the page's and its
