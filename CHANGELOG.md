@@ -38,7 +38,89 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   that is no virtual machine nothing is excused. `--trace` keeps the WebGPU calls of a start, the page's and its
   workers', and a run with a failed or unjudged check prints the crash reports and the system log's account of
   Safari's GPU process. Pinned by `safariCheck.test.ts`. Not verified on a real iPhone, iPad or Mac.
-
+- **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
+  repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
+  (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0
+  for five crates of the Tauri stack by name; nothing share-alike or non-commercial), no text file holds a name from
+  the policy's list of other owners' names, every picture, icon and packed data file has a recorded origin, and
+  every directory under `third_party/` carries its licence text and notices. `src/licenceGate.test.ts` runs it with
+  the tests, and ci's Rust job gains `crate-licences`, which reads each crate's licence from the registry with
+  `cargo metadata` and fails when the committed list differs (run here: 550 crates of 6 workspaces, 0 wrong). It is
+  not legal advice: it refuses the mistakes a machine can see. Its first run found, and this change fixes: two
+  screenshots of Crimson Noir OS that still showed the terminal's earlier name, which held a film franchise's mark
+  (retaken from this commit's image in QEMU), two notes that spelled that mark, and rain mode still called by a
+  film's name in a heading and two sentences of the manual, one entry here and the comments of 22 source files (no
+  identifier, label or behaviour changed). Found and not fixed here, recorded in `docs/ip-audit.md` §8: the app packages carry no
+  notices for the Rust crates linked into them (the next change generates that file); the boot file of the
+  published release tagged `stable-beta` still contains the terminal's earlier name; and where the cover picture
+  came from is unrecorded, which the gate prints as an open question on every run. Not checked by this: clearance
+  of names in the trademark registers, and anything a lawyer has to read.
+- **A check that the web copy and every download come from one commit, and the fault that let them part.** On
+  21 November 2026 the web copy, the downloads and main stood at three commits for close to five hours while every
+  run was green. Two causes. The `current` workflow picked its commit from the list of ci's runs that passed, and
+  that list trailed the run that had just ended by some seconds, so a run built nothing for a commit ci had passed on
+  and ended green: it now asks GitHub for the ci run that started it, by its id and its attempt
+  (`tools/build/current.mjs` `choose`, `pick --tested --attempt`), and builds that commit when GitHub's answer for
+  the run says ci, finished and passed on main in this repository. When the answer says anything else, the newest
+  commit the list shows is built all the same, with a warning, and the run is red, not green, when that builds
+  nothing. The other cause was the web workflow publishing a tested commit only while it was main's tip: on a day of
+  merges the tip is seldom the commit a ci run just passed on, so the copy waited for a later run that might fail or
+  be hours away. `web.yml` now takes its commit from the same tool (`current.mjs web-pick`): the newest commit on
+  main that ci passed on, the tip or not, asked again just before the deploy (`web-confirm`), where a copy that a
+  newer green commit has overtaken stops, so the copy never steps back. A run by hand publishes that same commit;
+  with "tip" ticked it publishes main as it is, as a run by hand did before.
+  The web copy now says which commit it is: each publish by `web.yml` puts `build.json` beside the page (commit,
+  version, the build's name, the ci run and the publishing run; `tools/web/pwa.mjs`), outside the page, the worker's
+  copy and the build's name, so the same page is still the same build byte for byte. A new workflow, `sync`
+  (`.github/workflows/sync.yml`, `tools/build/sync.mjs`), runs after each run of web or current on main, every hour
+  and by hand, with read access alone, and turns red when the web copy's `build.json`, the release's `current.json`,
+  any required target, the tag `current`, a recorded file's size or SHA-256, or the disk GUID inside a UEFI disk
+  image (which `build-image.sh` derives from the commit) does not name the newest commit on main that ci passed on,
+  unless something is still on its way to mend it (a publisher's run that has not ended, its files replaced one by
+  one among that; a publish minutes old; or, for what has never been published at all, such as a copy from before
+  copies were stamped or a target new to the build matrix, ci still running on a newer commit, since that arrives
+  with the first publish of a commit that has it). A publisher's run that ended having
+  built nothing is its answer, so the look that run's end starts is red at once. Main's newest green commit, the web
+  copy or the release unread after three tries is red too; a disk image unread is a warning. It mends nothing by
+  itself: its red lines say which workflow to run by hand. A unit test now holds the product's version equal wherever it is typed again
+  (`package.json`, `src/brand.ts`, `src-tauri/Cargo.toml`, both lock files) and Crimson Noir OS's own version equal
+  across its crates and containment files. Shown by unit tests against stand-ins for GitHub and the site (the day's
+  three states among them, and a look in the middle of a publish), by the disk GUID of the image published for
+  `ad3b3b9`, read from the release, being the one that commit derives, and by the pull request's own `sync` run,
+  which read the real site and release and said what was so: the web copy unstamped with a web run not ended, the
+  downloads a commit behind with a current run not ended, both disk images read. Not yet seen: the `sync` workflow on
+  main, a publish that carries `build.json`, and the `web` and `current` workflows started by a ci run under the new
+  rule (a pull request cannot start them); the first web copy published after this change is the first with a stamp,
+  and until then the check reports the web copy as unstamped, waiting while ci runs on the merge.
+- **Crimson Noir OS boots on riscv64 (`uefi-riscv64`), the build matrix's tenth target.** Rust has no riscv64 UEFI
+  target and its linker writes no RISC-V PE file, so the boot crate is built for the bare-metal target
+  `riscv64gc-unknown-none-elf`, linked position-independent at address 0 (`crimson_noir_os/boot/riscv64.ld`) and
+  written out flat behind a PE32+ header laid out by hand in `boot/src/arch/riscv64.rs` (machine 0x5064, subsystem 10,
+  no relocation directory). The firmware relocates nothing, so the entry applies the image's own relative relocations
+  before any Rust runs, and returns the firmware's load error if it meets a kind it cannot place. After
+  ExitBootServices the serial line is the SBI console (its Debug Console extension, or the legacy console calls where
+  that is missing), the clock the `time` CSR, and the image's own trap vector (`stvec`) sends every exception to the
+  fault screen with its cause, value and return address. The keyboard is the serial console, as on aarch64; the
+  decoder the two machines share moved to `arch/serial_keys.rs`. Everything above the machine layer is shared, and
+  the compute self-test reaches the other two images' fingerprint (0x83765bab). `build-image.sh` takes the target
+  (`BOOTRISCV64.EFI` on the ESP; the media's identity names the architecture, so the other two media's are unchanged)
+  and refuses a file with no PE header; `boot_test.py --arch riscv64` boots QEMU's RISC-V `virt` machine with edk2, a
+  ramfb screen and the serial line on a socket it types into; build-matrix.yml's third UEFI job bakes the media twice,
+  compares the bytes, and boots the disk image through the tutorial and the terminal to power-off and the ISO to the
+  self-test; the rolling `current` pre-release takes `crimson_noir_os-riscv64.img`, `.iso` and `BOOTRISCV64.EFI`
+  with the other targets' files; and the `sync` check asks the riscv64 image which commit it is, as it does the
+  other two. Checked in QEMU here: the riscv64 disk image through the whole boot test
+  (`SELFTEST PASS`, the tutorial passed, `golden` matched, powered off), the ISO to the self-test, a second clean bake
+  byte for byte, a forced breakpoint and a forced bad load on the fault screen, the terminal's 640 by 360 picture
+  pixel for pixel the x86-64 image's, and the x86-64 and aarch64 images through the same boot test after the change
+  (the x86-64 application's bytes are the ones main builds). An independent review of this change found five small
+  faults, fixed with it and changing no byte of the image: the linker script reached a hosted riscv64 build too (the
+  workspace's tests on a RISC-V Linux machine would not have linked); on OpenSBI each log line ends CR CR LF, which
+  the source now says and `boot_test.py` folds when it prints the log; `boot_test.py` left its work folder, with the
+  firmware's variable store, behind on every run; the `sync` check would have been red from the merge until the
+  first publish of the new target (see the entry above); and three places still counted nine targets. Not booted on
+  RISC-V hardware, where the screen needs a firmware that offers the graphics output protocol; a riscv64 build of
+  the page's desktop app is not part of this.
 - **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
   commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
   `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages
@@ -3478,10 +3560,10 @@ built by the two release workflows on that tag.
 
 ### Added
 
-- **Matrix mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
+- **Rain mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
   page's three.js node materials (`src/01_Initialize_World/matrixMesh.wgsl`); one global state word (time, mode,
   floating origin) packed into the materials' uniform and the crowd's parameters; toggled with the M key or `rain on`
-  in the console. In matrix mode pedestrians drop to the static-world collision bit, so people and cars pass through
+  in the console. In rain mode pedestrians drop to the static-world collision bit, so people and cars pass through
   each other while the ground and lots still hold; the floating origin snaps the camera to whole metres. Lakefront
   meshes take the mode through the region path. Unverified from the cloud (no GPU): the shaders compiling and their
   look on a real device.

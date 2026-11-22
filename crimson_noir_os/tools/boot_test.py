@@ -4,11 +4,13 @@
 # Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 """
 Why does this file exist? It boots the bootable media in QEMU with UEFI firmware (OVMF on a PC, AAVMF on QEMU's Arm
-`virt` machine with `--arch aarch64`), as a machine would, and checks what the system reports: the serial log must reach
+`virt` machine with `--arch aarch64`, edk2 on QEMU's RISC-V `virt` machine with `--arch riscv64`), as a machine would,
+and checks what the system reports: the serial log must reach
 every marker asked for (SELFTEST PASS, the tutorial's states) within the time allowed, and the screen is captured as PNG
 along the way. It can type into the system and capture again, so the terminal is tested the same way: on x86-64 into a
-PS/2 keyboard through QEMU's monitor; on aarch64 (no PS/2 controller, and the image has no USB stack) into the serial
-line, a terminal's bytes and escape sequences. `--step` runs a script of steps in
+PS/2 keyboard through QEMU's monitor; on aarch64 and riscv64 (no PS/2 controller, and the image has no USB stack) into
+the serial line, a terminal's bytes and escape sequences. On riscv64 the log begins with the firmware's own lines (the
+SBI's banner and edk2's), which no marker here appears in. `--step` runs a script of steps in
 order (wait:MARKER, shot:FILE.png, type:TEXT with \n for Enter, key:QEMU-KEY, sleep:SECONDS, exit: the machine
 powers itself off); each wait looks only at what the log gained since the last one. Nothing leaves this machine.
 What breaks if it is removed? Nothing would check that the image boots into the tutorial.
@@ -30,8 +32,11 @@ OVMF_VARS = "/usr/share/OVMF/OVMF_VARS_4M.fd"
 # Debian and Ubuntu's qemu-efi-aarch64: edk2 for QEMU's Arm virt machine (64 MiB flash images).
 AAVMF_CODE = "/usr/share/AAVMF/AAVMF_CODE.fd"
 AAVMF_VARS = "/usr/share/AAVMF/AAVMF_VARS.fd"
+# Debian and Ubuntu's qemu-efi-riscv64: edk2 for QEMU's RISC-V virt machine (32 MiB flash images).
+RISCV_CODE = "/usr/share/qemu-efi-riscv64/RISCV_VIRT_CODE.fd"
+RISCV_VARS = "/usr/share/qemu-efi-riscv64/RISCV_VIRT_VARS.fd"
 
-# What a terminal sends for the QEMU key names a `key:` step uses, on the serial line (aarch64).
+# What a terminal sends for the QEMU key names a `key:` step uses, on the serial line (aarch64 and riscv64).
 SERIAL_KEYS = {"ret": b"\r", "esc": b"\x1b", "backspace": b"\x7f", "tab": b"\t", "spc": b" ", "up": b"\x1b[A",
                "down": b"\x1b[B", "right": b"\x1b[C", "left": b"\x1b[D", "pgup": b"\x1b[5~", "pgdn": b"\x1b[6~"}
 
@@ -126,7 +131,7 @@ def type_text(sock, text):
 
 
 class SerialLine:
-    """The aarch64 machine's serial line: QEMU serves it on a Unix socket and waits for this to connect before the
+    """The serial line of a `virt` machine (aarch64, riscv64): QEMU serves it on a Unix socket and waits for this to connect before the
     machine starts, so no byte is lost; a thread copies what the system writes to the log file, and typing writes
     bytes back."""
 
@@ -188,19 +193,24 @@ def main():
     p.add_argument("--timeout", type=float, default=600, help="seconds allowed for each marker")
     p.add_argument("--log", default=None, help="where to keep the serial log")
     p.add_argument("--step", action="append", default=[], help="a scripted step, run after the markers (in order)")
-    p.add_argument("--arch", choices=["x86_64", "aarch64"], default="x86_64",
-                   help="the machine: a PC (q35, OVMF) or QEMU's Arm virt machine (AAVMF, ramfb, virtio disks)")
+    p.add_argument("--arch", choices=["x86_64", "aarch64", "riscv64"], default="x86_64",
+                   help="the machine: a PC (q35, OVMF), QEMU's Arm virt machine (AAVMF, ramfb, virtio disks), or "
+                        "QEMU's RISC-V virt machine (edk2 over QEMU's own OpenSBI, ramfb, virtio disks)")
     a = p.parse_args()
 
     work = tempfile.mkdtemp(prefix="crimson-boot-")
-    arm = a.arch == "aarch64"
+    # The two `virt` machines are driven alike: the serial line is the keyboard, the screen is ramfb.
+    virt = a.arch in ("aarch64", "riscv64")
+    riscv = a.arch == "riscv64"
     vars_fd = os.path.join(work, "vars.fd")
-    shutil.copy(AAVMF_VARS if arm else OVMF_VARS, vars_fd)
+    shutil.copy(RISCV_VARS if riscv else AAVMF_VARS if virt else OVMF_VARS, vars_fd)
+    # The firmware writes its variables there: a package may ship the file read-only, and the copy keeps its mode.
+    os.chmod(vars_fd, 0o644)
     log = a.log or os.path.join(work, "serial.log")
     if os.path.exists(log):
         os.remove(log)
     sock = os.path.join(work, "monitor.sock")
-    if arm:
+    if virt:
         # The virt machine has no IDE: the disk is virtio-blk, the ISO a SCSI CD-ROM. The screen is ramfb (a plain
         # framebuffer in RAM that QEMU scans out), so what the image writes after ExitBootServices is what is shown;
         # virtio-gpu would need its commands sent. The serial line is a socket this script connects to (SerialLine).
@@ -208,9 +218,15 @@ def main():
         media = (["-device", "virtio-scsi-pci", "-device", "scsi-cd,drive=cd",
                   "-drive", f"if=none,id=cd,media=cdrom,readonly=on,file={a.media}"] if a.media.endswith(".iso") else
                  ["-device", "virtio-blk-pci,drive=hd", "-drive", f"if=none,id=hd,format=raw,file={a.media}"])
-        cmd = ["qemu-system-aarch64", "-machine", "virt", "-m", "512M", "-cpu", "cortex-a72",
-               "-drive", f"if=pflash,format=raw,readonly=on,file={AAVMF_CODE}",
-               "-drive", f"if=pflash,format=raw,file={vars_fd}", *media,
+        # riscv64: no -bios, so QEMU loads its own OpenSBI under edk2 (the SBI console is the image's serial line), and
+        # the two flash images are named by unit, the firmware first.
+        machine = (["qemu-system-riscv64", "-machine", "virt", "-m", "512M",
+                    "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={RISCV_CODE}",
+                    "-drive", f"if=pflash,format=raw,unit=1,file={vars_fd}"] if riscv else
+                   ["qemu-system-aarch64", "-machine", "virt", "-m", "512M", "-cpu", "cortex-a72",
+                    "-drive", f"if=pflash,format=raw,readonly=on,file={AAVMF_CODE}",
+                    "-drive", f"if=pflash,format=raw,file={vars_fd}"])
+        cmd = [*machine, *media,
                "-display", "none", "-device", "ramfb", "-serial", f"unix:{serial},server=on,wait=on",
                "-monitor", f"unix:{sock},server,nowait", "-no-reboot"]
     else:
@@ -221,7 +237,7 @@ def main():
                "-display", "none", "-vga", "std", "-serial", f"file:{log}",
                "-monitor", f"unix:{sock},server,nowait", "-no-reboot"]
     q = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-    line = SerialLine(serial, log, q) if arm else None
+    line = SerialLine(serial, log, q) if virt else None
 
     def type_any(text):
         if line:
@@ -299,7 +315,13 @@ def main():
         except subprocess.TimeoutExpired:
             q.kill()
     print("serial log:")
-    print(open(log, errors="replace").read()[-4000:])
+    # Line ends as they came, then folded: on riscv64 the SBI adds a CR to the image's own CR LF, and read as text
+    # each CR CR LF would print as two lines.
+    text = open(log, "rb").read().decode(errors="replace").replace("\r\r\n", "\n").replace("\r\n", "\n")
+    print(text[-4000:])
+    # The work folder holds the firmware's variable store (32 or 64 MiB on the virt machines) and, unless --log says
+    # otherwise, the log just printed: nothing in it is wanted after this.
+    shutil.rmtree(work, ignore_errors=True)
     sys.exit(0 if ok else 1)
 
 

@@ -28,7 +28,7 @@ import { forbiddenWordIn } from './assets/cc0.ts'
 import { macroToRegionPack } from './region/fromMacro.ts'
 import { polygonCount, validatePack } from './region/pack.ts'
 
-// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): regionWorld.ts takes matrix mode (matrixMode.ts),
+// Vite's `?raw` import, for Node (crowdCompute.test.ts's hook): regionWorld.ts takes rain mode (matrixMode.ts),
 // which imports its WGSL that way, so it is imported once the hook is in place.
 registerHooks({
   load(url, context, nextLoad) {

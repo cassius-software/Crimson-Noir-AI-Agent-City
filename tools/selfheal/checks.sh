@@ -28,6 +28,9 @@ run_one() {
     fvps-kani)     sh tools/verify/fvps.sh kani ;;
     selfheal-test) node --test tools/selfheal/*.test.mjs ;;
     license-headers) node tools/license/headers.mjs check ;;
+    # Not in ALL: it asks cargo for every crate's own manifest, so it needs the registry (ci.yml's rust job has it; the
+    # sandbox has no network). The same three checks from the files alone run in page-test (src/licenceGate.test.ts).
+    crate-licences) node tools/license/gate.mjs crates --check ;;
     # Not in ALL: it needs a Chrome or Chromium (ci.yml's browser job has one) and dist/ from page-build. The
     # screenshots go to $BROWSER_SHOTS when it is set; $BROWSER_SHARD (i/n) runs only part i of n of the scenarios.
     page-browser)  node tools/browser/smoke.mjs ${BROWSER_SHOTS:+--out "$BROWSER_SHOTS"} ${BROWSER_SHARD:+--shard "$BROWSER_SHARD"} ;;

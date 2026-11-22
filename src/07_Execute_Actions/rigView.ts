@@ -40,7 +40,7 @@ export class RigView {
   private readonly v = new Vector3()
   private readonly c = new Color()
 
-  /** `matrixMode`: the page's global-state uniform (01_Initialize_World/matrixMode.ts), or null for rigs without matrix mode. */
+  /** `matrixMode`: the page's global-state uniform (01_Initialize_World/matrixMode.ts), or null for rigs without rain mode. */
   constructor(slots: number, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
     this.slots = Math.max(0, Math.floor(slots))
     // WebGPU refuses a zero-sized binding: a realm without rigs still gets one (never drawn) instance.

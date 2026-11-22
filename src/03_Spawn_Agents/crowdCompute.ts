@@ -128,7 +128,7 @@ export interface CullInput {
   camera: { x: number; y: number; z: number }
   /** Six frustum planes as [nx, ny, nz, constant]; inside when n·p + c ≥ 0. */
   planes: Float32Array
-  /** Matrix mode's global state (globalState.ts), packed into Params.global like the simulation's; absent: all zero. */
+  /** Rain mode's global state (globalState.ts), packed into Params.global like the simulation's; absent: all zero. */
   global?: GlobalState
 }
 

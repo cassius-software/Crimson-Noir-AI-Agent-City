@@ -369,8 +369,10 @@ test('every workflow that uploads the web copy or a release file runs the check 
   let fromOwn = 0
 
   // web.yml: the whole copy, after the model and the speech pack are placed in it and before the Pages upload. Its build checks out the
-  // commit pick names, which is the workflow's own: GITHUB_SHA on a dispatch, and on a ci run the commit ci tested only
-  // while it is main's tip (a workflow_run runs main's own workflow file, with github.sha at main's tip).
+  // commit pick names: the newest commit on main that ci passed on (tools/build/current.mjs web-pick), or by hand
+  // with "tip" main as it is. That commit can be older than the workflow file that runs (a workflow_run runs main's
+  // own file, at main's tip), so the tool it calls must be in every commit ci can still pass on: this one has been
+  // in main since 22 November 2026 (#166), before web.yml began to publish anything but the tip.
   const webYml = workflow('web.yml')
   const web = jobOf(webYml, 'build')
   inOrder(web, [
@@ -381,9 +383,9 @@ test('every workflow that uploads the web copy or a release file runs the check 
   ])
   assert.match(stepOf(web, 'uses: actions/upload-pages-artifact@v3'), /path: dist-web(?:\n|$)/, 'the folder checked is the folder uploaded')
   const pick = jobOf(webYml, 'pick')
-  assert.equal(pick.split('echo "sha=').length - 1, 2, 'pick names a commit in two places alone')
-  assert.match(pick, /if \[ "\$EVENT" = workflow_dispatch \]; then\n {12}echo "sha=\$GITHUB_SHA" >> "\$GITHUB_OUTPUT"\n/)
-  assert.match(pick, /if \[ "\$tip" = "\$TESTED" \]; then\n {12}echo "sha=\$TESTED" >> "\$GITHUB_OUTPUT"\n/)
+  assert.equal(pick.split('echo "sha=').length - 1, 1, 'pick names a commit itself in one place alone: main as it is, by hand with "tip"')
+  assert.match(pick, /if \[ "\$TIP" = true \]; then\n[^\n]+\n {14}echo "sha=\$GITHUB_SHA" >> "\$GITHUB_OUTPUT"\n/)
+  assert.match(pick, /\n {10}node tools\/build\/current\.mjs web-pick "\$\{args\[@\]\}" \| tee -a "\$GITHUB_OUTPUT"\n/)
   fromOwn += fromOwnCommit(web, ['${{ needs.pick.outputs.sha }}'])
 
   // build-matrix.yml: each target's folder, after every check of the build and before its upload, which takes that folder.
