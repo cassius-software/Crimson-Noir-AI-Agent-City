@@ -361,12 +361,15 @@ test('the exit program is the three lines, in order, with the role and the swarm
   assert.equal(inWords(99), '99')
 })
 
-test('the banner the console prints when the walk is passed: Sloane\'s line, then where to go from here', () => {
-  assert.deepEqual([...passedBanner()], [`Sloane: ${passedLine()}`, 'The city is open: nothing is held back any more. Esc closes the console; help lists every command.'])
+test('the banner the console prints when the walk is passed: Sloane\'s line, where to go from here, and the way to the console lessons', () => {
+  assert.deepEqual([...passedBanner()], [`Sloane: ${passedLine()}`, 'The city is open: nothing is held back any more. Esc closes the console; help lists every command.', 'When you like, tutorial lists ten short lessons in Crimson Noir Script.'])
   assert.match(passedBanner('Dana')[0]!, /The city is yours, Dana\./)
   assert.equal(passedBanner('', 'touch')[1], 'The city is open: nothing is held back any more. Close puts the console away; help lists every command.', 'touch has the console\'s Close button, no Esc')
   assert.equal(passedBanner('', 'pad')[1], passedBanner()[1])
-  for (const l of [...passedBanner('Dana'), ...passedBanner('Dana', 'touch')]) { assert.doesNotMatch(l, /tutorial|lesson|step \d/i); assert.equal(screen(l).admissible, true, l) }
+  // The walk itself is never called a lesson: only the last line names one, and it names Stage 2's console lessons.
+  for (const l of [...passedBanner('Dana').slice(0, 2), ...passedBanner('Dana', 'touch').slice(0, 2)]) assert.doesNotMatch(l, /tutorial|lesson|step \d/i)
+  for (const l of [...passedBanner('Dana'), ...passedBanner('Dana', 'touch')]) assert.equal(screen(l).admissible, true, l)
+  assert.equal(passedBanner('Dana', 'touch')[2], passedBanner()[2])
 })
 
 test('every spoken line is plain words, admissible, true to the device, and never calls the walk a lesson', () => {
