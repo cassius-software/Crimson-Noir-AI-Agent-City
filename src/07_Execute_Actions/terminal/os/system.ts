@@ -37,8 +37,9 @@ export const DISK_BYTES = 8 << 20
 /**
  * The most files and directories the disk holds, as a real file system of its size has a fixed count of them. Every
  * save walks the whole tree on the page's own thread, and restoring it is the first thing a visit does: the count
- * bounds that walk (a few milliseconds on a laptop), while the bytes are bounded by DISK_BYTES. Saving a disk near
- * full still copies each of its bytes once on the page's thread, which a host spaces by its cost (OsSession.saveCost).
+ * bounds that walk, while the bytes are bounded by DISK_BYTES. Saving or restoring a disk near full still copies each
+ * of its bytes on the page's thread, and the host's digest and store copy them again: tens of milliseconds, a save or
+ * the restore at boot, on a slow machine. A host spaces saves by their cost (OsSession.saveCost).
  */
 export const DISK_NODES = 4096
 /** Bytes /tmp holds unless the host says otherwise. */

@@ -654,6 +654,9 @@ test('wiring: the page hands both consoles the one disk store; the terminal give
   assert.match(term, /os\.pump\(fullRef\.current \? OS_TURN_FULL_MS : OS_TURN_MS\)/)
   assert.match(term, /const prompt = ps1 \?\? `\$\{b\.brand\.host\}:~# `/)
   assert.match(term, /os\.system\.interrupt\(\)/)
+  // Ctrl+C and Ctrl+D are the person's own turns: a fresh share, even right after an answer arrived.
+  assert.match(term, /os\.system\.interrupt\(\)\n\s*os\.pump\(OS_TURN_MS, true\)/)
+  assert.match(term, /os\.system\.end\(\)\n\s*os\.pump\(OS_TURN_MS, true\)/)
   assert.match(term, /if \(el\.value === ''\) \{ if \(!e\.repeat\) endInput\(\) \}/)
   assert.match(term, /window\.addEventListener\('pagehide', flush\)/)
   assert.match(term, /document\.addEventListener\('visibilitychange', hidden\)/)
@@ -1061,6 +1064,30 @@ test('a secret is dotted where it first shows, joined over a backslash and a lin
   assert.ok(performance.now() - start < 500, `${performance.now() - start} ms`)
 })
 
+test('a secret is not seen where the shell never read it: across two entries the first of which did not go on, or read as the shell reads it where no quote or backslash was taken out', () => {
+  // Words that end one entry and start the next are two lines the shell read apart, not the passphrase.
+  const apart = ['echo open', 'sesame street > notes', 'ls', '"ring0" unlock --elite open sesame']
+  scrubSecrets(apart, ['open sesame'])
+  assert.deepEqual(apart, ['echo open', 'sesame street > notes', 'ls', '"ring0" unlock --elite ••••'])
+  // An entry ended by an escaped backslash (two of them) does not go on into the next.
+  const escaped = ['echo C:\\\\', 'dir --all', '"ask" key C:dir']
+  scrubSecrets(escaped, ['C:dir'])
+  assert.deepEqual(escaped, ['echo C:\\\\', 'dir --all', '"ask" key ••••'])
+  // Read as the shell reads it, "it's me" is "its me": an entry with no quote that says so is not a copy of it.
+  const plain = ['echo its me', 'grep abcd log.txt', `"ring0" elite set "it's me"; "ask" key "ab'cd"`]
+  scrubSecrets(plain, ["it's me", "ab'cd"])
+  assert.deepEqual(plain, ['echo its me', 'grep abcd log.txt', '"ring0" elite set "••••'])
+  // Where the shell did read on (a backslash ending the entry, a quote left open over Enter), the next entry is still dotted.
+  const read = ['echo before', '"ring0" unlock --elite open \\', 'sesame', "\"ring0\" elite set 'correct", "horse'", 'echo after']
+  scrubSecrets(read, ['open sesame', 'correct\nhorse'])
+  assert.deepEqual(read, ['echo before', '"ring0" unlock --elite ••••', '••••', "\"ring0\" elite set '••••", '••••', 'echo after'])
+  // A history of 200 entries of 8,192 characters is scrubbed in well under a second.
+  const full = Array.from({ length: 200 }, (_, i) => (i % 2 ? 'echo "x" ' : '') + 'abcd '.repeat(1600))
+  const at = performance.now()
+  scrubSecrets(full, ["ab'cd", 'sk-NOT-THERE'])
+  assert.ok(performance.now() - at < 1000, `${performance.now() - at} ms`)
+})
+
 test('history lists an earlier entry dotted when its secret is handed over in the same turn, and a line of blanks that ends a continuation as the history holds it', () => {
   const b = city()
   const s = replSession(host())
@@ -1082,6 +1109,76 @@ test('history lists an earlier entry dotted when its secret is handed over in th
   const t = replSession(host())
   all('history | tail -n 1 \\', b, t)
   assert.deepEqual(all('   ', b, t), ['    1     '])
+})
+
+test('a key typed over two Enters, with history in its second half, is listed and written to a file dotted in both halves', () => {
+  const b = city()
+  for (const [first, second, key] of [
+    ['"ask" key sk-AB12\\', 'CD34; history > ~/h', /AB12|CD34/],
+    ["\"ask\" key 'sk-EF56", "GH78'; history > ~/h", /EF56|GH78/],
+    ['"ring0" elite set "two', 'words"; history | cat > ~/h', /two|words/],
+  ] as const) {
+    const s = replSession(host())
+    const hist: string[] = []
+    const line = (text: string): string[] => {
+      const out = texts(run(text, b, hist, s))
+      for (let r = osOf(s).next(); r !== null; r = osOf(s).next()) out.push(...texts(r))
+      hist.push(text)
+      return out
+    }
+    line(first)
+    line(second)
+    const saved = all('cat ~/h', b, s).join('\n')
+    assert.doesNotMatch(saved, key, `${first} / ${second}: ${saved}`)
+    assert.match(saved, /••••/, saved)
+  }
+})
+
+test('a key typed over two Enters is still dotted when history runs in a later turn, after the console has stored and dotted the line', async () => {
+  const b = city()
+  for (const [first, second, key] of [
+    ['"ask" key sk-LATE1\\', 'TAIL2; sleep 1; history > ~/h', /LATE1|TAIL2/],
+    ['sleep 1; "ask" key sk-LATE3\\', 'TAIL4; history > ~/h', /LATE3|TAIL4/],
+    ['"ask" key sk-LATE5; sleep 1; history > ~/h', null, /LATE5/],
+  ] as const) {
+    const h = host()
+    const s = replSession(h)
+    const os = osOf(s)
+    const hist: string[] = []
+    // As the terminal does: run the line, store it as the history keeps it, then dot what the shell handed over.
+    const line = (text: string): void => {
+      run(text, b, hist, s)
+      for (let r = os.next(); r !== null; r = os.next()) { /* shown */ }
+      const kept = redactForHistory(text.trim())
+      if (kept && hist[hist.length - 1] !== kept) hist.push(kept)
+      scrubSecrets(hist, os.takeSecrets())
+    }
+    line(first)
+    if (second !== null) line(second)
+    for (let i = 0; i < 4; i++) {
+      h.t += 600
+      await settle(s)
+      scrubSecrets(hist, os.takeSecrets())
+    }
+    const saved = all('cat ~/h', b, s).join('\n')
+    assert.doesNotMatch(saved, key, `${first} / ${second}: ${saved}`)
+    assert.match(saved, /••••/, saved)
+    // The line is listed once, as the console holds it.
+    assert.equal(saved.split('\n').length, hist.length, saved)
+  }
+})
+
+test('a key found inside another key on the same line, or overlapping it, leaves no part of either in what history lists', () => {
+  const b = city()
+  const s = replSession(host())
+  // The short key is found first, inside the long one; the long one must still cut the line where it starts.
+  const rows = (out: string[]): string => out.filter((l) => /^ +\d/.test(l)).join('\n')
+  const listed = rows(all('K=sk-SECRETKEY-77; "ask" key 77; "ask" key "$K"; history | tail -n 1', b, s))
+  assert.equal(listed, '    1  K=••••')
+  const t = replSession(host())
+  const other = rows(all('"say" key 9Z; "ask" key sk-LONGKEYPART-9Z; history | tail -n 1', b, t))
+  assert.doesNotMatch(other, /LONGKEYPART/)
+  assert.equal(other, '    1  "say" key ••••')
 })
 
 test('the line history lists is dotted once for each secret a loop hands over, and each secret is handed to the console once', () => {
@@ -1112,6 +1209,59 @@ test('answers that arrive at once cannot chain turns past the share\'s time whil
   os.system.interrupt()
   os.pump(LINE_MS)
   while (os.next() !== null) { /* shown */ }
+})
+
+test('the waits between a loop\'s answers are not the page\'s work: a command that answers a moment later still runs again as each answer arrives, within the share', async () => {
+  const b = city()
+  const owed: (() => void)[] = []
+  let asked = 0
+  b.memory = {
+    status: () => new Promise<string[]>((resolve) => { asked++; owed.push(() => resolve(['kept on this page'])) }),
+    ledger: () => Promise.resolve([]),
+    forget: () => Promise.resolve('none'),
+  }
+  const h = host()
+  const s = replSession(h)
+  const os = osOf(s)
+  os.wake = () => { if (os.busy) os.pump(4) }
+  run('while true; do memory > /dev/null; done', b, [], s)
+  assert.equal(asked, 1)
+  // Each answer comes 3 ms after it was asked for; the page's own work takes no time (the clock stands still as it works).
+  for (let n = 0; n < 5; n++) {
+    h.t += 3
+    owed.shift()!()
+    for (let i = 0; i < 50; i++) await Promise.resolve()
+  }
+  assert.equal(asked, 6, 'one more ask for each answer, though 15 ms of waiting is more than the 4 ms turn')
+  os.system.interrupt()
+  os.pump(LINE_MS, true)
+  while (os.next() !== null) { /* shown */ }
+  assert.equal(os.prompt, 'testhost:~# ')
+})
+
+test('Ctrl+C right after an answer arrived is a turn of its own: the prompt comes back at once, though the share\'s turns spent its time', async () => {
+  const start = async (given: boolean): Promise<string> => {
+    const b = city()
+    const h = host()
+    const slow = b.setClock
+    // Each time command takes the page 2 ms; memory answers as a promise, so the loop waits for it each round.
+    b.setClock = (hour) => { h.t += 2; slow(hour) }
+    b.memory = { status: () => Promise.resolve(['kept on this page']), ledger: () => Promise.resolve([]), forget: () => Promise.resolve('none') }
+    const s = replSession(h)
+    const os = osOf(s)
+    run('while true; do time 1 > /dev/null; memory > /dev/null; done', b, [], s)
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    // The answer's turn: the second time command spends the rest of the share's 4 ms.
+    os.pump(4)
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    // The next answer has arrived; then Ctrl+C.
+    os.system.interrupt()
+    os.pump(4, given)
+    while (os.next() !== null) { /* shown */ }
+    return os.prompt
+  }
+  assert.equal(await start(true), 'testhost:~# ')
+  assert.equal(await start(false), '', 'a turn that went on with the share would have had no time left')
 })
 
 test('Ctrl+C drops a command owed to a job run under timeout, as it does one the line ran itself', () => {
@@ -1215,4 +1365,26 @@ test('the saved disk\'s seal is checked with the host\'s own digest before it is
   await ticks()
   await settle(third)
   assert.deepEqual(all('cat a', b, third), ['kept'])
+})
+
+test('a host digest that answers the seal itself, not as a promise, still seals the save and checks the saved disk: nothing is lost', async () => {
+  const b = city()
+  const disk = memoryDisk()
+  const h = host(disk)
+  h.digest = ((bytes: Uint8Array) => nodeSha(bytes)) as unknown as OsHost['digest']
+  const first = replSession(h)
+  await settle(first)
+  all('echo kept > a', b, first)
+  await osOf(first).save()
+  const stored = disk.image
+  assert.ok(stored !== null)
+  // Sealed with the host's own digest: the seal at the end is the SHA-256 of what comes before it.
+  assert.deepEqual(stored.subarray(stored.length - 32), nodeSha(stored.subarray(0, stored.length - 32)))
+  const w = host(disk.open())
+  w.digest = ((bytes: Uint8Array) => nodeSha(bytes)) as unknown as OsHost['digest']
+  const next = replSession(w)
+  await ticks()
+  const said = await settle(next)
+  assert.doesNotMatch(said.join('\n'), /could not be read/)
+  assert.deepEqual(all('cat a', b, next), ['kept'])
 })

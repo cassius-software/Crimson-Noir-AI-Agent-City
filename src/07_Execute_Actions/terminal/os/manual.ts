@@ -201,7 +201,9 @@ WHAT IS KEPT
     disk of 8 MiB, saved in this browser's own storage for this site a
     moment after it changes, when the page is hidden and as it starts to
     go (a change made in the very last moment before a reload can still
-    be lost, more so on a large disk). It comes back
+    be lost: wait 1.5 s after a change before a reload, and on a disk
+    with more than 1 MiB in use 1.5 s for each MiB, 10 s at most). It
+    comes back
     the next time the page is opened in the same browser. It is not
     sent anywhere, and another browser or device has its own.
 

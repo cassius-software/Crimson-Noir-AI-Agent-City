@@ -2363,7 +2363,8 @@ console hands it. The design, every limit and what is not there yet are in `docs
 - **Keys.** Tab completes commands and paths; Up and Down recall earlier lines; Ctrl+C stops the running program and
   forgets lines typed ahead of it (`$?` is then 130); Ctrl+D on an empty line ends the input of a program that reads
   what you type, and on a line with text deletes the character after the cursor (all of what shows as one: a flag or an
-  emoji with a skin tone goes whole). On a touch screen, **Stop** and **End input** do the same while a program has the
+  emoji with a skin tone goes whole, in a browser that can tell; an older one without `Intl.Segmenter` deletes one code
+  point at a time). On a touch screen, **Stop** and **End input** do the same while a program has the
   terminal. A line typed while a program reads (`cat > notes`) is that program's, even one that names a console command.
   The prompt shows the directory (`host:~# `), and `> ` while a command needs more lines.
 - **The tree** (`man files`): `~` is `/home/operator` (with a `README`); `/etc` and `/mnt`; `/tmp`, scratch space;
@@ -2374,9 +2375,10 @@ console hands it. The design, every limit and what is not there yet are in `docs
   this browser's own storage for the site a moment after it changes (1.5 s, longer for a disk with more than 1 MiB in
   use or many files, 10 s at most), when the page is hidden or starts to go, and before `boot`, `map` or **Back to the
   city** reloads the page, which waits up to 4 s for the save. A change made in the very last moment before you reload
-  the page can still be lost, more so on a large disk: wait a second and a half after a change before a reload you start
-  yourself. It holds at most 4,096 files and directories, and saving a disk near full can still take the city a frame or
-  two, so such a disk is saved at most every 10 s; it is back the next time the page opens in the same browser, and the
+  the page can still be lost, more so on a large disk: before a reload you start yourself, wait a second and a half
+  after a change, and on a disk with more than 1 MiB in use a second and a half for each MiB (10 s at most). It holds at
+  most 4,096 files and directories, and saving a disk near full can still take the city a frame or two on a laptop (and
+  about as much again to restore it as the page opens), so such a disk is saved at most every 10 s; it is back the next time the page opens in the same browser, and the
   city's console and the console alone (`?boot=tty`) share it. It is sent nowhere, and another browser or device has its
   own. `/tmp` (4 MiB) is emptied when the page closes. When the storage cannot be read, a second tab of the site saved a
   newer disk, or the browser gives the page no storage, the console says once

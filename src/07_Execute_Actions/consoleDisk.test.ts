@@ -567,3 +567,53 @@ test('a save asked while this page\'s own given-up write still waits in line is 
   assert.equal(await ps, 'stale')
   assert.deepEqual([...(await consoleDisk(idb.factory, timers().wait, 'test:queued2').load() ?? [])], [4])
 })
+
+test('a save as the page goes is said to the other pages as it is asked for, so one that never completes (the page went first) still keeps a page that is behind from writing over it', async () => {
+  const idb = fakeIdb()
+  const t = timers()
+  const name = 'test:said'
+  const a = consoleDisk(idb.factory, t.wait, name)
+  const b = consoleDisk(idb.factory, t.wait, name)
+  await a.load()
+  await b.load()
+  // A page reloaded on a large disk: its write lands, but the page is gone before the browser says so.
+  idb.holding = true
+  void a.save(bytes(1), true)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  idb.holding = false
+  idb.release()
+  assert.equal(await b.save(bytes(2), true), 'stale', 'told before it writes, though the write never answered the page that asked')
+  assert.equal(await b.save(bytes(3)), 'stale')
+  assert.deepEqual(idb.puts, ['image'], 'and asks for no write over it')
+  assert.deepEqual([...(await consoleDisk(idb.factory, timers().wait, name).load() ?? [])], [1])
+})
+
+test('a timed save still with the store is cut short by a save made as the page goes, which carries its image and answers for both', async () => {
+  const idb = fakeIdb()
+  idb.serial = true
+  const t = timers()
+  const name = 'test:cut'
+  const d = consoleDisk(idb.factory, t.wait, name)
+  await d.load()
+  // The timed save's transaction has read and staged its write, and is not done (a page that is going never finishes it).
+  idb.holding = true
+  const timed = d.save(bytes(1))
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  idb.holding = false
+  const hung = new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 200))
+  const going = d.save(bytes(1, 2), true)
+  assert.equal(await Promise.race([going, hung]), 'kept', 'not left in line behind the timed save')
+  assert.equal(await Promise.race([timed, hung]), 'kept', 'the timed save answers with the save that holds all it held')
+  idb.release()
+  assert.deepEqual([...(await consoleDisk(idb.factory, timers().wait, name).load() ?? [])], [1, 2])
+  // Its answer counts as the save it was cut short by: a refusal of that save is the timed save's refusal too.
+  const e = consoleDisk(idb.factory, t.wait, 'test:cut2')
+  await e.load()
+  idb.holding = true
+  const late = e.save(bytes(3))
+  await new Promise((resolve) => setTimeout(resolve, 5))
+  idb.holding = false
+  idb.full = true
+  assert.equal(await Promise.race([e.save(bytes(3, 4), true), hung]), 'failed')
+  assert.equal(await Promise.race([late.catch(() => 'threw'), hung]), 'failed')
+})

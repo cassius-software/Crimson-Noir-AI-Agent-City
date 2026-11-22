@@ -307,10 +307,15 @@ export class OsSession {
   history: readonly string[] = []
   /**
    * The line being run as the history keeps it, and the same line dotted where it holds a secret a console command took
-   * from the shell since it was set (each secret dots it once, as it is taken: nothing grows while a loop runs).
+   * from the shell since it was set: cut at `lineCut`, the earliest place in `line` (never in the dotted copy) any of
+   * them starts, so a key found inside another, or overlapping it, never leaves the other's head. Each secret moves the
+   * cut once, as it is taken: nothing grows while a loop runs.
    */
   private line = ''
   private lineKept = ''
+  private lineCut = -1
+  /** Whether the console has stored that line in its history: it takes the secrets (takeSecrets) right after it does. */
+  private stored = false
   private readonly clock: () => number
   private readonly store: DiskStore | null
   private readonly digest: ((bytes: Uint8Array) => Promise<Uint8Array>) | null
@@ -319,6 +324,8 @@ export class OsSession {
   private shareFrom = Number.NEGATIVE_INFINITY
   /** Whether the next turn is given because something the layer waited for arrived (rouse), not by the host's own timer or a key. */
   private roused = false
+  /** Milliseconds this share's turns have taken so far (their own work, not the waits between them). */
+  private spent = 0
   /**
    * Console commands past the turn's share, oldest first: each runs at the start of a later turn. Each answers whether
    * it ran (one whose shell gave up waiting for it, at Ctrl+C or when its job ended, is dropped instead).
@@ -378,12 +385,22 @@ export class OsSession {
       // earlier entries as the console's history will hold them once it has dotted the secrets taken since it last
       // asked, so a key handed over in this same turn (by an earlier line typed ahead, or the first half of this one)
       // is never listed, or written to a file, in clear.
-      const said = name === 'history' && this.line !== '' ? this.typed : line
+      let said = name === 'history' && this.line !== '' ? this.typed : line
       let listed = this.history
-      if (name === 'history' && this.secrets.size > 0) {
-        const dotted = [...this.history]
-        scrubSecrets(dotted, [...this.secrets])
-        listed = dotted
+      if (name === 'history' && this.line !== '' && (this.stored || this.secrets.size > 0)) {
+        // The rows as one text with this line the last of them: the console's own last entry once it has stored the line
+        // (dotted there by the console), else the line as it will store it. So a key typed over two lines (its first half
+        // before an Enter that left the command open) is dotted in both, and the line is listed once.
+        const rows = [...this.history]
+        if (!this.stored && rows[rows.length - 1] !== this.line) rows.push(this.line)
+        if (this.secrets.size > 0) scrubSecrets(rows, [...this.secrets])
+        const last = rows[rows.length - 1]
+        if (last !== undefined) {
+          // Both are this line cut where a secret starts, or dots alone: the shorter is the one cut earlier.
+          if (said.length < last.length) rows[rows.length - 1] = said
+          else said = last
+        }
+        listed = rows
       }
       try {
         return HANDLERS[name as Name](args, this.bridge, listed, said, session)
@@ -401,9 +418,16 @@ export class OsSession {
         const secret = secretOf(name, a)
         if (secret !== null) {
           this.secrets.add(secret)
-          const kept = [this.lineKept]
+          const kept = [this.line]
           scrubSecrets(kept, [secret])
-          this.lineKept = kept[0]
+          if (kept[0] !== this.line) {
+            // scrubSecrets keeps an entry up to where the secret starts and puts DOTS after it.
+            const at = kept[0].length - DOTS.length
+            if (this.lineCut < 0 || at < this.lineCut) {
+              this.lineCut = at
+              this.lineKept = `${this.line.slice(0, at)}${DOTS}`
+            }
+          }
         }
         const answered = decides(name, a)
         // What the shell waits for when the command is owed to a later turn. When the shell gives the wait up (it settles
@@ -473,7 +497,8 @@ export class OsSession {
         const end = bytes.length - SEAL_BYTES
         let asked: Promise<Uint8Array>
         try {
-          asked = digest(bytes.subarray(0, end))
+          // A digest that answers bytes, or nothing, rather than a promise is taken as an answer, not a failed read.
+          asked = Promise.resolve(digest(bytes.subarray(0, end)))
         } catch {
           return Promise.resolve(bytes)
         }
@@ -508,19 +533,23 @@ export class OsSession {
   }
 
   /** Gives the layer a turn of at most `ms` milliseconds and queues what it printed. */
-  pump(ms: number): void {
+  pump(ms: number, given = false): void {
     const start = this.clock()
     // A new share of console commands comes with each turn the host gives of its own accord (its timer, a typed line, a
-    // key); a turn given because something arrived goes on with the share it has until a frame has passed.
+    // key: `given` says so even when something arrived just before); a turn given because something arrived goes on
+    // with the share it has until a frame has passed.
+    if (given) this.roused = false
     if (!this.roused || start - this.shareFrom >= SHARE_MS) {
       this.calls = 0
       this.shareFrom = start
+      this.spent = 0
     }
     this.roused = false
-    // A turn given because something arrived keeps to the share's time as well as its count: `ms` from when the share
-    // began. Answers that arrive as promises already settled then cannot chain turns, one inside the next, past it
-    // (the page would never draw); the host's own timer gives the next share.
-    const deadline = Math.min(start + ms, this.shareFrom + ms)
+    // A turn given because something arrived keeps to the share's time as well as its count: what is left of `ms` once
+    // the share's earlier turns have taken theirs. The waits between turns (for an answer, for the task that brings it)
+    // are not the page's work and do not count. Answers that arrive as promises already settled then cannot chain
+    // turns, one inside the next, past it (the page would never draw); the host's own timer gives the next share.
+    const deadline = start + ms - this.spent
     if (start >= deadline) return
     // Tasks already asked to end (a Ctrl+C, a job stopped) end first, with what they stop as they go, so an owed
     // command whose task went with them is seen to be unwanted.
@@ -534,6 +563,7 @@ export class OsSession {
       ran++
     }
     this.take(this.system.run(PUMP_STEPS, deadline))
+    this.spent += this.clock() - start
     // A saved disk that failed its checks is copied under another name before anything is saved over it; if the copy
     // cannot be kept, the stored one is left alone and this visit's files are not kept.
     if (!this.aside && this.system.state === 'refused' && this.system.refused !== null && this.store !== null) {
@@ -599,12 +629,18 @@ export class OsSession {
   set typed(line: string) {
     this.line = line
     this.lineKept = line
+    this.lineCut = -1
+    this.stored = false
   }
 
-  /** The secrets console commands took from the shell since the last call, oldest first (each handed over once). */
+  /**
+   * The secrets console commands took from the shell since the last call, oldest first (each handed over once). The
+   * console calls it right after it stores a typed line, so from then on `history` lists that line as the console holds it.
+   */
   takeSecrets(): string[] {
     const taken = [...this.secrets]
     this.secrets.clear()
+    this.stored = true
     return taken
   }
 
@@ -768,7 +804,7 @@ export class OsSession {
       let sealing: Promise<Uint8Array>
       try {
         // A seal that is not one (the wrong length, not bytes) is the host's fault, not the store's: the layer's own is used.
-        sealing = digest(body).then((seal) => (seal instanceof Uint8Array && seal.length === SEAL_BYTES ? sealed(body, seal) : own()), own)
+        sealing = Promise.resolve(digest(body)).then((seal) => (seal instanceof Uint8Array && seal.length === SEAL_BYTES ? sealed(body, seal) : own()), own)
       } catch {
         sealing = Promise.resolve().then(own)
       }
@@ -2947,7 +2983,7 @@ export function run(input: string, bridge: TerminalBridge, history: readonly str
  */
 function shellLine(os: OsSession, input: string, earn: TerminalBridge | null): CommandResult {
   if (!os.system.type(input)) return fail('ash: too many lines are waiting to be read: wait for the running command, or press Ctrl+C')
-  os.pump(LINE_MS)
+  os.pump(LINE_MS, true)
   const r = os.next() ?? { lines: [] }
   const p = earn?.progress
   // Finished: the shell is back at its prompt with nothing left to run, and what it printed holds no error.
@@ -3018,34 +3054,43 @@ export function runsWhole(line: string): boolean {
   return head !== null && RAW.has(head[1])
 }
 
-/** Whether a character is one the shell takes out of a word (a quote or the backslash). */
-const quoting = (ch: string): boolean => ch === "'" || ch === '"' || ch === '\\'
+/** What a secret, and everything after it in its entry, becomes in the history. */
+const DOTS = '••••'
 
-/** Whether a character is a blank, as `\s` counts one (the shell joins words with one space). */
-const BLANK = /\s/
+/** Whether a UTF-16 unit is one the shell takes out of a word (a quote or the backslash). */
+const quoting = (c: number): boolean => c === 0x27 || c === 0x22 || c === 0x5c
+
+/** Whether a UTF-16 unit is a blank, as `\s` counts one (the shell joins words with one space). */
+const blank = (c: number): boolean => c <= 32
+  ? c === 32 || (c >= 9 && c <= 13)
+  : c >= 0xa0 && (c === 0xa0 || c === 0x1680 || (c >= 0x2000 && c <= 0x200a) || c === 0x2028 || c === 0x2029 || c === 0x202f || c === 0x205f || c === 0x3000 || c === 0xfeff)
 
 /**
  * `text` with each run of blanks as one space and, when `loose`, read as the shell reads it: quotes and backslashes
  * taken out, and a backslash before a line end taken out with that line end (the shell joins the two lines). With it,
- * where each character kept stood in `text`.
+ * where each character kept stood in `text`. One pass over the UTF-16 units, with no string made per character (the
+ * history can hold 200 entries of 8,192 characters).
  */
 function squeezed(text: string, loose: boolean): { readonly text: string; readonly stood: Int32Array } {
   const stood = new Int32Array(text.length)
-  const kept: string[] = []
-  let blank = false
+  const codes = new Uint16Array(text.length)
+  let n = 0
+  let wasBlank = false
   for (let i = 0; i < text.length; i++) {
-    const ch = text[i]
+    const c = text.charCodeAt(i)
     if (loose) {
-      if (ch === '\\' && text[i + 1] === '\n') { i++; continue }
-      if (quoting(ch)) continue
+      if (c === 0x5c && text.charCodeAt(i + 1) === 0x0a) { i++; continue }
+      if (quoting(c)) continue
     }
-    const isBlank = BLANK.test(ch)
-    if (isBlank && blank) continue
-    blank = isBlank
-    stood[kept.length] = i
-    kept.push(isBlank ? ' ' : ch)
+    const isBlank = blank(c)
+    if (isBlank && wasBlank) continue
+    wasBlank = isBlank
+    stood[n] = i
+    codes[n++] = isBlank ? 32 : c
   }
-  return { text: kept.join(''), stood: stood.subarray(0, kept.length) }
+  let kept = ''
+  for (let at = 0; at < n; at += 8192) kept += String.fromCharCode(...codes.subarray(at, Math.min(n, at + 8192)))
+  return { text: kept, stood: stood.subarray(0, n) }
 }
 
 /**
@@ -3078,27 +3123,49 @@ export function scrubSecrets(history: string[], secrets: readonly string[]): voi
   }
   const cut = new Array<number>(history.length).fill(-1)
   const whole = new Array<boolean>(history.length).fill(false)
-  /** Marks every place `secret` stands in `read` (a squeezed `text`): where it starts is cut, an entry it runs into dotted. */
-  const mark = (read: { readonly text: string; readonly stood: Int32Array }, secret: string): void => {
+  /** The secrets the shell read over a line end it kept (a quote left open over Enter): each may run on into the next entry. */
+  const lined = new Set(secrets.filter((s) => s.includes('\n')).map((s) => s.split(/\s+/).filter((w) => w !== '').join(' ')))
+  /** Whether an entry ends in an odd run of backslashes, so the shell read the next line on as part of it. */
+  const continues = (entry: string): boolean => {
+    let n = 0
+    while (n < entry.length && entry.charCodeAt(entry.length - 1 - n) === 0x5c) n++
+    return n % 2 === 1
+  }
+  /**
+   * Marks every place `secret` stands in `read` (a squeezed `text`): where it starts is cut, an entry it runs into
+   * dotted. It runs from one entry into the next only where the shell read on (over a line that ends in a backslash, or
+   * over a line end the secret itself holds: `over`); read as the shell read it (`loose`), a place counts only where a
+   * quote or a backslash was taken out in it or beside it, since anywhere else it is no copy of the secret, or one the
+   * reading as written found already.
+   */
+  const mark = (read: { readonly text: string; readonly stood: Int32Array }, secret: string, loose: boolean, over: boolean): void => {
     if (secret === '') return
-    for (let at = read.text.indexOf(secret); at >= 0; at = read.text.indexOf(secret, at + 1)) {
+    next: for (let at = read.text.indexOf(secret); at >= 0; at = read.text.indexOf(secret, at + 1)) {
       const start = read.stood[at]
       const end = read.stood[at + secret.length - 1] + 1
       const k = entryAt(start)
+      for (let j = k + 1; j < from.length && from[j] < end; j++) if (!over && !continues(history[j - 1])) continue next
+      if (loose) {
+        const lo = at > 0 ? read.stood[at - 1] + 1 : 0
+        const hi = at + secret.length < read.stood.length ? read.stood[at + secret.length] : text.length
+        let took = false
+        if (hi - lo !== secret.length) for (let i = lo; i < hi && !took; i++) took = quoting(text.charCodeAt(i))
+        if (!took) continue
+      }
       const inEntry = start - from[k]
       if (cut[k] < 0 || inEntry < cut[k]) cut[k] = inEntry
       for (let j = k + 1; j < from.length && from[j] < end; j++) whole[j] = true
     }
   }
   const asWritten = squeezed(text, false)
-  for (const secret of wanted) mark(asWritten, secret)
+  for (const secret of wanted) mark(asWritten, secret, false, lined.has(secret))
   if (/['"\\]/.test(text)) {
     const asRead = squeezed(text, true)
-    for (const secret of wanted) mark(asRead, squeezed(secret, true).text.trim())
+    for (const secret of wanted) mark(asRead, squeezed(secret, true).text.trim(), true, lined.has(secret))
   }
   for (let i = 0; i < history.length; i++) {
-    if (whole[i]) history[i] = '••••'
-    else if (cut[i] >= 0) history[i] = `${history[i].slice(0, cut[i])}••••`
+    if (whole[i]) history[i] = DOTS
+    else if (cut[i] >= 0) history[i] = `${history[i].slice(0, cut[i])}${DOTS}`
   }
 }
 

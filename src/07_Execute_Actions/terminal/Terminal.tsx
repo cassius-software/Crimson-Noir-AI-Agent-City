@@ -581,7 +581,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     const os = session.current?.os
     if (!os) return
     os.system.interrupt()
-    os.pump(OS_TURN_MS)
+    os.pump(OS_TURN_MS, true)
     follow()
   }
 
@@ -590,7 +590,7 @@ export function Terminal({ bridge, onOpenChange, fullscreen = false, onBoot, onM
     const os = session.current?.os
     if (!os || !os.system.capturing) return
     os.system.end()
-    os.pump(OS_TURN_MS)
+    os.pump(OS_TURN_MS, true)
     follow()
   }
 

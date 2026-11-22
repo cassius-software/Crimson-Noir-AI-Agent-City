@@ -302,8 +302,11 @@ still waits in line is kept, not told `stale`. Every write's generation is above
 made as the page goes (`save(image, true)`) cannot wait for a read: a page being reloaded runs nothing after it has
 gone, and its storage work ends with it. It is one write, committed at once (`IDBTransaction.commit`), and answers
 `stale` without writing when another page of the site has said it saved a newer generation: each page says so after
-every save it kept, on a `BroadcastChannel` named after the database. A save another page made in the last few
-milliseconds, before its word arrived, can still be written over by it. If the store could not be read at all (refused,
+every save it kept, on a `BroadcastChannel` named after the database, and a save made as the page goes says so as soon
+as it is committed, since a page being reloaded never sees it answer (if that write then fails, the other page has been
+told `stale` wrongly, but it has been told). It also cuts short this page's timed save still with the store, which
+would hold it up behind a read: the timed save answers as the write that replaced it does, whose image holds all it
+held. A save another page made in the last few milliseconds, before its word arrived, can still be written over by it. If the store could not be read at all (refused,
 failed, or no answer), the console says so at once and every save is refused for the visit, because an image that may
 still be there must not be replaced by an empty disk. Both consoles hand the layer the same store; a console opened
 again in the same page reads the disk afresh, so it gets what was last saved.
@@ -325,9 +328,11 @@ page's own thread (`System.snapshotBody`) in one pass that sizes it and one that
 its seal, each file's bytes copied once straight from the disk (`MemFs.bytesOf`): a few milliseconds for a disk of 4,096
 small files on a laptop, tens of milliseconds for one near its 8 MiB, with the browser's digest and the store each
 copying it once more. The cap of 4,096 files bounds the walk; the bytes are what a full disk costs, and why its saves
-are spaced by that cost. On the next visit the saved image's seal is checked with the browser's own digest, off the
-page's thread, before the disk is restored (`SystemOptions.sealChecked`); without one, or when it answers anything else,
-the layer's own SHA-256 checks it.
+are spaced by that cost. On the next visit the saved image's seal is checked with the browser's own digest before the
+disk is restored (`SystemOptions.sealChecked`): its hashing runs off the page's thread, but the call copies the image on
+it, several milliseconds for a full disk, and the restore walks it again, so a disk near its 8 MiB costs the boot tens
+of milliseconds on a slow machine. Without a digest, or when it answers anything else, the layer's own SHA-256 checks
+it. A digest that answers the seal itself, not as a promise, is taken as its answer.
 
 **What the system does with what it is given.** Until the store has answered, the system waits (`waiting`): nothing
 is laid out, and typed lines wait. Then it is one of:
@@ -659,7 +664,7 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `vfs.test.ts` (52): the walk and its permission checks; mount points; open flags; the sticky bit; moves; the depth
   and length limits; a trailing `/`; the disk's accounting; generated files, `/proc` and `/dev`.
 - `path.test.ts` (12): canonical paths, each limit at its edge, shell patterns in linear time.
-- `image.test.ts` (17): every kind of tree comes back exactly; the layout as documented; every corrupt or hostile
+- `image.test.ts` (19): every kind of tree comes back exactly; the layout as documented; every corrupt or hostile
   image is refused whole and leaves the disk empty; the body and its seal made apart give the same image.
 - `system.test.ts` (20): the tree task 1 lays out; each state of the saved disk; the count of files the disk holds; an
   entry of the wrong kind at a mount point moved aside under a free name; the image with or without its seal, the disk
@@ -667,7 +672,7 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
   by the word before any file is checked; no saved disk, however it was left, keeps the shell from coming back.
 - `parser.test.ts` (22): every construct read into the tree; console commands read the console's way; `hasOperator`
   agreeing with the shell; when more lines are needed; the nesting caps.
-- `shell.test.ts` (64): every expansion, pipelines, lists, jobs, redirections, each of its own commands, scripts,
+- `shell.test.ts` (65): every expansion, pipelines, lists, jobs, redirections, each of its own commands, scripts,
   console commands in pipes and lists, `exit` at the console ending the line, a sourced script, a loop and what was
   typed with it or ahead of it, Ctrl+C and
   Ctrl+D at awkward moments, and its caps.
@@ -678,7 +683,7 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
   fed whole or in pieces.
 - `regex.test.ts` (30): each construct; each refusal by its message; generated patterns beside the host's matcher;
   step counts on the shapes that stall other matchers; linear growth; scans cut at every budget.
-- `fileutils.test.ts` (58), `textutils.test.ts` (60), `sysutils.test.ts` (32): the options and refusals of the file,
+- `fileutils.test.ts` (58), `textutils.test.ts` (61), `sysutils.test.ts` (32): the options and refusals of the file,
   text and system programs, typed at the real shell, among them `umount` refusing the system's own mounts, `rev`
   and `fold` working through a long line a slice at a time, and a line of megabytes reaching the screen in pieces.
 - `diff.test.ts` (21): diff, cmp and comm, with generated pairs whose output is applied back to rebuild the second
@@ -690,20 +695,24 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `programs.test.ts` (4): the gathered tables and the shape of every manual page.
 - `kit.test.ts` (0): the shared system under test; it holds no test of its own.
 
-Around the folder, `terminal/oslayer.test.ts` (49) holds the console to the gate, console commands in pipes, the city as
+Around the folder, `terminal/oslayer.test.ts` (56) holds the console to the gate, console commands in pipes, the city as
 files, lines typed while a program reads (and the reply to `read`), Ctrl+C, Tab, the progression check (once a line,
 none for the console commands inside it), a proposal answered only at the prompt, at most 32 console commands a turn (a
-turn's share and its time kept across answers that arrive at once, an owed command dropped with the line Ctrl+C gives
-up, under `timeout` too, and without a word), the secrets the shell hands a command recorded for the history and found
-however they were typed (over two entries, joined by a backslash, of any size), `history` in a shell line (earlier
-entries dotted in the same turn), every fate of the disk, a save sealed by the host's digest (or the layer's own when
-the host's is no seal) or at once as the page goes (the newest image asked for behind one with the store, a timed one
-still on its way asked again), timed, and never throwing, the saved seal checked by the host's digest, and the wiring in
-`Terminal.tsx` and `App.tsx`; `consoleDisk.test.ts` (16) holds the store to its generations, its write asked for with
+turn's share and its time kept across answers that arrive at once, the waits between answers not counted against it,
+Ctrl+C right after an answer given a share of its own, an owed command dropped with the line Ctrl+C gives up, under
+`timeout` too, and without a word), the secrets the shell hands a command recorded for the history and found however
+they were typed (over two entries, joined by a backslash, one key inside another, of any size) and not seen where the
+shell never read them, `history` in a shell line (earlier entries dotted in the same turn, and a key split over two
+Enters dotted in both, in that turn and a later one), every fate of the disk, a save sealed by the host's digest (or the
+layer's own when the host's is no seal, and a digest that answers without a promise) or at once as the page goes (the
+newest image asked for behind one with the store, a timed one still on its way asked again), timed, and never
+throwing, the saved seal checked by the host's digest, and the wiring in `Terminal.tsx` and `App.tsx`;
+`consoleDisk.test.ts` (18) holds the store to its generations, its write asked for with
 its read, its refusal to write over what it could not read, a fresh read for a console opened again, the rows an image
 is set aside in (never one over another, eight at most), and the 4-second bound on the read, each save and each copy,
 with a late write keeping the generations in step (one still in line ahead of the next save too), and the save made as
-the page goes (one write committed at once, skipped when another page has said it saved a newer disk), over a stand-in
+the page goes (one write committed at once, skipped when another page has said it saved a newer disk, its word said
+at once, and this page's timed save cut short for it), over a stand-in
 for IndexedDB; `consoleWiring.test.ts` (9) pins from their source what Node cannot render in `Terminal.tsx` and
 `App.tsx`: what a closed console holds, Tab's row of at most 200 names, which results end a live view, the history's
 dots, Ctrl+D on a line with text, the save the page waits for (once) before it goes, the seal and timing of a save, the
@@ -711,7 +720,7 @@ listener for the page starting to go, an answer's turn given as a task of its ow
 console only alone on an empty line, the repeats of the press that opened it typing nothing (`commands.test.ts` holds
 `closesOpenConsole` to the layouts, and the browser smoke test's desktop run types `~` and a `` ` `` in the console,
 closes it from an empty line and opens it again with `~` held down). That is 559 tests in the folder's 20 test files,
-and 633 with the three around it. The browser's real IndexedDB is not exercised by these tests.
+and 642 with the three around it. The browser's real IndexedDB is not exercised by these tests.
 
 ## What it does not do yet
 
@@ -727,7 +736,11 @@ and 633 with the three around it. The browser's real IndexedDB is not exercised 
   command a key that appears in no history entry as such, so the entry stays as typed (the expression, not the key),
   as the scrollback above already shows it.
 - **A change in the last moment before a reload can be lost.** The save made as the page starts to go is committed at
-  once, but a large disk's write may not finish before the page is gone.
+  once, but a large disk's write may not finish before the page is gone: on a disk with more than 1 MiB in use, a change
+  is sure to be kept across a reload only once its timed save has landed (1.5 s for each MiB, 10 s at most).
+- **Saving or restoring a full disk holds the page.** A disk near its 8 MiB costs a frame or two on a laptop to save,
+  and about as much at boot to check and restore, more on a slow machine: the walk, the browser's digest and the store
+  each copy it on the page's thread. Making and storing the image in slices across turns would end it.
 - **`jobs` and `ps -f` show a job's line as typed.** A key or a token on a line sent to the background
   (`net join <url> <token> &`) is dotted in the history, but `jobs` and `ps -f` list the line as it was typed, as the
   scrollback above it already shows it. A secret on a line that never ran its command (`false && "ask" key ...`, a

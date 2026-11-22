@@ -53,11 +53,14 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   where one of the system's file systems is mounted is moved aside to a free name instead of costing the whole disk, and
   `umount` leaves `/bin`, `/usr`, `/tmp`, `/dev`, `/proc` and `/sys` mounted. Every wait on the store is bounded at 4 s,
   and a save the store does not answer counts as failed. The disk holds at most 4,096 files and directories, and its
-  image is made in one pass that copies each byte once: a few milliseconds for a disk of small files, tens of
-  milliseconds for one near its 8 MiB on a laptop, which is why saves are spaced by that cost. It is saved 1.5 s after a
+  image is made in one walk of the tree that sizes it and one that writes it, copying each byte once: a few
+  milliseconds, and with the browser's digest and the store's own copy a save of a disk near its 8 MiB takes a frame or
+  two on a laptop (its restore at boot about as much), which is why saves are spaced by that cost. It is saved 1.5 s after a
   change (longer past 1 MiB, and at least 50 times as long as its last image took to make), when the page is hidden or
-  starts to go (that save is one write committed at once, skipped when another tab has said it saved a newer disk; a
-  change made in the last moment before a reload can still be lost, more likely on a large disk), and before `boot`,
+  starts to go (that save is one write committed at once, skipped when another tab has said it saved a newer disk, says
+  to the other tabs that it saved as soon as it is committed, and cuts short a timed save still with the store; a
+  change made in the last moment before a reload can still be lost, more likely on a large disk, where a change is sure
+  to be kept across a reload only once its timed save has landed, 1.5 s for each MiB in use), and before `boot`,
   `map` or **Back to the city** reloads the page, which waits up to 4 s for it, once. A timed save is sealed, and the
   saved disk's seal checked before it is restored, with the browser's own SHA-256 where the page has it and it answers
   within 4 s. When files can no longer be kept, the console says so once. A shell line that holds `|`, `;`, `&`, `<` or
@@ -67,7 +70,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `^` or `` ` `` after text, and whatever else a layout puts on that key are typed like any other character (the repeats
   of a held key that opened the console are not); Esc closes it from any line. The folder imports nothing from outside
   itself and names no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 559 in 20 files under
-  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 49 in `terminal/oslayer.test.ts`, 16
+  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 56 in `terminal/oslayer.test.ts`, 18
   in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one is not exercised by them), and 9
   in `consoleWiring.test.ts`, which pins the terminal's and the page's side from their source. Not yet: attaching a
   folder of the computer, full-screen programs and app windows, networking, programs written in Crimson Noir Script.

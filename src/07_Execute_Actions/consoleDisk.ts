@@ -9,7 +9,9 @@
  * saved, so a tab that fell behind is told 'stale' and writes nothing over the newer disk. A save made as the page
  * goes cannot wait for a read (a page being reloaded runs nothing more, and its storage work ends with it): it is one
  * write, committed at once, and skipped as 'stale' when another page has said (by a message between the site's pages)
- * that it saved a newer generation. A store that could
+ * that it saved a newer generation. It says so itself as soon as it is committed, since its page may never see it
+ * answer, and it cuts short this page's timed save still with the store (which answers as it does: its image holds all
+ * the timed one held), so the write that matters is not held up behind a read. A store that could
  * not be read (the browser refused it, the read failed, it never answered): the load is refused, so the console can
  * say at once that its files are not kept, and saving is refused for the visit, because an image that may still be
  * there must not be replaced by an empty disk. An image that fails the system's own checks: it is copied under
@@ -82,6 +84,11 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
   let channel: BroadcastChannel | null = null
   /** This store's own mark on what it says, so it never takes its own word for another page's. */
   const self = `${Math.random()}`
+  /**
+   * This page's timed save while it is with the store, if one is: a save made as the page goes cuts it short (write),
+   * since the browser would run that save only after it, and a page that is going never finishes it.
+   */
+  let timed: { readonly t: IDBTransaction; by: Promise<'kept' | 'stale'> | null } | null = null
   /** Whether the stored image is known (read, or known absent): only then may it be written over. */
   let known = false
   let loading: Promise<Uint8Array | null> | null = null
@@ -171,8 +178,11 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
    * the browser runs the site's writing transactions one after another in the order they were asked for, so by then
    * every earlier write of this page has landed (and moved the page's generation with it, even one the console gave up
    * on) or failed, and only another page's write differs. With `now` (the page is going) there is no read: the write is
-   * committed at once, unless another page has said it saved a newer generation. Every write's generation is above any
-   * this page asked for before, so a late write and the next never store the same one.
+   * committed at once, unless another page has said it saved a newer generation, and said to the other pages as soon as
+   * it is asked for, while this page still runs (a page being reloaded never sees it complete); a timed save of this
+   * page still with the store is then cut short, and answers with this write's answer, since this image holds all of
+   * its. Every write's generation is above any this page asked for before, so a late write and the next never store
+   * the same one.
    */
   const write = (into: IDBDatabase, image: Uint8Array, now: boolean): Promise<'kept' | 'stale'> => {
     if (heard > gen) return Promise.resolve('stale')
@@ -182,6 +192,7 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
     const row: Row = { gen: Math.max(gen, asked) + 1, bytes: image }
     asked = row.gen
     let stale = false
+    const mine = now ? null : { t, by: null as Promise<'kept' | 'stale'> | null }
     if (!now) {
       const reading = store.get(IMAGE)
       reading.onsuccess = () => {
@@ -203,8 +214,15 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
       } catch {
         // Already committing.
       }
+      // Said now, while the page still runs: a page being reloaded or closed never sees this write complete, and a page
+      // that is behind must not write its own disk over this one later.
+      try {
+        channel?.postMessage({ from: self, gen: row.gen })
+      } catch {
+        // No other page hears it.
+      }
     }
-    return done.then(() => {
+    const answer = done.then(() => {
       gen = Math.max(gen, row.gen)
       try {
         channel?.postMessage({ from: self, gen: row.gen })
@@ -214,8 +232,27 @@ export function consoleDisk(factory: IDBFactory | null | undefined, wait: (fn: (
       return 'kept' as const
     }, (e: unknown) => {
       if (stale) return 'stale' as const
+      // Cut short by a save made as the page goes, whose image holds everything this one's did: that save's answer.
+      if (mine?.by) return mine.by
       throw e instanceof Error ? e : new Error(String(e))
     })
+    if (now && timed !== null) {
+      const ahead = timed
+      timed = null
+      ahead.by = answer
+      // Only once this write and its commit are asked for: cut short before them, a reload loses both in a browser.
+      try {
+        ahead.t.abort()
+      } catch {
+        // Already committing: it lands, and this write follows it.
+      }
+    }
+    if (mine !== null) {
+      timed = mine
+      const over = (): void => { if (timed === mine) timed = null }
+      done.then(over, over)
+    }
+    return answer
   }
 
   /**
