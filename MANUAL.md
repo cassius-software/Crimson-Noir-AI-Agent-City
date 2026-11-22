@@ -323,14 +323,19 @@ head of the pole, over the asphalt, the sidewalk, the people, the cars and the f
 lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on Low, 128 on Medium, 192 on High, 256
 on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
 Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
-lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
-and beyond their reach its ground is lit by paint too, from a picture rather than from the grid: the window seen from
+lit by its light or by its pool, never both. The same lamps light Lakefront Metro, whose lamps stand along every street
+of its map, so the lit ones are the nearest to you wherever you walk (chosen from the lamps in 40 m cells,
+`cityLights.ts` `LampIndex`, the same lamps a sort of all 23,000 would choose). Its ground beyond their reach is lit by
+paint too inside its street window, from a picture rather than from the grid: the window seen from
 above, a texel a metre, baked once at boot from what stands there (`01_Initialize_World/region/paintedLight.ts`) and
 read by the lawn, the pavement, the asphalt and the road markings with one texture sample. It holds the pool under
 every lamp's head (the spread of a point of light at the head's height: half at 4.5 m, an eighth at 10 m, gone at
 16 m, so a crossing between eight lamps is lit and the middle of a block is not black), the light every glazed ground
 floor spills on the ground before it (shopfronts, and the glass round every room, shop and home, out to 10 m), and the
-lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. Every indoor workplace
+lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. In Lakefront Metro a
+lamp's light, real or painted, goes with its pole: past the prop reach (Autoscaling) the pole folds into the street and
+its light and pool fade with it, round each split-screen viewport's own head, so no light lies under a lamp that is not
+drawn. Every indoor workplace
 (the city's sixteen glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
 luminaire panel over each, on by day and by night. The
 lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
@@ -688,9 +693,15 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   window's sidewalks (crowd.wgsl takes the window's corner and, per street segment, whether a sidewalk runs along it and
   whether cars use it, so nobody walks a dropped street or waits at a crosswalk over a pedestrian street), while the
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
-  the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
+  the zero-jam rule of `tracks.ts` kept). The lamps, trees and signal poles stand along every street of the whole map
+  (some 46,000 on Lakefront Metro: `region/streets.ts` `windowFurniture` over `mapStreetGrid`), cut into 160 m tiles
+  (`region/propTiles.ts`), and the page draws the tiles within the tier's prop reach of you (Autoscaling: 160 m on Lite
+  to 520 m on Peak), each prop growing up out of the street over the reach's last 40 m (`propTiles.ts` `PROP_FOLD`) so
+  no pole pops into view; when the tier changes, the reach glides to the new one at 40 m a second (`world.ts`
+  `REACH_GLIDE`), so a tier's extra band grows up out of the street or folds back into it rather than appearing at
+  once; in split screen each viewport draws the tiles round its own head. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  streets are still quiet: no people, cars or lamps there yet, though the places stand there (next).
+  streets are still quiet: no people or cars there yet, though the places and the street furniture stand there (next).
   **Its places are the whole map's** (`region/placement.ts`): the sixteen indoor workplaces, five shops and seven homes
   are shared out over all five regions, every region given a shop, at least one home and at least two workplaces of
   the kinds that suit it (Lakefront Metropolis the executive console deck, the clearing floor, the server vault and
@@ -707,11 +718,12 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   metropolis's visitor stands a few blocks from The Spire, under 300 m on every tested seed). `?place=<slug>` chooses the
   region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
   ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
-  people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
+  people, the cars and the painted light still live only in the street window round the start, so a place
   outside it stands on an empty street and has nobody at work in it, and nobody from the crowd can be walked out to
   it; after dark a shop or home there is unlit inside (the painted light covers the window and its margin only, and
-  paints no floor on a lot its edge runs through), while a workplace's own ceiling lights still come on wherever the
-  tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
+  paints no floor on a lot its edge runs through), and the street there is lit only by the real lamp light round you
+  (none on Lite, where the lamp heads glow over ground with no painted pools), while a workplace's own ceiling lights still come on
+  wherever the tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
   workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
   The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
@@ -785,7 +797,7 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
   - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
     Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
-  - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
+  - traffic signals, street lamps and trees (the surveyed region has none; Lakefront Metro has them along every street of its map);
   - terrain (the region is flat: no ravines, no bluffs);
   - elevated roads and bridges (the expressway runs at street level, and you can wade the rivers);
   - varied landmarks;
@@ -4076,7 +4088,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
   by hand). They scale render resolution, shadows (their map, their reach and their softness: Sun shadows), post-processing, the lit street lamps (the
-  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
+  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), how far Lakefront Metro's
+  lamps, trees and signal poles are drawn (160 m on Lite, 220, 260, 320, 400 and 480 m from Minimal to Ultra, 520 m on
+  Peak; the city's are always drawn), and the crowd's LOD
   distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
   visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean

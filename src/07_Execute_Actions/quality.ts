@@ -30,9 +30,9 @@
  * - Post and crowd culling (the GPU density lottery and draw distance) are delegated to the engine
  *   (render path switch, compute uniform).
  * - Not here: the scene's multisampling, in every scene pipeline's key, so the boot decides it (msaaCandidate).
- * - Lit street lamps: World.setLampLights, the count of lamps nearest the player that carry a real PointLight. The
- *   lights are clustered (cityLights.ts): their count is a uniform and an unlit lamp's light is simply not visible,
- *   so the count moves without a recompile.
+ * - Lit street lamps and prop reach: World.setLampLights, the lamps nearest the player with a real PointLight (clustered,
+ *   cityLights.ts: a uniform count, an unlit lamp's light simply not visible), and World.setPropReach, how far a region's
+ *   tiles of street furniture are drawn (meshes shown or hidden, the edge's fold a uniform). Neither recompiles.
  * - Golden-hour volumetrics and ambient occlusion (Ultra and Peak): the rays' strength uniform (volumetrics.ts) and the
  *   occlusion's tap count, strength and pass switch (postfx.ts GatedSSAO), which the engine writes; each shader compiles
  *   once with the chain, so a tier change writes numbers and a flag: no recompile either way.
@@ -63,6 +63,8 @@ export interface QualityTargets {
   /** Street lamps lit by a real PointLight, the nearest to the player: World.setLampLights (0: none, and the rooms'
    *  fixtures off). */
   setLampLights(count: number): void
+  /** How far a generated region's street furniture is drawn, m: World.setPropReach (the city's is always drawn). */
+  setPropReach(metres: number): void
   /** The sun shadow filter's taps per fragment: World.setShadowTaps (a uniform loop bound; nothing recompiles). */
   setShadowTaps(count: number): void
   /** The drawing buffer's limit: its longer edge stays within maxEdge texels (the device's maxTextureDimension2D) for a
@@ -108,6 +110,7 @@ export function applyQuality(k: QualityKnobs, t: QualityTargets, prev?: QualityK
   if (!prev || (prev.post ? prev.aoTaps : 0) !== ao) t.setAmbientOcclusion(ao)
   if (!prev || prev.textureSize !== k.textureSize) t.setTextureSize(k.textureSize)
   if (!prev || prev.lampLights !== k.lampLights) t.setLampLights(k.lampLights)
+  if (!prev || prev.propReach !== k.propReach) t.setPropReach(k.propReach)
   if (!prev || prev.crowdDensity !== k.crowdDensity || prev.lodDistance !== k.lodDistance ||
     prev.nearRadius !== k.nearRadius || prev.maxDistance !== k.maxDistance) {
     t.setCrowd({ lodDistance: k.lodDistance, nearRadius: k.nearRadius, density: k.crowdDensity, maxDistance: k.maxDistance })
