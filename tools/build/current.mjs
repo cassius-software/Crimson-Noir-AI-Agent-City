@@ -330,14 +330,19 @@ export function realGh(argv) {
 
 const notFound = (r) => !r.ok && /HTTP 404|Not Found/i.test(r.err)
 
-function api(gh, path, ...rest) {
-  const r = gh(['api', ...rest, path])
+/**
+ * A read that must have an answer: GitHub's text, or a throw with its words. A lost connection is tried again first
+ * (attempt), as the comparisons and the release's record already were: on 2026-11-22 one dial that timed out
+ * (`dial tcp ...:443: i/o timeout`) failed a run's dry-run job at its first read. An answer of GitHub's is not.
+ */
+function api(gh, path, wait = 5000) {
+  const r = attempt(gh, ['api', path], `gh api ${path}`, wait)
   if (!r.ok) throw new Error(`gh api ${path}: ${r.err.trim() || 'failed'}`)
   return r.out
 }
 
-export function mainTip(gh, repo) {
-  const sha = JSON.parse(api(gh, `repos/${repo}/git/ref/heads/main`)).object?.sha
+export function mainTip(gh, repo, { wait = 5000 } = {}) {
+  const sha = JSON.parse(api(gh, `repos/${repo}/git/ref/heads/main`, wait)).object?.sha
   if (!SHA.test(sha ?? '')) throw new Error(`main's tip is not a commit: ${sha}`)
   return sha
 }
@@ -375,7 +380,7 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
  * taken only while it is still on main's history.
  */
 export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
-  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`)).workflow_runs ?? []
+  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`, wait)).workflow_runs ?? []
   const seen = new Set()
   for (const r of runs) {
     if (!(SHA.test(r.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)) continue
@@ -444,10 +449,11 @@ export function choose({ tested = '', nth = '', repo, wait = 5000 }, gh, tip = m
 /**
  * The `current` release (its id, the tag it stands on, its notes, its assets with name, size, digest and id), or null
  * when there is none. A release still on the stand-in tag (a run stopped halfway through remaking `current`) is found too.
+ * A lost connection is tried again (attempt); "there is none" is GitHub's own 404 alone.
  */
-export function getRelease(gh, repo) {
+export function getRelease(gh, repo, { wait = 5000 } = {}) {
   for (const tag of [TAG, NEXT]) {
-    const r = gh(['api', `repos/${repo}/releases/tags/${tag}`])
+    const r = attempt(gh, ['api', `repos/${repo}/releases/tags/${tag}`], `read the release on the tag ${tag}`, wait)
     if (notFound(r)) continue
     if (!r.ok) throw new Error(`gh api releases/tags/${tag}: ${r.err.trim()}`)
     const rel = JSON.parse(r.out)
@@ -645,7 +651,7 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
  */
 export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5000 }, gh) {
   if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
-  const tip = mainTip(gh, repo)
+  const tip = mainTip(gh, repo, { wait })
   if (!onMain(gh, repo, sha, tip, { wait })) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
   // The newest green commit, not only the one that started this run: one run waits at a time, and a run that took a
   // waiting one's place (a re-run, a run by hand before main's tip passed ci) must not leave the newest one unpublished.
@@ -663,7 +669,7 @@ export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5
   if (lagged) notes.push(`ci's list of runs does not show run ${tested} yet; GitHub's answer for that run says it passed on ${green.sha}, which is built`)
   if (green.sha !== sha) notes.push(`building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`)
   const note = notes.join('; ')
-  const release = getRelease(gh, repo)
+  const release = getRelease(gh, repo, { wait })
   const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== green.sha && compare(gh, repo, state.commit, green.sha, { wait }) === 'behind') {
     return stop(`the release already holds ${state.commit}, which is newer than ${green.sha}`, false)
@@ -685,7 +691,7 @@ export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5
  * that is red when the run that started this one was not confirmed as a pass (`unconfirmed`), as in pick.
  */
 export function webPick({ tested = '', nth = '', repo, wait = 5000 }, gh) {
-  const tip = mainTip(gh, repo)
+  const tip = mainTip(gh, repo, { wait })
   const { green, lagged, why } = choose({ tested, nth, repo, wait }, gh, tip)
   const doubt = why ? `the ci run that started this run is not taken as a pass on main (${why})` : ''
   if (!green) {
@@ -709,7 +715,7 @@ export function webPick({ tested = '', nth = '', repo, wait = 5000 }, gh) {
  */
 export function webConfirm({ picked, repo, wait = 5000 }, gh) {
   if (!SHA.test(picked ?? '')) return { deploy: false, why: `not a commit: ${picked}`, unsure: true }
-  const listed = newestGreen(gh, repo, mainTip(gh, repo), { wait })
+  const listed = newestGreen(gh, repo, mainTip(gh, repo, { wait }), { wait })
   if (!listed || listed.sha === picked) return { deploy: true }
   const order = compare(gh, repo, picked, listed.sha, { wait })
   if (order === 'behind' || order === 'identical') return { deploy: true }
@@ -727,7 +733,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
   const version = source && existsSync(join(source, 'package.json')) ? JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version : 'unknown'
   if (dryRun) log(`dry run: nothing is written, and ${sha} is not checked against main`)
   else if (!onMain(gh, repo, sha, undefined, { wait })) throw new Error(`${sha} is not on main any more: nothing was published`)
-  const release = getRelease(gh, repo)
+  const release = getRelease(gh, repo, { wait })
   const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== sha) {
     const s = compare(gh, repo, state.commit, sha, { wait })
@@ -766,7 +772,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
     let r
     for (let i = 1; i <= 3; i++) {
       r = gh(['release', 'delete-asset', TAG, name, '--yes', ...R])
-      if (r.ok || !getRelease(gh, repo)?.assets.some((a) => a.name === name)) return
+      if (r.ok || !getRelease(gh, repo, { wait })?.assets.some((a) => a.name === name)) return
       if (i < 3) { console.error(`delete ${name} failed (${r.err.trim()}); trying again (${i}/2)`); pause(wait) }
     }
     throw new Error(`delete ${name}: ${r.err.trim() || 'failed'}`)
@@ -806,7 +812,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
   let problems = []
   for (let i = 0; i < 3; i++) {
     if (i) pause(verifyWait)
-    const after = getRelease(gh, repo)
+    const after = getRelease(gh, repo, { wait })
     if (!after) { problems = [`the release ${TAG} is gone`]; continue }
     const now = new Map(after.assets.map((a) => [a.name, a]))
     problems = [

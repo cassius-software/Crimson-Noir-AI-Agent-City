@@ -2983,7 +2983,8 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   really broken fails each time and still fails. Pinned in `buildMatrix.test.ts`. Not yet seen to rescue a build:
   no package host has refused one since.
 - **The macOS build makes its disk image again when a try leaves it unmade.** On 2026-11-22 one of the two macOS
-  builds of one commit failed (`matrix / macos-universal`, run 44983349249) while the other passed: Tauri's
+  builds of one commit failed (`matrix / macos-universal`, run 44983349249) while the other passed, and the failed
+  job passed when it was run again with nothing changed: Tauri's
   `bundle_dmg.sh` stopped eleven seconds in, before its long compression, Tauri printed only that the script failed
   (it prints the script's own words only when verbose), and the job's cleanup found a `diskimages-helper` still
   running, which is a disk image left attached. The script fills a writable image, mounts it, and gives up when it
@@ -2994,6 +2995,16 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   info`, read by `leftImages`) and removes that image's working file beside the `.app`; the new tries are verbose, so
   a failure that stays says why. One loop (`tried`) now runs these and the downloading steps. Pinned in
   `buildMatrix.test.ts`, in Node. Not verified on a Mac: no build there has needed a second try since.
+- **The publisher asks again when a first read of GitHub loses its connection.** The same run's `dry-run` job failed
+  next, at its first call: `gh api releases/tags/current` got no answer (`dial tcp ...:443: i/o timeout`); run again
+  with nothing changed, it passed.
+  `tools/build/current.mjs` read the release, main's tip and ci's list of runs once each, with no second try, though
+  its comparisons and its read of the release's record already had three. Those three reads now go through the same
+  three tries (`attempt`: a lost connection or a 5xx is asked again; an answer of GitHub's, a 404 or a 403, is not),
+  wherever `pick`, `web-pick`, `web-confirm`, `publish` and the `sync` check make them; where a tag points (`tagAt`),
+  read inside the tag's move, is left as it was. Pinned in `currentBuild.test.ts` with that day's words from `gh`:
+  the dry run plans through one timeout, a third timeout in a row is thrown with those words, and the test fails
+  without the change.
 - **The current downloads say what an iPhone should use.** The release notes said of the `.ipa` only that it "must be
   re-signed", and its row read like an iPhone build. They now carry a line of their own: on an iPhone or iPad, open
   the web copy in Safari (iOS 26 or newer); the `.ipa` is unsigned, no iPhone installs it as it is, and it is a build

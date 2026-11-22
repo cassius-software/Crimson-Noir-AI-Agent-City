@@ -339,12 +339,12 @@ export async function gather({ repo, site = siteOf(repo), now = new Date().toISO
   const gh = patient(once, { wait })
   const facts = { now, runs: [], ended: [], served: null, media: {} }
   try {
-    facts.tip = mainTip(gh, repo)
+    facts.tip = mainTip(gh, repo, { wait })
     facts.green = choose({ repo, wait }, gh, facts.tip).green
   } catch (e) { facts.green = { error: e.message } }
   facts.web = await readWeb(site, get, now)
   try {
-    const release = getRelease(gh, repo)
+    const release = getRelease(gh, repo, { wait })
     if (!release) facts.release = null
     else {
       facts.release = {
