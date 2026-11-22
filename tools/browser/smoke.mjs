@@ -665,7 +665,18 @@ async function serveStatic(dir) {
     const type = SITE_TEXT.has(name) ? 'text/plain; charset=utf-8' : TYPES[extname(name)] ?? 'application/octet-stream'
     const head = { 'Content-Type': type, 'Cache-Control': 'no-store' }
     const body = readFileSync(join(dir, name))
-    if (!name.startsWith(SITE_DIR)) { res.writeHead(200, head).end(body); return }
+    if (!name.startsWith(SITE_DIR)) {
+      // Any other file: whole, unless it is the one stalled (pwa: the new build's page, its opening only, then quiet).
+      res.writeHead(200, head)
+      if (stalled && stalled.name === name) {
+        res.write(body.subarray(0, stalled.bytes))
+        hanging.add(res)
+        res.on('close', () => hanging.delete(res))
+        return
+      }
+      res.end(body)
+      return
+    }
     // A models/ file: its ETag, and the rest from a Range while If-Range (if sent) is still that ETag.
     const etag = `"${createHash('sha256').update(body).digest('hex').slice(0, 16)}"`
     const range = typeof req.headers.range === 'string' ? req.headers.range : null
