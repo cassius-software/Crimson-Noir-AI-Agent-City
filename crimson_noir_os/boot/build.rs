@@ -65,4 +65,10 @@ fn main() {
         panic!("\n\nthe bootable image would link crates containment.nix does not declare: {undeclared:?}\n\n");
     }
     fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join("locked.rs"), src).unwrap();
+    // riscv64: the link is laid out by the image's own script (riscv64.ld: the PE header first, at address 0).
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("riscv64") {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("riscv64.ld");
+        println!("cargo:rerun-if-changed={}", script.display());
+        println!("cargo:rustc-link-arg-bins=-T{}", script.display());
+    }
 }

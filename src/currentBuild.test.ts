@@ -252,6 +252,7 @@ function allBuilt(tag: string, version = VERSION): Record<string, Record<string,
     // time and GUIDs, so their bytes change with every commit at one fixed size.
     'matrix-uefi-x64': { 'BOOTX64.EFI': 'efi (same code)', 'crimson_noir_os.img': `img ${tag}`, 'crimson_noir_os.iso': `iso ${tag}` },
     'matrix-uefi-arm64': { 'BOOTAA64.EFI': 'aa64 efi', 'crimson_noir_os-aarch64.img': `aa64 img ${tag}`, 'crimson_noir_os-aarch64.iso': `aa64 iso ${tag}` },
+    'matrix-uefi-riscv64': { 'BOOTRISCV64.EFI': 'rv64 efi', 'crimson_noir_os-riscv64.img': `rv64 img ${tag}`, 'crimson_noir_os-riscv64.iso': `rv64 iso ${tag}` },
     'matrix-report-linux-x64': { 'matrix.json': '{}' },
   }
 }
@@ -282,6 +283,8 @@ test('the names: one label per target of the build matrix, the iOS build best ef
   assert.throws(() => c.assetName('...'), /no usable file name/)
   assert.deepEqual(c.targetOf('matrix-uefi-arm64'), { id: 'uefi-arm64', part: 'all' })
   assert.equal(c.targetOf('matrix-report-uefi-arm64'), null)
+  assert.deepEqual(c.targetOf('matrix-uefi-riscv64'), { id: 'uefi-riscv64', part: 'all' })
+  assert.equal(c.LABELS['uefi-riscv64'], 'Crimson Noir OS, UEFI riscv64')
   assert.equal(c.targetOf('matrix-nope'), null)
   assert.deepEqual(c.targetOf('windows-msi-1.0.0-stable-beta'), { id: 'windows-x64', part: 'msi' })
   assert.equal(c.targetOf('browser-smoke-1-2'), null)
@@ -353,7 +356,7 @@ test('a first publish makes the tag at the commit, then the release as a pre-rel
     assert.ok(rel)
     assert.equal(rel.title, 'Crimson Noir: Agent City, current build')
     const assets = [...rel.assets.keys()].sort()
-    assert.equal(assets.length, 3 + 2 + 2 + 1 + 1 + 1 + 1 + 7 + 3 + 2)
+    assert.equal(assets.length, 3 + 2 + 2 + 1 + 1 + 1 + 1 + 7 + 3 + 3 + 2)
     assert.ok(assets.includes('SHA256SUMS') && assets.includes('current.json'))
     assert.ok(assets.every((n) => !/\s/.test(n)), 'every name as GitHub keeps it')
     // SHA256SUMS checks every other file on the release, as `sha256sum --check` would.
@@ -407,8 +410,8 @@ test('a later publish moves the tag, uploads only what changed, deletes files no
     assert.equal(gh.s.tag, c2, 'the tag moved')
     const writes = gh.s.writes.slice(callsBefore)
     const uploaded = writes.filter((w) => w[1] === 'upload').flatMap((w) => w.slice(3).filter((a) => !a.startsWith('--') && a !== REPO).map((p) => basename(p)))
-    for (const same of ['BOOTX64.EFI', 'BOOTAA64.EFI', 'LICENSE', 'containment.nix']) assert.ok(!uploaded.includes(same), `${same}: the same bytes are not uploaded again`)
-    for (const changed of ['crimson_noir_os.img', 'crimson_noir_os.iso', 'crimson_noir_os-aarch64.img']) assert.ok(uploaded.includes(changed), `${changed}: new bytes under the same name and size`)
+    for (const same of ['BOOTX64.EFI', 'BOOTAA64.EFI', 'BOOTRISCV64.EFI', 'LICENSE', 'containment.nix']) assert.ok(!uploaded.includes(same), `${same}: the same bytes are not uploaded again`)
+    for (const changed of ['crimson_noir_os.img', 'crimson_noir_os.iso', 'crimson_noir_os-aarch64.img', 'crimson_noir_os-riscv64.img']) assert.ok(uploaded.includes(changed), `${changed}: new bytes under the same name and size`)
     assert.ok(uploaded.includes('Crimson.Noir.Agent.City_1.0.1-stable-beta_amd64.deb'))
     const deleted = writes.filter((w) => w[1] === 'delete-asset').map((w) => w[3])
     assert.ok(deleted.includes('Crimson.Noir.Agent.City_1.0.0-stable-beta_amd64.deb'), 'the old version\'s file goes')

@@ -46,6 +46,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   main, a publish that carries `build.json`, and the `current` workflow started by a ci run under the new rule; the
   first web copy published after this change is the first with a stamp, and until then the check reports the web
   copy as unstamped.
+- **Crimson Noir OS boots on riscv64 (`uefi-riscv64`), the build matrix's tenth target.** Rust has no riscv64 UEFI
+  target and its linker writes no RISC-V PE file, so the boot crate is built for the bare-metal target
+  `riscv64gc-unknown-none-elf`, linked position-independent at address 0 (`crimson_noir_os/boot/riscv64.ld`) and
+  written out flat behind a PE32+ header laid out by hand in `boot/src/arch/riscv64.rs` (machine 0x5064, subsystem 10,
+  no relocation directory). The firmware relocates nothing, so the entry applies the image's own relative relocations
+  before any Rust runs, and returns the firmware's load error if it meets a kind it cannot place. After
+  ExitBootServices the serial line is the SBI console (its Debug Console extension, or the legacy console calls where
+  that is missing), the clock the `time` CSR, and the image's own trap vector (`stvec`) sends every exception to the
+  fault screen with its cause, value and return address. The keyboard is the serial console, as on aarch64; the
+  decoder the two machines share moved to `arch/serial_keys.rs`. Everything above the machine layer is shared, and
+  the compute self-test reaches the other two images' fingerprint (0x83765bab). `build-image.sh` takes the target
+  (`BOOTRISCV64.EFI` on the ESP; the media's identity names the architecture, so the other two media's are unchanged)
+  and refuses a file with no PE header; `boot_test.py --arch riscv64` boots QEMU's RISC-V `virt` machine with edk2, a
+  ramfb screen and the serial line on a socket it types into; build-matrix.yml's third UEFI job bakes the media twice,
+  compares the bytes, and boots the disk image through the tutorial and the terminal to power-off and the ISO to the
+  self-test; the rolling `current` pre-release takes `crimson_noir_os-riscv64.img`, `.iso` and `BOOTRISCV64.EFI`
+  with the other targets' files; and the `sync` check asks the riscv64 image which commit it is, as it does the
+  other two. Checked in QEMU here: the riscv64 disk image through the whole boot test
+  (`SELFTEST PASS`, the tutorial passed, `golden` matched, powered off), the ISO to the self-test, a second clean bake
+  byte for byte, a forced breakpoint and a forced bad load on the fault screen, the terminal's 640 by 360 picture
+  pixel for pixel the x86-64 image's, and the x86-64 and aarch64 images through the same boot test after the change
+  (the x86-64 application's bytes are the ones main builds). Not booted on RISC-V hardware, where the screen needs a
+  firmware that offers the graphics output protocol; a riscv64 build of the page's desktop app is not part of this.
 - **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
   `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
   names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with

@@ -4790,6 +4790,7 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
 | `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
 | `uefi-arm64` | `BOOTAA64.EFI`, and `crimson_noir_os-aarch64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's Arm `virt` machine with edk2 (AAVMF): the self-test with the x86-64 image's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on Arm hardware. The keyboard is the serial console (below) |
+| `uefi-riscv64` | `BOOTRISCV64.EFI`, and `crimson_noir_os-riscv64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's RISC-V `virt` machine with edk2 over OpenSBI: the self-test with the build's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on a RISC-V machine. The keyboard is the serial console, and the firmware must offer a framebuffer (below) |
 
 - **Flags.** `--list` prints the table with what this machine can build; `--targets a,b` names targets (one it cannot
   build, or that fails, exits 1), `--targets all` builds every target it can and skips the rest with a note,
@@ -4797,15 +4798,31 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   commands and builds nothing; `--out <dir>` (default `out/matrix`) is where each target's files land, in
   `<dir>/<id>/`, with `<dir>/matrix.json` saying what was built, skipped or failed and why; `--skip-page` keeps the
   `dist/` already there. On Windows: `npm run build:matrix -- --targets windows-x64,windows-arm64`.
-- **Crimson Noir OS on aarch64.** The bootable image is one system on two machines: `crimson_noir_os/boot/src/arch.rs`
-  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard) or `arch/aarch64.rs`
+- **Crimson Noir OS on aarch64.** The bootable image is one system on three machines: `crimson_noir_os/boot/src/arch.rs`
+  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard), `arch/aarch64.rs`
   (the UART the firmware's ACPI SPCR table names, a PL011 or an SBSA generic UART; the generic timer; the image's own
-  exception vectors at EL1 or EL2, every exception to the fault screen), and everything else is shared. An Arm machine
+  exception vectors at EL1 or EL2, every exception to the fault screen) or `arch/riscv64.rs` (next), and everything
+  else is shared. An Arm machine
   has no PS/2 controller and the image has no USB stack, so on aarch64 the keyboard is the serial console: type into
   the serial line (a terminal's arrows and Page Up/Down work). Boot it at home with
   `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-arm64/crimson_noir_os-aarch64.img --arch aarch64
   --wait "SELFTEST PASS"` (QEMU's `virt` machine, a Cortex-A72, edk2's AAVMF firmware and a ramfb screen). A machine
   whose firmware publishes no SPCR table, or whose console UART is a 16550, boots with no log and no keys.
+- **Crimson Noir OS on riscv64.** Rust has no riscv64 UEFI target and its linker writes no RISC-V PE file, so this
+  image is built for the bare-metal target `riscv64gc-unknown-none-elf` (a 64-bit RISC-V processor with the usual
+  extensions, floating point among them), linked position-independent at address 0 by the image's own linker script
+  (`boot/riscv64.ld`) and written out flat by the same linker behind a PE32+ header laid out by hand in
+  `arch/riscv64.rs`. A firmware loads that file as any UEFI application and relocates nothing, so the image's entry
+  applies its own relocations before any Rust runs, and returns the firmware's load error if it meets one it cannot
+  place. After the firmware lets go, the log and the keys go through the SBI console (the supervisor interface under
+  every RISC-V UEFI firmware: its Debug Console extension, or the older console calls), the clock is the `time`
+  register, and the image's own trap vector sends every exception to the fault screen. The keyboard is the serial
+  console, as on aarch64, through the same decoder. Boot it at home with
+  `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-riscv64/crimson_noir_os-riscv64.img --arch riscv64
+  --wait "SELFTEST PASS"` (QEMU's `virt` machine, QEMU's own OpenSBI, edk2 from Debian's `qemu-efi-riscv64`, and a
+  ramfb screen). What it needs from a real machine, and what has not been tried: a UEFI firmware (edk2 or U-Boot's;
+  only edk2 has loaded it) that offers a framebuffer (GOP), which many RISC-V boards do not, and there the image stops
+  with its "no graphics output" message; a processor with floating point; and nothing here has run on RISC-V hardware.
 - **What is not made, and why.** Signing and notarization: there is no Apple Developer or Windows code-signing
   account, so SmartScreen, Gatekeeper and iOS each ask or refuse as described above. A `linux-arm64` build on an x64
   machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
@@ -4822,7 +4839,7 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   the runner, and checks the `.app`, its `.dmg` and its zip, both slices, their libraries, their lowest macOS, their
   symbols and how each slice was built (`tools/build/macAudit.mjs`; The macOS app's model); nothing starts the built
   app there. Each job publishes its files as the artifact `matrix-<id>` and its report;
-  a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
+  a summary job lays the ten targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
   tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
   this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
@@ -4836,8 +4853,8 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 ## The current build
 
 Every download follows `main`, as the web copy does. Each time ci passes on a commit on main, the `current` workflow
-(`.github/workflows/current.yml`) builds all nine targets of the build matrix from that commit, the Windows x64 app
-through `windows-app.yml` and the other eight through `build-matrix.yml` (both called with the commit), and
+(`.github/workflows/current.yml`) builds all ten targets of the build matrix from that commit, the Windows x64 app
+through `windows-app.yml` and the other nine through `build-matrix.yml` (both called with the commit), and
 `tools/build/current.mjs` puts the files on one GitHub pre-release, **Crimson Noir: Agent City, current build**, under
 the tag `current`: <https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current>. The next green
 commit replaces them the same way. It is not a numbered release: the latest numbered release keeps its "Latest" label,
@@ -4849,8 +4866,9 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   macOS `.dmg` and zipped `.app`, the Android `.apk` (with the `.apk.idsig` apksigner writes beside it, its v4
   signature for streaming installs; a phone does not need it), the iOS `.ipa`, Crimson Noir OS's x86-64 media
   (`BOOTX64.EFI`, `crimson_noir_os.img`, `crimson_noir_os.iso`, with `containment.nix`, `containment.lock`,
-  `NOTICE.txt` and `LICENSE`, as a numbered release carries them) and its aarch64 media (`BOOTAA64.EFI`,
-  `crimson_noir_os-aarch64.img` and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
+  `NOTICE.txt` and `LICENSE`, as a numbered release carries them), its aarch64 media (`BOOTAA64.EFI`,
+  `crimson_noir_os-aarch64.img` and `.iso`) and its riscv64 media (`BOOTRISCV64.EFI`, `crimson_noir_os-riscv64.img`
+  and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
   the commit, run and time that made each target's files. The notes list every file with its commit. The apps' file
   names carry the version in `package.json` at the commit they were built from (`1.0.0-stable-beta` today; the `.rpm`
   as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each
@@ -4888,9 +4906,10 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   record, or its files were deleted by hand) gets an empty `current.json` before any file. A commit counts as
   published only when the release holds exactly what its record says, `SHA256SUMS` lists those files, and the notes
   name the commit and that publish's time; otherwise the next run builds it again.
-- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
-  four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
-  commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
+- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI`,
+  `BOOTRISCV64.EFI` and the four notices. The UEFI media are reproducible only for one commit, because each `.img`
+  and `.iso` carries its commit's time and GUIDs, so those six files are uploaded again with every commit, as are the
+  apps.
 - **The tag.** `current` is put at the commit before any file is written. GitHub is reported (not yet seen here) to
   let the workflow's own token move a tag only when no workflow file changed between the two commits, and to let it
   make one at a commit whose workflow files match main's tip; so when a move is refused, the release is set on a

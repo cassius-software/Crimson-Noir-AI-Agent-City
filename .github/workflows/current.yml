@@ -3,8 +3,8 @@
 # Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It keeps every download current with main, as web.yml keeps the web copy: each time ci
 # passes on main, it builds every target of tools/build/matrix.mjs from that commit (the Windows x64 app through
-# windows-app.yml, the other eight through build-matrix.yml: Windows on Arm, Linux x64 and arm64, macOS, Android, iOS,
-# and Crimson Noir OS's UEFI media for x86-64 and aarch64), both called here with the commit as their input, and
+# windows-app.yml, the other nine through build-matrix.yml: Windows on Arm, Linux x64 and arm64, macOS, Android, iOS,
+# and Crimson Noir OS's UEFI media for x86-64, aarch64 and riscv64), both called here with the commit as their input, and
 # tools/build/current.mjs puts the files on one GitHub pre-release, "Crimson Noir: Agent City, current build", tag
 # `current`, replacing what the last green commit left there.
 # - The gates: ci on that very commit (the page's tests and build, the browser smoke, the Rust workspace on CPU and a
@@ -151,7 +151,7 @@ jobs:
     with:
       ref: ${{ needs.pick.outputs.sha }}
 
-  # The other eight targets, each on its own runner, as build-matrix.yml builds them (the UEFI jobs bake twice and
+  # The other nine targets, each on its own runner, as build-matrix.yml builds them (the UEFI jobs bake twice and
   # boot in QEMU before they upload). The same ceiling as above for its release job, which runs on a v* tag alone.
   matrix:
     needs: pick

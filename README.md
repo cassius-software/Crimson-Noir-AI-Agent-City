@@ -109,7 +109,7 @@ The engine picks a hardware class once at boot and sizes the crowd by it; the qu
 ## Repository layout
 
 ```text
-crimson_noir_os/        Bare-metal UEFI boot image (x86-64 and aarch64), the hosted wgpu runtime with four WGSL kernels, and noir_core
+crimson_noir_os/        Bare-metal UEFI boot image (x86-64, aarch64 and riscv64), the hosted wgpu runtime with four WGSL kernels, and noir_core
 native/kv-pager/        PagedAttention-style KV page table with prefix caching and copy-on-write, plus a wgpu pool and attention kernel
 native/kv-pager-wasm/   C-ABI WebAssembly bindings to that page table, the router's prompt-prefix cache
 native/routing/         The track network's arc-length arithmetic as a no_std WebAssembly core, bit-equal to tracks.ts
@@ -159,7 +159,7 @@ npm run build:matrix -- --targets all       # everything it can; the rest skippe
 # Bare-metal UEFI bootable image (Linux or macOS, with mtools, sgdisk and xorriso)
 sh crimson_noir_os/tools/build-image.sh
 ```
-Nine targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64 and aarch64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all, and the `current` workflow builds all nine again from every commit on `main` that CI passes and keeps them on the [current build](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current) pre-release (`MANUAL.md`, *The current build*), as the live build follows `main`. Nothing is signed or notarized, the `.ipa` needs re-signing to install, and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
+Ten targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64, aarch64 and riscv64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all, and the `current` workflow builds all ten again from every commit on `main` that CI passes and keeps them on the [current build](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current) pre-release (`MANUAL.md`, *The current build*), as the live build follows `main`. Nothing is signed or notarized, the `.ipa` needs re-signing to install, and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
 
 ---
 

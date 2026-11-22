@@ -5,7 +5,7 @@
 /**
  * Why does this file exist? It keeps the downloads current with main. `.github/workflows/current.yml` builds every
  * target of tools/build/matrix.mjs from a commit on main that ci passed (the Windows x64 app through windows-app.yml,
- * the other eight through build-matrix.yml), then this script puts the files on one GitHub pre-release, tag `current`,
+ * the other nine through build-matrix.yml), then this script puts the files on one GitHub pre-release, tag `current`,
  * titled "Crimson Noir: Agent City, current build", whose files are replaced the same way after each later green run.
  * It never makes a numbered release (those stay build-release.yml's); its only tags are `current` and, for a few
  * seconds when GitHub refuses to move `current`, the stand-in `current-next`.
@@ -92,6 +92,7 @@ export const LABELS = Object.freeze({
   'ios-ipa': 'iOS (arm64, unsigned)',
   'uefi-x64': 'Crimson Noir OS, UEFI x86-64',
   'uefi-arm64': 'Crimson Noir OS, UEFI aarch64',
+  'uefi-riscv64': 'Crimson Noir OS, UEFI riscv64',
 })
 /** The files build-release.yml puts beside the x86-64 media: the configuration they were built with and its notices. */
 export const NOTICES = Object.freeze(['containment.nix', 'containment.lock', 'NOTICE.txt', 'LICENSE'])
@@ -299,7 +300,7 @@ export function notes(state, { repo, missing = [] }) {
     '| :--- | :--- | :--- |',
     ...rows,
     '',
-    `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
+    `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 and riscv64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
     '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device; the iPhone can play the web copy instead.',
     "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); Gatekeeper refuses the macOS app at first (`xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up to macOS 14; not tried on a Mac); the `.apk` carries the Android debug key; the `.ipa` must be re-signed before a device takes it. The OS images run on a UEFI machine with Secure Boot off.",
     `- **Versions.** The apps' file names carry the version in \`package.json\` at the commit they were built from (\`${state.version}\` at this one), the \`.rpm\` with its pre-release part as its release number; the zipped macOS \`.app\`, the UEFI files and images, and the notices beside them carry none. The commit above, and each file's row, tell one current build from the next.`,

@@ -64,6 +64,7 @@ export const GRACE = Object.freeze({ start: 10, web: 35, current: 145, served: 1
 export const MEDIA = Object.freeze({
   'uefi-x64': Object.freeze({ file: 'crimson_noir_os.img', arch: '' }),
   'uefi-arm64': Object.freeze({ file: 'crimson_noir_os-aarch64.img', arch: 'aarch64:' }),
+  'uefi-riscv64': Object.freeze({ file: 'crimson_noir_os-riscv64.img', arch: 'riscv64:' }),
 })
 
 const SHA = /^[0-9a-f]{40}$/

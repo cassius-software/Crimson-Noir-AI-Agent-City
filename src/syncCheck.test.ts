@@ -64,7 +64,7 @@ const stampOf = (commit: string) => ({ schema: 1, commit, version: '1.0.0-stable
 
 /** One file for each target, as the release would hold it for a commit, and the two disk images under their names. */
 function filesOf(id: string, commit: string): FileRecord[] {
-  const name = id === 'uefi-x64' ? 'crimson_noir_os.img' : id === 'uefi-arm64' ? 'crimson_noir_os-aarch64.img' : `${id}.bin`
+  const name = id === 'uefi-x64' ? 'crimson_noir_os.img' : id === 'uefi-arm64' ? 'crimson_noir_os-aarch64.img' : id === 'uefi-riscv64' ? 'crimson_noir_os-riscv64.img' : `${id}.bin`
   return [{ name, sha256: sha256(`${id} ${commit}`), size: 1000 + id.length }]
 }
 
@@ -337,7 +337,7 @@ test('the UEFI disk images say their commit themselves: the GUID in the image mu
   const crossed = judge({ ...inSync(), media: { ...inSync().media, 'uefi-arm64': s.mediaGuid(C2, '') as string } })
   assert.equal(crossed.status, 'drift')
   assert.match(crossed.problems[0], /^crimson_noir_os-aarch64\.img carries the disk GUID /)
-  const unread = judge({ ...inSync(), media: { 'uefi-x64': null, 'uefi-arm64': inSync().media['uefi-arm64'] } })
+  const unread = judge({ ...inSync(), media: { ...inSync().media, 'uefi-x64': null } })
   assert.equal(unread.status, 'in-sync')
   assert.deepEqual(unread.warnings, ['crimson_noir_os.img: its disk GUID could not be read, so the image was not asked which commit it is'])
   // A target with no files is said once, as missing, not again as an unread image.
@@ -351,7 +351,14 @@ test('the UEFI disk images say their commit themselves: the GUID in the image mu
   assert.match(sh, /sgdisk -o -U "\$disk_guid" /)
   assert.match(sh, /x86_64-unknown-uefi\) boot=BOOTX64\.EFI; arch_id="" ;;/)
   assert.match(sh, /aarch64-unknown-uefi\) boot=BOOTAA64\.EFI; arch_id="aarch64:" ;;/)
-  assert.deepEqual(s.MEDIA, { 'uefi-x64': { file: 'crimson_noir_os.img', arch: '' }, 'uefi-arm64': { file: 'crimson_noir_os-aarch64.img', arch: 'aarch64:' } })
+  assert.match(sh, /riscv64gc-unknown-none-elf\) boot=BOOTRISCV64\.EFI; arch_id="riscv64:" ;;/)
+  assert.deepEqual(s.MEDIA, { 'uefi-x64': { file: 'crimson_noir_os.img', arch: '' }, 'uefi-arm64': { file: 'crimson_noir_os-aarch64.img', arch: 'aarch64:' }, 'uefi-riscv64': { file: 'crimson_noir_os-riscv64.img', arch: 'riscv64:' } })
+  // The image's name on the release is the build matrix's: `crimson_noir_os<-arch>.img`, as its plan collects it.
+  type Collected = (string | [string, string])[]
+  for (const [id, { file }] of Object.entries(s.MEDIA as Record<string, { file: string }>)) {
+    const target = (m.TARGETS as { id: string; collect: (ctx: Record<string, unknown>) => Collected }[]).find((t) => t.id === id)
+    assert.ok(target?.collect({ media: true, version: '0', out: 'out' }).some((x) => Array.isArray(x) && x[1] === file), `${id}: ${file}`)
+  }
   assert.deepEqual(Object.keys(s.MEDIA), IDS.filter((id) => id.startsWith('uefi-')), 'every UEFI target of the build matrix, and no other')
   const h = sha256(`crimson-noir-media:aarch64:${C2}`)
   assert.equal(s.mediaGuid(C2, 'aarch64:'), `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`)
@@ -482,7 +489,7 @@ function standIns(w: World) {
   return { gh, get, asked, got }
 }
 
-const bothImages = (commit: string) => ({ 'crimson_noir_os.img': { status: 206, body: gptWith(s.mediaGuid(commit, '')) }, 'crimson_noir_os-aarch64.img': { status: 206, body: gptWith(s.mediaGuid(commit, 'aarch64:')) } })
+const bothImages = (commit: string) => ({ 'crimson_noir_os.img': { status: 206, body: gptWith(s.mediaGuid(commit, '')) }, 'crimson_noir_os-aarch64.img': { status: 206, body: gptWith(s.mediaGuid(commit, 'aarch64:')) }, 'crimson_noir_os-riscv64.img': { status: 206, body: gptWith(s.mediaGuid(commit, 'riscv64:')) } })
 
 test('gather reads the newest green commit, the site past every cache, the release with its record, tag and files, the head of each disk image, and the runs on main that have not ended; then the verdict is in sync', async () => {
   const w = world({
@@ -513,7 +520,7 @@ test('gather reads the newest green commit, the site past every cache, the relea
   assert.equal(f.release.staged, false)
   assert.equal(f.release.tag, C2)
   assert.equal(f.release.assets.length, IDS.length + 1, 'every file and the record')
-  assert.deepEqual(f.media, { 'uefi-x64': s.mediaGuid(C2, ''), 'uefi-arm64': s.mediaGuid(C2, 'aarch64:') })
+  assert.deepEqual(f.media, { 'uefi-x64': s.mediaGuid(C2, ''), 'uefi-arm64': s.mediaGuid(C2, 'aarch64:'), 'uefi-riscv64': s.mediaGuid(C2, 'riscv64:') })
   // Only main's runs that have not ended, never a pull request's dry run or another branch's ci; a run's start, or
   // its creation while it waits for a runner.
   assert.deepEqual(f.runs, [
@@ -540,6 +547,7 @@ test('gather reads the newest green commit, the site past every cache, the relea
     { url: `${SITE}build.json${salt}`, range: '' },
     { url: `https://github.com/${REPO}/releases/download/current/crimson_noir_os.img`, range: 'bytes=0-1023' },
     { url: `https://github.com/${REPO}/releases/download/current/crimson_noir_os-aarch64.img`, range: 'bytes=0-1023' },
+    { url: `https://github.com/${REPO}/releases/download/current/crimson_noir_os-riscv64.img`, range: 'bytes=0-1023' },
   ])
   assert.equal(s.siteOf('Cassius-Software/Some.Repo'), 'https://cassius-software.github.io/Some.Repo/', 'the owner in lower case, the name as it is')
 })
@@ -570,7 +578,7 @@ test('gather keeps each failure where it belongs: a site without a stamp, a site
   const down = standIns(world())
   const f2: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, down.gh, async () => { throw new Error('getaddrinfo ENOTFOUND') })
   assert.deepEqual(f2.web, { error: `${SITE} could not be read (getaddrinfo ENOTFOUND)` })
-  assert.deepEqual(f2.media, { 'uefi-x64': null, 'uefi-arm64': null }, 'the images too: a warning each, were the rest readable')
+  assert.deepEqual(f2.media, { 'uefi-x64': null, 'uefi-arm64': null, 'uefi-riscv64': null }, 'the images too: a warning each, were the rest readable')
 
   // The release: none at all; files without a record; GitHub not answering.
   const none = standIns(world({ release: null }))
@@ -599,9 +607,9 @@ test('gather keeps each failure where it belongs: a site without a stamp, a site
   assert.equal(((await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, red.gh, red.get)) as Facts).green, null)
 
   // An image that answers 404, a page, or nothing: null, and a warning in the verdict, never red on its own.
-  const odd = standIns(world({ media: { 'crimson_noir_os.img': { status: 404, body: Buffer.alloc(0) }, 'crimson_noir_os-aarch64.img': 'fail' } }))
+  const odd = standIns(world({ media: { 'crimson_noir_os.img': { status: 404, body: Buffer.alloc(0) }, 'crimson_noir_os-aarch64.img': 'fail', 'crimson_noir_os-riscv64.img': { status: 206, body: gptWith(s.mediaGuid(C2, 'riscv64:')) } } }))
   const f8: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, odd.gh, odd.get)
-  assert.deepEqual(f8.media, { 'uefi-x64': null, 'uefi-arm64': null })
+  assert.deepEqual(f8.media, { 'uefi-x64': null, 'uefi-arm64': null, 'uefi-riscv64': s.mediaGuid(C2, 'riscv64:') })
   const v8: Verdict = s.verdict(f8)
   assert.equal(v8.status, 'in-sync')
   assert.equal(v8.warnings.length, 2)
