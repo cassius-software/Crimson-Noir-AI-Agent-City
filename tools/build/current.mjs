@@ -366,7 +366,9 @@ export function compare(gh, repo, base, head, { wait = 5000 } = {}) {
  * Whether `sha` is main's tip or behind it on main's own history. A commit GitHub does not know is not; when GitHub
  * cannot answer, this throws rather than guess, so neither pick nor publish passes over a commit for want of an answer.
  */
-export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
+export function onMain(gh, repo, sha, tip, { wait = 5000 } = {}) {
+  // Main's tip is read here, not as a default beside the parameter, so that it is read with the caller's wait.
+  tip ??= mainTip(gh, repo, { wait })
   if (sha === tip) return true
   const { r, status } = compared(gh, repo, sha, tip, wait)
   if (notFound(r)) return false
@@ -379,7 +381,8 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
  * address and when GitHub last touched the run (it ended then), or null. GitHub lists runs newest first; a commit is
  * taken only while it is still on main's history.
  */
-export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
+export function newestGreen(gh, repo, tip, { wait = 5000 } = {}) {
+  tip ??= mainTip(gh, repo, { wait })
   const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`, wait)).workflow_runs ?? []
   const seen = new Set()
   for (const r of runs) {
@@ -432,7 +435,7 @@ export function ciRun(gh, repo, id, { nth = '', wait = 5000 } = {}) {
  * main), and `green` is then the list's alone. It throws when GitHub cannot say which of the two is the newer, so a
  * green commit is never passed over for want of an answer.
  */
-export function choose({ tested = '', nth = '', repo, wait = 5000 }, gh, tip = mainTip(gh, repo)) {
+export function choose({ tested = '', nth = '', repo, wait = 5000 }, gh, tip = mainTip(gh, repo, { wait })) {
   const listed = newestGreen(gh, repo, tip, { wait })
   if (tested === '' || tested === undefined || tested === null) return { green: listed, lagged: false, why: '' }
   const { run, why } = ciRun(gh, repo, tested, { nth, wait })
@@ -449,7 +452,8 @@ export function choose({ tested = '', nth = '', repo, wait = 5000 }, gh, tip = m
 /**
  * The `current` release (its id, the tag it stands on, its notes, its assets with name, size, digest and id), or null
  * when there is none. A release still on the stand-in tag (a run stopped halfway through remaking `current`) is found too.
- * A lost connection is tried again (attempt); "there is none" is GitHub's own 404 alone.
+ * A lost connection is tried again (attempt) and, if it stays lost, thrown: "there is none" is still only what
+ * notFound reads as GitHub's answer.
  */
 export function getRelease(gh, repo, { wait = 5000 } = {}) {
   for (const tag of [TAG, NEXT]) {

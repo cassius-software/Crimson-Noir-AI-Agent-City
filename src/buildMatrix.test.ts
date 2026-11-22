@@ -19,7 +19,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -70,6 +70,7 @@ test('a step that downloads is run again before it fails its target: rustup\'s t
       assert.equal(s.why, image ? m.DMG_WHY : undefined, t.id)
       if (image) {
         assert.equal(s.when, m.dmgAlone)
+        assert.equal(s.mend, m.detachLeft)
         assert.ok(s.argv!.includes('app,dmg'), 'the step that makes the .dmg')
       }
     }
@@ -114,13 +115,16 @@ test('tried: a failing step is run again only as often as it may be, after a pau
   assert.deepEqual(m.tried(step({ again: 2 }), r.once, opts), { ok: false })
   assert.equal(r.seen.length, 3)
 
-  // A condition: asked after each failure with the time the step began, and a "no" ends the tries there.
+  // A condition: asked after each failure with the time the step's first run began (the clock here moves on with
+  // every run and every pause, as a real one does: a build takes minutes), and a "no" ends the tries there.
   say.length = 0; pauses.length = 0
   const asked: number[] = []
   const answers = [true, false]
+  let clock = 5000
+  const moving = { ...opts, now: () => clock, pause: (ms: number) => { pauses.push(ms); clock += ms } }
   r = runs([false, false, false])
-  assert.deepEqual(m.tried(step({ again: 2, when: ({ began }: { began: number }) => { asked.push(began); return answers.shift()! } }), r.once, opts), { ok: false })
-  assert.deepEqual([r.seen.length, asked, pauses.length], [2, [5000, 5000], 1])
+  assert.deepEqual(m.tried(step({ again: 2, when: ({ began }: { began: number }) => { asked.push(began); return answers.shift()! } }), (argv: string[]) => { clock += 200_000; return r.once(argv) }, moving), { ok: false })
+  assert.deepEqual([r.seen.length, asked, pauses.length, clock], [2, [5000, 5000], 1, 465_000])
   r = runs([false, true])
   assert.deepEqual(m.tried(step({ again: 2, when: () => false }), r.once, opts), { ok: false })
   assert.equal(r.seen.length, 1, 'a failure of another kind is not tried again')
@@ -145,28 +149,60 @@ test('tried: a failing step is run again only as often as it may be, after a pau
     '::warning::macos-universal: node tauri.js android build failed; the image is busy, so it is run again in 60 s (1 more try)',
     '    mended',
   ])
+
+  // Clearing up is no part of the step: a mend that throws is said and the next try is made all the same; a
+  // condition that throws is a no, said, and the step's own failure is what comes back (never the throw).
+  say.length = 0; pauses.length = 0
+  r = runs([false, true])
+  assert.deepEqual(m.tried(step({ again: 2, mend: () => { throw new Error('EPERM: rm of a working image') } }), r.once, opts), { ok: true })
+  assert.equal(r.seen.length, 2)
+  assert.deepEqual(say, [
+    '::warning::android-apk: node tauri.js android build failed; it downloads as it runs, so it is run again in 60 s (2 more tries)',
+    '    clearing up after the failed try stopped (EPERM: rm of a working image); the next try is made all the same',
+  ])
+  say.length = 0; pauses.length = 0
+  r = runs([false, true])
+  assert.deepEqual(m.tried(step({ again: 2, when: () => { throw new Error('ENOENT: stat of a vanished .app') } }), r.once, opts), { ok: false })
+  assert.equal(r.seen.length, 1)
+  assert.deepEqual([say, pauses], [['::warning::android-apk: node tauri.js android build failed, and whether another try could mend it could not be told (ENOENT: stat of a vanished .app), so it is not run again'], []])
 })
 
-test('the macOS bundle step is tried again only when the .app is new and the .dmg is missing', () => {
+test('the macOS bundle step is tried again only when the .app is there, Tauri\'s disk image script is this try\'s and the .dmg is missing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cn-dmg-'))
   try {
     const apps = join(dir, 'macos')
     const dmgs = join(dir, 'dmg')
     const at = (began: number) => m.dmgAlone({ began, apps, dmgs })
+    const old = (path: string, ms: number) => utimesSync(path, new Date(ms), new Date(ms))
     // Nothing bundled (a failed compile): not this failure.
     assert.equal(at(0), false)
     mkdirSync(dmgs)
     assert.equal(at(0), false)
+    // The .app made and the disk image step not begun (a failure while the .app was put together): not this failure.
+    const app = join(apps, 'Crimson Noir Agent City.app')
+    const script = join(dmgs, 'bundle_dmg.sh')
+    mkdirSync(app, { recursive: true })
+    assert.equal(at(0), false)
     // The .app made, the working image left beside it, the dmg folder holding only Tauri's script: this failure.
-    mkdirSync(join(apps, 'Crimson Noir Agent City.app'), { recursive: true })
     writeFileSync(join(apps, 'rw.7001.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), 'x')
-    writeFileSync(join(dmgs, 'bundle_dmg.sh'), '#!/bin/sh\n')
-    const made = statSync(join(apps, 'Crimson Noir Agent City.app')).mtimeMs
+    writeFileSync(script, '#!/bin/sh\n')
+    const made = 1_800_000_000_000
+    old(script, made)
     assert.equal(at(0), true)
     assert.equal(at(made), true)
-    assert.equal(at(made + 1500), true, 'a folder time kept to the second is still this try\'s')
-    // An .app older than the step (a stale one, with the compile failing now): not this failure.
+    assert.equal(at(made + 1500), true, 'a time kept to the second is still this try\'s')
+    // A script an earlier try wrote (a stale bundle folder, with the compile or the .app failing now): this try never
+    // reached its disk image, however new the .app's folder is.
     assert.equal(at(made + 60_000), false)
+    old(app, made + 60_000)
+    assert.equal(at(made + 60_000), false)
+    old(script, made + 60_000)
+    assert.equal(at(made + 60_000), true)
+    // The script alone, with no .app to put in an image: not this failure.
+    renameSync(app, join(dir, 'aside.app'))
+    assert.equal(at(made + 60_000), false)
+    renameSync(join(dir, 'aside.app'), app)
+    assert.equal(at(made + 60_000), true)
     // A whole .dmg in the dmg folder: the image was made, so whatever failed was not it.
     writeFileSync(join(dmgs, 'Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), 'x')
     assert.equal(at(0), false)
@@ -175,9 +211,11 @@ test('the macOS bundle step is tried again only when the .app is new and the .dm
   }
   assert.equal(m.dmgAlone({ apps: join(dir, 'gone'), dmgs: join(dir, 'gone') }), false)
   assert.match(m.DMG_WHY, /^the \.app is made and the \.dmg is not/)
-
-  assert.equal(m.isWorkingImage('rw.7001.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'), true)
-  for (const n of ['Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg', 'rw.dmg', 'rw.x.y.dmg', 'rw.12.name.dmg.txt', 'Crimson Noir Agent City.app']) assert.equal(m.isWorkingImage(n), false, n)
+  // Where it looks when nobody tells it: the folders Tauri's universal build leaves, as the failed job's log named them.
+  const source = readFileSync(SCRIPT, 'utf8')
+  assert.match(source, /\nconst macBundle = \(\.\.\.parts\) => join\(ROOT, 'src-tauri', 'target', TRIPLES\.macUniversal, 'release', 'bundle', \.\.\.parts\)\n/)
+  assert.match(source, /\nexport function dmgAlone\(\{ began = 0, apps = macBundle\('macos'\), dmgs = macBundle\('dmg'\) \} = \{\}\) \{\n/)
+  assert.equal(m.TRIPLES.macUniversal, 'universal-apple-darwin')
 })
 
 test('leftImages reads what hdiutil info lists as attached, and keeps only the images under the bundle folder', () => {
@@ -223,13 +261,99 @@ test('leftImages reads what hdiutil info lists as attached, and keeps only the i
   assert.deepEqual(m.leftImages('framework       : 692.40.2\ndriver          : 15.7.2\n', [bundle]), [])
   assert.deepEqual(m.leftImages('', [bundle]), [])
 
-  // The mending is the Mac's alone, reads hdiutil's own list, detaches by device and removes only working images.
+})
+
+test('before the macOS bundle step is run again, the image the failed try left attached is detached and every .dmg beside the .app removed, on a Mac alone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'cn-mend-'))
+  try {
+    const bundle = join(dir, 'bundle')
+    const apps = join(bundle, 'macos')
+    const dmgs = join(bundle, 'dmg')
+    const working = 'rw.7120.Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'
+    const unfinished = 'Crimson Noir Agent City_1.0.0-stable-beta_universal.dmg'
+    const fill = () => {
+      mkdirSync(join(apps, 'Crimson Noir Agent City.app'), { recursive: true })
+      mkdirSync(dmgs, { recursive: true })
+      writeFileSync(join(apps, working), 'x')
+      writeFileSync(join(apps, unfinished), 'half')
+      writeFileSync(join(apps, 'notes.txt'), 'kept')
+      writeFileSync(join(dmgs, 'bundle_dmg.sh'), '#!/bin/sh\n')
+    }
+    const info = (root: string) => [
+      'framework       : 692.40.2',
+      '================================================',
+      `image-path      : ${root}/macos/${working}`,
+      'image-type      : read/write',
+      '/dev/disk4\tApple_partition_scheme\t',
+      '/dev/disk4s2\tApple_HFS\t/Volumes/dmg.Xy12Ab',
+      '================================================',
+      'image-path      : /Library/Developer/CoreSimulator/Volumes/iOS_23F77/sim.dmg',
+      '/dev/disk6\tGUID_partition_scheme\t',
+      '',
+    ].join('\n')
+    type Answer = { ok: boolean; out: string; err: string }
+    const hdiutil = (answers: Record<string, Answer>) => {
+      const calls: string[] = []
+      return { calls, exec: (cmd: string, argv: string[], opts: object) => { calls.push(`${cmd} ${argv.join(' ')}`); assert.deepEqual(opts, { capture: true }); return answers[argv[0]] ?? { ok: true, out: '', err: '' } } }
+    }
+    const kept = () => readdirSync(apps).sort()
+
+    // Not a Mac: nothing is run and nothing removed.
+    fill()
+    let said: string[] = []
+    let h = hdiutil({})
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'linux', exec: h.exec, bundle })
+    assert.deepEqual([h.calls, said, kept()], [[], [], ['Crimson Noir Agent City.app', unfinished, 'notes.txt', working].sort()])
+
+    // A Mac: the image under the bundle folder is detached by its whole-disk device, the simulator's is left alone,
+    // and both .dmg files beside the .app go: the working image and the one the script was still writing.
+    h = hdiutil({ info: { ok: true, out: info(bundle), err: '' } })
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'darwin', exec: h.exec, bundle })
+    assert.deepEqual(h.calls, ['hdiutil info', 'hdiutil detach /dev/disk4 -force'])
+    assert.deepEqual(kept(), ['Crimson Noir Agent City.app', 'notes.txt'])
+    assert.deepEqual(readdirSync(dmgs), ['bundle_dmg.sh'], 'the dmg folder is Tauri\'s to empty')
+    assert.deepEqual(said, [
+      `    the failed try left ${working} attached at /dev/disk4: detached`,
+      `    removed ${unfinished}, which the failed try left beside the .app`,
+      `    removed ${working}, which the failed try left beside the .app`,
+    ])
+
+    // The image listed under /private (a path resolved through a link) is the same folder's.
+    fill(); said = []
+    h = hdiutil({ info: { ok: true, out: info(join('/private', bundle)), err: '' } })
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'darwin', exec: h.exec, bundle })
+    assert.deepEqual(h.calls, ['hdiutil info', 'hdiutil detach /dev/disk4 -force'])
+
+    // An image that will not detach is said, with hdiutil's words, and the files still go.
+    fill(); said = []
+    h = hdiutil({ info: { ok: true, out: info(bundle), err: '' }, detach: { ok: false, out: '', err: 'hdiutil: couldn\'t unmount "disk4" - Resource busy\n' } })
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'darwin', exec: h.exec, bundle })
+    assert.equal(said[0], `    the failed try left ${working} attached at /dev/disk4, and it would not detach: hdiutil: couldn't unmount "disk4" - Resource busy`)
+    assert.deepEqual(kept(), ['Crimson Noir Agent City.app', 'notes.txt'])
+
+    // Nothing attached: said, and the files still go. hdiutil not answering: said, nothing detached, the files still go.
+    fill(); said = []
+    h = hdiutil({ info: { ok: true, out: 'framework       : 692.40.2\n', err: '' } })
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'darwin', exec: h.exec, bundle })
+    assert.deepEqual(h.calls, ['hdiutil info'])
+    assert.equal(said[0], '    no disk image of the failed try is still attached')
+    assert.deepEqual(kept(), ['Crimson Noir Agent City.app', 'notes.txt'])
+    fill(); said = []
+    h = hdiutil({ info: { ok: false, out: '', err: 'spawnSync hdiutil ENOENT' } })
+    m.detachLeft((l: string) => { said.push(l) }, { platform: 'darwin', exec: h.exec, bundle })
+    assert.deepEqual(h.calls, ['hdiutil info'])
+    assert.equal(said[0], '    hdiutil info did not run (spawnSync hdiutil ENOENT): nothing is detached')
+    assert.deepEqual(kept(), ['Crimson Noir Agent City.app', 'notes.txt'])
+
+    // No bundle folder at all: nothing to remove, and no throw.
+    h = hdiutil({ info: { ok: true, out: '', err: '' } })
+    m.detachLeft(() => {}, { platform: 'darwin', exec: h.exec, bundle: join(dir, 'gone') })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+  // Left to itself it is this machine's platform, the tool's own `run` and the folder the build leaves.
   const source = readFileSync(SCRIPT, 'utf8')
-  const mend = source.slice(source.indexOf('function detachLeft('), source.indexOf('function macPlan('))
-  assert.match(mend, /if \(process\.platform !== 'darwin'\) return\n/)
-  assert.match(mend, /run\('hdiutil', \['info'\], \{ capture: true \}\)/)
-  assert.match(mend, /run\('hdiutil', \['detach', dev, '-force'\], \{ capture: true \}\)/)
-  assert.match(mend, /readdirSync\(apps\)\.filter\(isWorkingImage\)/)
+  assert.match(source, /\nexport function detachLeft\(say = console\.log, \{ platform = process\.platform, exec = run, bundle = macBundle\(\) \} = \{\}\) \{\n/)
 })
 
 test('every plan is programs with argument vectors, never a shell line; every Tauri step says the page is already built; the page is built under this Node', () => {

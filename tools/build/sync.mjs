@@ -334,21 +334,26 @@ function published(gh, repo, run) {
   return deploy?.conclusion === 'success' && (deploy.steps ?? []).some((step) => /actions\/deploy-pages@/.test(step.name ?? '') && step.conclusion === 'success')
 }
 
-/** Everything `verdict` judges, read now. No source's failure stops the others: each is recorded where it belongs. */
+/**
+ * Everything `verdict` judges, read now. No source's failure stops the others: each is recorded where it belongs.
+ * The publisher's own reads (mainTip, choose, getRelease, readState) ask three times themselves, so they get `once`
+ * as it is; the reads made here get the patient one. A patient gh under the publisher's reads would make three tries
+ * nine, and with GitHub out of reach that outlasts this check's job before it can say "could not look".
+ */
 export async function gather({ repo, site = siteOf(repo), now = new Date().toISOString(), wait = 5000 }, once, get) {
   const gh = patient(once, { wait })
   const facts = { now, runs: [], ended: [], served: null, media: {} }
   try {
-    facts.tip = mainTip(gh, repo, { wait })
-    facts.green = choose({ repo, wait }, gh, facts.tip).green
+    facts.tip = mainTip(once, repo, { wait })
+    facts.green = choose({ repo, wait }, once, facts.tip).green
   } catch (e) { facts.green = { error: e.message } }
   facts.web = await readWeb(site, get, now)
   try {
-    const release = getRelease(gh, repo, { wait })
+    const release = getRelease(once, repo, { wait })
     if (!release) facts.release = null
     else {
       facts.release = {
-        state: readState(gh, repo, release, { wait }),
+        state: readState(once, repo, release, { wait }),
         staged: release.assets.some((a) => a.name === STAGED),
         tag: tagAt(gh, repo, TAG),
         assets: release.assets.map(({ name, size, digest }) => ({ name, size, digest })),

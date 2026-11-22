@@ -2984,27 +2984,41 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   no package host has refused one since.
 - **The macOS build makes its disk image again when a try leaves it unmade.** On 2026-11-22 one of the two macOS
   builds of one commit failed (`matrix / macos-universal`, run 44983349249) while the other passed, and the failed
-  job passed when it was run again with nothing changed: Tauri's
-  `bundle_dmg.sh` stopped eleven seconds in, before its long compression, Tauri printed only that the script failed
-  (it prints the script's own words only when verbose), and the job's cleanup found a `diskimages-helper` still
-  running, which is a disk image left attached. The script fills a writable image, mounts it, and gives up when it
-  will not unmount within three tries, about six seconds; that is the likeliest reading of those eleven seconds, and
-  it is not proved, since the script's words were not kept. `tools/build/matrix.mjs` now runs the macOS bundle step
-  again, a minute later and up to twice, only when the `.app` is new and no `.dmg` was made (`dmgAlone`: a failed
-  compile is not tried again). Before each new try it detaches the image the failed one left attached (`hdiutil
-  info`, read by `leftImages`) and removes that image's working file beside the `.app`; the new tries are verbose, so
-  a failure that stays says why. One loop (`tried`) now runs these and the downloading steps. Pinned in
-  `buildMatrix.test.ts`, in Node. Not verified on a Mac: no build there has needed a second try since.
+  job passed when it was run again with nothing changed. What its log shows: Tauri's `bundle_dmg.sh` failed eleven
+  seconds in, where the two builds that passed took 23 and 28 seconds over it; Tauri printed only that the script
+  failed (by its source it prints the script's own words only when verbose); and the job's cleanup ended a
+  `diskimages-helper` process, which the builds that passed did not leave. The likeliest reading, not proved, since
+  the script's words were not kept: it stopped before its compression with an image still attached, at the unmount it
+  gives three tries and about six seconds. `tools/build/matrix.mjs` now runs the macOS bundle step again, a minute
+  later and up to twice, only when an `.app` is there, Tauri wrote its disk image script during this step and no
+  `.dmg` was made (`dmgAlone`: a failed compile, or a failure while the `.app` is put together, is not tried again).
+  Before each new try it detaches the image the failed one left attached (`hdiutil info`, read by `leftImages`) and
+  removes every `.dmg` left beside the `.app`, the working image and one still being written (`detachLeft`; a whole
+  `.dmg` is never there, since Tauri moves it to a folder of its own); a clearing up that fails is said and does not
+  stop the next try. The new tries are verbose, so a failure that stays says why. One loop (`tried`) now runs these
+  and the downloading steps. Pinned in `buildMatrix.test.ts`, in Node, the clearing up against a stand-in for
+  `hdiutil`. An independent review found three faults in this, fixed with it: the test could not tell when the step
+  began from now, a slip that would have switched the retry off unnoticed; nothing held where the clearing up looks
+  on a Mac; and a clearing up that threw would have ended the tries under its own error. Two narrowings it asked for
+  are taken though neither case is shown to happen: the script as the mark that the disk image was begun, and every
+  `.dmg` beside the `.app`, not the working one alone. Not verified on a Mac: no build there has needed a second try
+  since, so neither the detach nor what `hdiutil` prints there has been seen.
 - **The publisher asks again when a first read of GitHub loses its connection.** The same run's `dry-run` job failed
   next, at its first call: `gh api releases/tags/current` got no answer (`dial tcp ...:443: i/o timeout`); run again
-  with nothing changed, it passed.
-  `tools/build/current.mjs` read the release, main's tip and ci's list of runs once each, with no second try, though
-  its comparisons and its read of the release's record already had three. Those three reads now go through the same
-  three tries (`attempt`: a lost connection or a 5xx is asked again; an answer of GitHub's, a 404 or a 403, is not),
-  wherever `pick`, `web-pick`, `web-confirm`, `publish` and the `sync` check make them; where a tag points (`tagAt`),
-  read inside the tag's move, is left as it was. Pinned in `currentBuild.test.ts` with that day's words from `gh`:
-  the dry run plans through one timeout, a third timeout in a row is thrown with those words, and the test fails
-  without the change.
+  with nothing changed, it passed. `tools/build/current.mjs` read the release, main's tip and ci's list of runs once
+  each, with no second try, though its comparisons and its read of the release's record already had three. Those
+  three reads now go through the same three tries (`attempt`: a lost connection or a 5xx is asked again; an answer of
+  GitHub's with a 4xx status, a 404 or a 403, is not), wherever `pick`, `web-pick`, `web-confirm` and `publish` make
+  them, with the caller's wait between tries, a tip nobody handed in included; where a tag points (`tagAt`), read
+  inside the tag's move, is left as it was. The `sync` check already asked three times through a wrapper of its own
+  (`patient`), and its comparisons and its read of the record, which try three times themselves, were so asked nine
+  times: it now hands the publisher's reads its bare `gh`, so each is asked three times, as its header says (nine
+  dials, at the half minute one took to time out that day, would outlast the check's ten-minute job before it could
+  say it could not look). Pinned in `currentBuild.test.ts` with that day's words from `gh` (the dry run plans through
+  one timeout, a third timeout in a row is thrown with those words, and the test fails without the change) and in
+  `syncCheck.test.ts` (GitHub out of reach: three asks a read). The same review found the nine tries, a tip read
+  without the caller's wait and sentences here that said more than was shown; all are mended. Not yet seen to rescue
+  a run: no read of GitHub has lost its connection since.
 - **The current downloads say what an iPhone should use.** The release notes said of the `.ipa` only that it "must be
   re-signed", and its row read like an iPhone build. They now carry a line of their own: on an iPhone or iPad, open
   the web copy in Safari (iOS 26 or newer); the `.ipa` is unsigned, no iPhone installs it as it is, and it is a build

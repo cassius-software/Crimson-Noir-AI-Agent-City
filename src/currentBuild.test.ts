@@ -692,6 +692,23 @@ test('a first read that loses its connection is asked again, three tries in all:
     const none = fakeGitHub([commitOf(0), c1])
     assert.equal(c.getRelease(none.gh, REPO, { wait: 0 }), null)
     assert.deepEqual(none.s.calls.map((a) => a[a.length - 1].split('/').pop()), ['current', 'current-next'])
+
+    // The caller's wait reaches main's tip where no tip is given: two lost dials with wait 0 take no time, where the
+    // tool's own 5 s between tries would take ten seconds. A real publish reads its first tip this way.
+    const quick = (what: string, ask: () => unknown, want: unknown) => {
+      lose(TIP, 2)
+      const from = Date.now()
+      assert.deepEqual(ask(), want, what)
+      assert.equal(asked(TIP), 3, what)
+      assert.ok(Date.now() - from < 4000, `${what}: main's tip was read with the tool's own wait, not the caller's`)
+    }
+    quick('onMain', () => c.onMain(gh.gh, REPO, c2, undefined, { wait: 0 }), true)
+    quick('newestGreen', () => c.newestGreen(gh.gh, REPO, undefined, { wait: 0 }).sha, c2)
+    quick('choose', () => c.choose({ repo: REPO, wait: 0 }, gh.gh).green.sha, c2)
+    quick('publish', () => c.publish({ media: artifacts(join(t.dir, 'm3'), allBuilt('a')), stage: join(t.dir, 's3'), sha: c2, repo: REPO, log: quiet, wait: 0, verifyWait: 0 }, gh.gh).status, 'published')
+    gh.s.fail = null
+    // And no read of the tip or the release inside the tool is made without a wait handed on.
+    assert.doesNotMatch(read('tools/build/current.mjs'), /\b(mainTip|getRelease)\(gh, repo\)/)
   } finally { t.done() }
 })
 

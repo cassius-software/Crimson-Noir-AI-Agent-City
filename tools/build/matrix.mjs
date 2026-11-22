@@ -172,26 +172,34 @@ export function macEnv() {
 /** Where Tauri leaves the macOS bundles: `macos/<name>.app` and, moved there once it is whole, `dmg/<name>.dmg`. */
 const macBundle = (...parts) => join(ROOT, 'src-tauri', 'target', TRIPLES.macUniversal, 'release', 'bundle', ...parts)
 
+/** The script Tauri writes into the dmg folder as its disk image step begins, and then runs. */
+const DMG_SCRIPT = 'bundle_dmg.sh'
+
 /**
- * Whether the macOS bundle step stopped at its disk image: an .app made since `began` (ms) and no .dmg in the dmg
- * folder. Tauri bundles the .app first and the .dmg last, with a script (bundle_dmg.sh, run in the .app's folder)
- * that copies the .app into a writable image `rw.<pid>.<name>.dmg`, mounts it, unmounts it (three tries, about six
- * seconds of patience) and compresses it; only a whole .dmg is moved into the dmg folder, which Tauri empties before
- * each try. A failed compile leaves no new .app, so it is not this, and is not tried again.
+ * Whether the macOS bundle step stopped at its disk image: an .app is there, Tauri wrote its disk image script since
+ * `began` (ms), and no .dmg is in the dmg folder. Tauri bundles the .app first and the .dmg last: it empties the dmg
+ * folder, writes bundle_dmg.sh there and runs it in the .app's folder, where the script copies the .app into a
+ * writable image `rw.<pid>.<name>.dmg`, mounts it, unmounts it (three tries, about six seconds of patience) and
+ * compresses it to `<name>.dmg`; only when the script succeeds is that file moved into the dmg folder. So a script
+ * written since the step began says this try reached its disk image, and no .dmg there says the image was not made.
+ * A failed compile, or a failure while the .app is put together, writes no script: neither is this, and neither is
+ * tried again.
  */
 export function dmgAlone({ began = 0, apps = macBundle('macos'), dmgs = macBundle('dmg') } = {}) {
   const names = (dir) => (existsSync(dir) ? readdirSync(dir) : [])
-  // Two seconds of grace: a file system may keep a folder's time to the second.
-  const fresh = names(apps).some((n) => n.endsWith('.app') && statSync(join(apps, n)).mtimeMs >= began - 2000)
-  return fresh && !names(dmgs).some((n) => n.endsWith('.dmg'))
+  const made = names(dmgs)
+  // Two seconds of grace: a file system may keep a file's time to the second.
+  const begun = made.includes(DMG_SCRIPT) && statSync(join(dmgs, DMG_SCRIPT)).mtimeMs >= began - 2000
+  return names(apps).some((n) => n.endsWith('.app')) && begun && !made.some((n) => n.endsWith('.dmg'))
 }
 
 /**
- * Why the macOS bundle step is run again (the warning's words). Seen once on a hosted Mac (run 44983349249): the
- * script failed eleven seconds in, before its long compression, and left an image attached, while the same commit's
- * other macOS build passed. Tauri prints nothing of the script unless it is verbose, so the later tries are.
+ * Why the macOS bundle step is run again (the warning's words: what is seen, not a cause). Seen once on a hosted Mac
+ * (run 44983349249): the script failed eleven seconds in, where the builds that passed took 23 and 28 seconds over
+ * it, and the job's cleanup ended a `diskimages-helper` those did not leave, while the same commit's other macOS
+ * build passed. Tauri prints nothing of the script unless it is verbose, so the later tries are.
  */
-export const DMG_WHY = 'the .app is made and the .dmg is not, as a hosted Mac does now and then to a disk image it has only just made'
+export const DMG_WHY = 'the .app is made and the .dmg is not'
 
 /**
  * The disk images `hdiutil info` lists as attached whose file lies under one of `under` (folders), each with its
@@ -209,29 +217,28 @@ export function leftImages(info, under) {
   return out
 }
 
-/** The working images a failed .dmg step leaves beside the .app: `rw.<pid>.<name>.dmg`. */
-export const isWorkingImage = (name) => /^rw\.\d+\..+\.dmg$/.test(name)
-
 /**
- * Before the macOS bundle step is run again: an image the failed try left attached is named and detached, and its
- * working file beside the .app (as large as the app) is removed, so the next try starts with nothing of the last one
- * mounted or kept. On another system it does nothing; with nothing left it says so.
+ * Before the macOS bundle step is run again: an image the failed try left attached is named and detached, and every
+ * .dmg it left beside the .app is removed: the working image `rw.<pid>.<name>.dmg` (as large as the app) and a
+ * `<name>.dmg` the script was still writing, which its last step would refuse to write over. A whole .dmg is never
+ * there: Tauri moves it to the dmg folder. So the next try starts with nothing of the last one mounted or kept. On
+ * another system it does nothing; with nothing left it says so. `platform`, `exec` (run's shape) and `bundle` (the
+ * folder that holds macos/ and dmg/) are a test's way in.
  */
-function detachLeft(say = console.log) {
-  if (process.platform !== 'darwin') return
-  const bundle = macBundle()
-  const info = run('hdiutil', ['info'], { capture: true })
+export function detachLeft(say = console.log, { platform = process.platform, exec = run, bundle = macBundle() } = {}) {
+  if (platform !== 'darwin') return
+  const info = exec('hdiutil', ['info'], { capture: true })
   if (!info.ok) say(`    hdiutil info did not run (${(info.err || info.out).trim() || 'no reason given'}): nothing is detached`)
   const left = info.ok ? leftImages(info.out, [bundle, join('/private', bundle)]) : []
   if (info.ok && left.length === 0) say('    no disk image of the failed try is still attached')
   for (const { image, dev } of left) {
-    const r = run('hdiutil', ['detach', dev, '-force'], { capture: true })
+    const r = exec('hdiutil', ['detach', dev, '-force'], { capture: true })
     say(r.ok ? `    the failed try left ${basename(image)} attached at ${dev}: detached` : `    the failed try left ${basename(image)} attached at ${dev}, and it would not detach: ${(r.err || r.out).trim()}`)
   }
-  const apps = macBundle('macos')
-  for (const n of existsSync(apps) ? readdirSync(apps).filter(isWorkingImage) : []) {
+  const apps = join(bundle, 'macos')
+  for (const n of existsSync(apps) ? readdirSync(apps).filter((name) => name.endsWith('.dmg')) : []) {
     rmSync(join(apps, n), { force: true })
-    say(`    removed the working image ${n}`)
+    say(`    removed ${n}, which the failed try left beside the .app`)
   }
 }
 
@@ -431,18 +438,24 @@ const FETCH_WHY = 'it downloads as it runs'
 
 /**
  * Runs a step, and runs it again while it fails and may be: `again` more times at most, a pause before each, and
- * only while `when` (if the step has one; it is told when the step began) says the failure is the kind another try
- * can mend. Before each new try the step's `mend` clears what the last one left, and the try takes the step's
- * `louder` arguments as well, so a failure that stays says more about itself than the first did. `once(argv)` runs
- * the step and answers `{ ok }`; what the last try answered is returned, so a failure that stays is still the
- * target's.
+ * only while `when` (if the step has one; it is told when the step's first run began) says the failure is the kind
+ * another try can mend. Before each new try the step's `mend` clears what the last one left, and the try takes the
+ * step's `louder` arguments as well, so a failure that stays says more about itself than the first did. `once(argv)`
+ * runs the step and answers `{ ok }`; what the last try answered is returned, so a failure that stays is still the
+ * target's, under the step's own name: a `when` that throws is a no (said, and no further try), and a `mend` that
+ * throws is said and the next try made all the same, since clearing up is no part of the step.
  */
 export function tried(s, once, { id = '', pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms), say = console.log, now = Date.now } = {}) {
   const began = now()
+  const name = show(s.cmd, s.argv, s.cwd)
+  const words = (e) => (e instanceof Error ? e.message : String(e))
+  const may = () => {
+    try { return s.when?.({ began }) ?? true } catch (e) { say(`::warning::${id}: ${name} failed, and whether another try could mend it could not be told (${words(e)}), so it is not run again`); return false }
+  }
   let r = once(s.argv)
-  for (let left = s.again ?? 0; !r.ok && left > 0 && (s.when?.({ began }) ?? true); left--) {
-    say(`::warning::${id}: ${show(s.cmd, s.argv, s.cwd)} failed; ${s.why ?? FETCH_WHY}, so it is run again in ${AGAIN_MS / 1000} s (${left} more ${left === 1 ? 'try' : 'tries'})`)
-    s.mend?.(say)
+  for (let left = s.again ?? 0; !r.ok && left > 0 && may(); left--) {
+    say(`::warning::${id}: ${name} failed; ${s.why ?? FETCH_WHY}, so it is run again in ${AGAIN_MS / 1000} s (${left} more ${left === 1 ? 'try' : 'tries'})`)
+    try { s.mend?.(say) } catch (e) { say(`    clearing up after the failed try stopped (${words(e)}); the next try is made all the same`) }
     pause(AGAIN_MS)
     r = once(s.louder ? [...s.argv, ...s.louder] : s.argv)
   }

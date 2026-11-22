@@ -687,6 +687,19 @@ test('a read of GitHub that got no answer is made again, three times in all, so 
   const g: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, under.gh, under.get)
   assert.equal(s.verdict(g).status, 'settling')
 
+  // GitHub out of reach for the whole look: every read is asked three times and no more, the publisher's own reads
+  // too (they try three times themselves, and get the bare gh: under a patient one they asked nine times, and with a
+  // dial that times out after half a minute the look outlasted its job before it could say "could not look").
+  const lost: string[] = []
+  const out = world({ media: bothImages(C2) })
+  out.fail = (path) => { lost.push(path); return 'Get "https://api.github.com/": dial tcp 192.0.2.1:443: i/o timeout' }
+  const dark = standIns(out)
+  const unseen: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, dark.gh, dark.get)
+  assert.equal(s.verdict(unseen).status, 'unknown')
+  const times = (path: string) => lost.filter((x) => x === path).length
+  assert.deepEqual([times('git/ref/heads/main'), times('releases/tags/current'), times('actions/workflows/web.yml/runs?per_page=30')], [3, 3, 3])
+  assert.equal(lost.length, 9, 'main\'s tip, the release and the first list of runs, three times each, and nothing after them')
+
   // Three failures in a row are the answer "could not look"; a 4xx is GitHub's answer and is not asked for again.
   const calls: string[][] = []
   const dead = s.patient((argv: string[]) => { calls.push(argv); return { ok: false, out: '', err: 'connection reset' } }, { wait: 0 })
