@@ -139,6 +139,13 @@ jobs:
           done
         env:
           MODEL_BYTES: ${{ steps.model.outputs.bytes }}
+      - name: The bare executable holds the notices of the Rust crates it is built with, whole
+        # src-tauri/notices/RUST-CRATES.txt is compiled into the app (src-tauri/src/notices.rs), so the one file that
+        # travels with nothing beside it still carries them; the installers put the same file in licenses/. A commit
+        # built by hand from before the notices existed has none to hold, and says so.
+        run: |
+          [ -f tools/license/notices.mjs ] || { echo "this commit predates the crates' notices: there is nothing to hold"; exit 0; }
+          node tools/license/notices.mjs carried out/portable/*.exe
       # The check comes from the workflow's own commit: the commit built (current.yml's ref, or a tag by hand) may
       # predate tools/verify/site_budget.mjs.
       - name: The size check from this workflow's own commit (the commit built may predate it)

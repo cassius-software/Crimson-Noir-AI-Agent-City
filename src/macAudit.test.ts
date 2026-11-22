@@ -49,6 +49,7 @@ function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
     { path: `${a.MODEL_DIR}LICENSE`, size: 11343, dir: false },
     { path: `${a.MODEL_DIR}NOTICE`, size: 2200, dir: false },
     ...a.MAC_FILES.map((p: string) => ({ path: p, size: 1078, dir: false })),
+    { path: a.NOTICES.path, size: a.NOTICES.bytes, dir: false },
   ]
   return change(base)
 }
@@ -77,6 +78,9 @@ test('the package: a whole .app passes, and each missing, empty, wrong-sized or 
   assert.match(appProblems(entries((e) => e.filter((x) => x.path !== `${a.MODEL_DIR}LICENSE`))).join('\n'), /no Contents\/Resources\/models\/LICENSE beside the model/)
   assert.match(appProblems(entries((e) => e.map((x) => (x.path === `${a.MODEL_DIR}NOTICE` ? { ...x, size: 0 } : x)))).join('\n'), /Contents\/Resources\/models\/NOTICE is empty/)
   assert.match(appProblems(entries((e) => e.filter((x) => !x.path.endsWith('llama.cpp/NOTICE')))).join('\n'), /no Contents\/Resources\/licenses\/llama\.cpp\/NOTICE \(llama\.cpp, compiled into the app, travels with its licence\)/)
+  assert.equal(a.NOTICES.path, 'Contents/Resources/licenses/RUST-CRATES.txt', 'beside llama.cpp\'s texts, in Tauri\'s resource folder')
+  assert.match(appProblems(entries((e) => e.filter((x) => x.path !== a.NOTICES.path))).join('\n'), /no Contents\/Resources\/licenses\/RUST-CRATES\.txt \(the Rust crates the app is built with travel with their notices\)/)
+  assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size: 12 } : x)))).join('\n'), /RUST-CRATES\.txt is 12 bytes; the committed notices are \d+/)
   const stray = appProblems(entries((e) => [...e, { path: 'Contents/Resources/models/tiny-a.gguf', size: 9000, dir: false }]))
   assert.match(stray.join('\n'), /holds the tiny test model \(Contents\/Resources\/models\/tiny-a\.gguf\)/)
   // The end-to-end test's own build carries the tiny model on purpose.
@@ -370,6 +374,7 @@ test('the commands end to end: each passes a good universal app and fails, namin
       writeFileSync(join(root, a.MODEL_DIR, FILE), MODEL)
       for (const f of ['LICENSE', 'NOTICE']) writeFileSync(join(root, a.MODEL_DIR, f), `the model's ${f}\n`)
       for (const f of a.MAC_FILES as string[]) writeFileSync(join(root, f), `llama.cpp's ${f}\n`)
+      writeFileSync(join(root, a.NOTICES.path), readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')))
       change(root)
       return join(dir, name)
     }

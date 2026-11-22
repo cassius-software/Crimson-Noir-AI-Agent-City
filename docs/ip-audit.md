@@ -517,15 +517,22 @@ rewrites the list after a lockfile changes, and its diff is the review of what t
    choice (most offer both; four of these name a second permissive licence that applies as well); 18 are
    Unicode-3.0 (the ICU crates); four are Zlib, three BSD-3-Clause, two ISC, one CC0-1.0, one Apache-2.0 with the
    LLVM exception; five are MPL-2.0 (§3). Share-alike or non-commercial: none.
-4. **A gap the gate does not close yet: the app packages carry no notices for their Rust crates.** Each app links
-   between 205 and 250 registry crates (`cargo tree --locked --target <target> -e normal --prefix none`, counted
-   per target on 22 November 2026, procedural macros included). MIT, BSD, ISC, Zlib and Apache-2.0 all ask that
-   their copyright notice and licence text travel with copies, and MPL-2.0 asks that recipients be told where the
-   source of its files is. The packages carry the notices for the model, llama.cpp and the page's bundled
-   JavaScript, and nothing for the crates. The boot images are not affected (two crates, covered by `NOTICE.txt`).
-   Most Rust applications ship this way and it is rarely pursued, but it is a duty in the licences' own words, so
-   the next change generates one third-party notices file from the same `cargo metadata` and puts it in every app
-   package, with the five MPL crates' source locations.
+4. **A gap the first run found, closed by the change after it: the app packages carried no notices for their Rust
+   crates.** Each app links between 205 and 250 registry crates (`cargo tree --locked --target <target> -e normal
+   --prefix none`, counted per target on 22 November 2026, procedural macros included). MIT, BSD, ISC, Zlib and
+   Apache-2.0 all ask that their copyright notice and licence text travel with copies, and MPL-2.0 asks that
+   recipients be told where the source of its files is. The packages carried the notices for the model, llama.cpp
+   and the page's bundled JavaScript, and nothing for the crates. The boot images are not affected (two crates,
+   covered by `NOTICE.txt`). Most Rust applications ship this way and it is rarely pursued, but it is a duty in the
+   licences' own words. Now `tools/license/notices.mjs` writes `src-tauri/notices/RUST-CRATES.txt` from the same
+   `cargo metadata` and the crates' own packages: all 426 crates of the apps' lockfile (every platform's, so each
+   app's file names more crates than that app links, never fewer), the 214 distinct licence, copyright and notice
+   texts they ship, the source location of each MPL-2.0 crate, and for the 38 crates whose packages ship no text
+   their authors and the text of the licence taken. The app's program holds the file whole and every package ships
+   it as `licenses/RUST-CRATES.txt`; CI fails when the file is not what the registry gives or when a build does not
+   hold it. What it does not settle: whether a notice inside the program and a file in the package is enough in
+   every store's eyes (the phones' stores have their own rules for showing licences), and the reading of each
+   licence, which is counsel's.
 5. **The cover picture.** `docs/cover.jpg` carries Content Credentials (a C2PA manifest) signed by Google's media
    services, so it was made or last edited with one of Google's generative image tools. Julian supplied it and it
    was committed on 16 October 2026. Which tool and which plan made it is not recorded, so its terms for commercial

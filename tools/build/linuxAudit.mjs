@@ -11,8 +11,9 @@
  *                                            [--binary <file>]...
  *     Each package holds usr/lib/<product>/models/<file> (the resource folder the runner looks in: tauri.conf.json's
  *     productName) at exactly <n> bytes, with LICENSE and NOTICE beside it, and llama.cpp's LICENSE and NOTICE where
- *     src-tauri/tauri.model.conf.json puts them for every Linux package (usr/share/doc/...); each is larger than nine
- *     tenths of the model;
+ *     src-tauri/tauri.model.conf.json puts them for every Linux package (usr/share/doc/...), and the notices of the
+ *     Rust crates the app is built with (usr/lib/<product>/licenses/RUST-CRATES.txt, at the committed file's size);
+ *     each is larger than nine tenths of the model;
  *     no package lists the tiny test model (tiny-a.gguf) and no binary (the one inside the .deb, and each --binary)
  *     holds its name, unless <file> is that model (the end-to-end rehearsal's build). The .deb is listed with
  *     dpkg-deb -c, the .rpm with rpm -qp, and the AppImage's squashfs with unsquashfs -lls at the offset its ELF
@@ -64,6 +65,18 @@ export const FLOOR = Object.freeze({ GLIBC: '2.35', GLIBCXX: '3.4.30', CXXABI: '
 export const LINUX_FILES = Object.freeze(Object.keys(JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.model.conf.json'), 'utf8')).bundle.linux.deb.files)
   .map((p) => p.replace(/^\//, '')).sort())
 
+/**
+ * The notices of the Rust crates the app is built with (tools/license/notices.mjs writes them), which every package
+ * carries among its resources: the path inside the resource folder (src-tauri/tauri.conf.json bundle.resources) and
+ * the committed file's size, which the packaged copy must have.
+ */
+export const NOTICES = Object.freeze((() => {
+  const resources = JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.resources ?? {}
+  const found = Object.entries(resources).find(([from]) => from.startsWith('notices/'))
+  if (!found) throw new Error('src-tauri/tauri.conf.json names no notices/ file among bundle.resources')
+  return { path: found[1], bytes: statSync(join(ROOT, 'src-tauri', found[0])).size }
+})())
+
 /** Where the runner looks for the carried model: `models/` in the resource folder, usr/lib/<product>/ once installed. */
 export function modelDir(product = PRODUCT) {
   return `usr/lib/${product}/models/`
@@ -114,10 +127,10 @@ export function appImageOffset(head) {
 /**
  * Pure. What is wrong with one package, given its entries and its size: the model at `models/<file>` in the resource
  * folder at exactly `bytes`, LICENSE and NOTICE beside it (not empty), llama.cpp's texts (`files`) where the overlay
- * puts them (not empty), the package larger than nine tenths of the model, and no tiny test model in it unless `file`
- * is that model.
+ * puts them (not empty), the Rust crates' notices (`notices`) in the resource folder at exactly the committed file's
+ * size, the package larger than nine tenths of the model, and no tiny test model in it unless `file` is that model.
  */
-export function packageProblems(name, entries, { file, bytes, size, product = PRODUCT, files = LINUX_FILES }) {
+export function packageProblems(name, entries, { file, bytes, size, product = PRODUCT, files = LINUX_FILES, notices = NOTICES }) {
   const problems = []
   const dir = modelDir(product)
   const at = new Map(entries.filter((e) => !e.dir).map((e) => [e.path, e]))
@@ -134,6 +147,10 @@ export function packageProblems(name, entries, { file, bytes, size, product = PR
     if (!e) problems.push(`${name}: no ${f} (llama.cpp, compiled into the app, travels with its licence)`)
     else if (e.size === 0) problems.push(`${name}: ${f} is empty`)
   }
+  const crates = `usr/lib/${product}/${notices.path}`
+  const held = at.get(crates)
+  if (!held) problems.push(`${name}: no ${crates} (the Rust crates the app is built with travel with their notices)`)
+  else if (held.size !== notices.bytes) problems.push(`${name}: ${crates} is ${held.size} bytes; the committed notices are ${notices.bytes}`)
   if (!(size > Math.floor((bytes / 10) * 9))) problems.push(`${name} is ${size} bytes: it cannot carry the ${bytes}-byte model`)
   if (file !== TINY) {
     for (const e of entries) if (basename(e.path) === TINY) problems.push(`${name}: holds the tiny test model (${e.path}), which only the end-to-end test's build carries`)

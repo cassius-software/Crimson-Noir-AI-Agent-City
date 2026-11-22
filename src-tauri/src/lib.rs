@@ -14,12 +14,15 @@
 //! llama.cpp in the app's own process) and lends the page three commands, what it carries, one answer streamed on a
 //! channel, and a stop; a page that starts loading stops every answer it asked for. Everywhere else those three
 //! commands answer that there is none.
+//! Every app also carries the notices of the Rust crates it is built with, inside the binary, and lends the page the
+//! text (notices.rs).
 //! What breaks if it is removed? There is no desktop app; the page is only a file for a browser.
 
 mod gpu;
 mod hid;
 mod model;
 mod model_file;
+mod notices;
 mod runner;
 
 use tauri::webview::PageLoadEvent;
@@ -31,7 +34,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(hid::HidState::default())
         .manage(runner::Runner::default())
-        .invoke_handler(tauri::generate_handler![hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read])
+        .invoke_handler(tauri::generate_handler![hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read, notices::third_party_notices])
         .setup(|app| {
             let window = app
                 .get_webview_window("main")

@@ -5639,6 +5639,25 @@ lockfile changes, `node tools/license/gate.mjs crates --write` rewrites the list
 brought in. The gate is not legal advice: it proves the files match the policy, not that the policy is enough.
 `docs/ip-audit.md` (§8) records what its first run found and what is left for the owner and a lawyer.
 
+**The notices of the Rust crates inside the apps.** The apps for Windows, Linux, macOS, Android and iOS are built
+with open-source Rust crates, and most of their licences ask that the copyright notice and the licence text travel
+with every copy. `src-tauri/notices/RUST-CRATES.txt` is those notices: one line for each crate of
+`src-tauri/Cargo.lock` with the licence it declares and where it is published; where the source of each MPL-2.0
+crate is, exactly as used; every licence, copyright and notice file the crates ship in their own packages, each
+distinct text once, under the crates and file names that ship it; and, for a crate whose package ships no text, its
+authors, the licence taken and that licence's text. Nobody writes it by hand:
+`node tools/license/notices.mjs --write` writes it from the lockfile and the crates' packages, and CI's
+`crate-licences` check (`--check`) fails when the committed file is not what the registry gives, so a changed
+lockfile cannot go out with stale notices. The file travels two ways. It is compiled into the app's own program
+(`src-tauri/src/notices.rs`), so a copy that is one file and nothing else, the bare Windows `.exe` or the library
+inside a phone's package, still holds it whole as plain text. And it is among every package's resources as
+`licenses/RUST-CRATES.txt` (`src-tauri/tauri.conf.json` `bundle.resources`): beside the program in a Windows
+install, under `usr/lib/Crimson Noir Agent City/` in the Linux packages, in `Contents/Resources/` of the macOS app.
+The build matrix reads what it built (`node tools/license/notices.mjs carried <file>...`, an `.apk` or `.ipa` read
+as the archive it is) and fails when the notices are not inside whole, and the Linux and macOS package checks fail
+on a package without the file at its committed size. The boot media of Crimson Noir OS are not part of this: they
+link two crates, which `NOTICE.txt` covers. Like the gate, this is a machine check and not legal advice.
+
 ## Browser support and what is verified
 
 Verified in headless Brave (WebGPU, AMD GCN-5 integrated GPU, 1280×720), about 75–85 fps:

@@ -40,6 +40,9 @@
     "publisher": "Julian Cassius Subban",
     "copyright": "Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.",
     "category": "Game",
+    "resources": {
+      "notices/RUST-CRATES.txt": "licenses/RUST-CRATES.txt"
+    },
     "shortDescription": "Crimson Noir Agent City",
     "longDescription": "A civic city simulation in one window: GPU pedestrians, Rapier3D traffic and a Three Laws safety kernel.",
     "icon": [

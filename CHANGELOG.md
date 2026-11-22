@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **Every app now carries the notices of the Rust crates it is built with.** The licence gate's first run found
+  that the app packages carried notices for the model, llama.cpp and the page's bundled JavaScript, and none for the
+  Rust crates linked into the app itself, whose licences ask that their copyright notice and licence text travel
+  with every copy. `tools/license/notices.mjs` now writes `src-tauri/notices/RUST-CRATES.txt` from the apps' lockfile
+  and the crates' own packages: the 426 crates with the licence each declares, the 214 distinct licence, copyright
+  and notice texts they ship (each once, under the crates and file names that ship it), where the source of each of
+  the five MPL-2.0 crates is, and, for the 38 crates whose packages ship no text, their authors and the text of the
+  licence taken. The file travels two ways: compiled into the app's program (`src-tauri/src/notices.rs`), so the
+  bare Windows `.exe` and the library inside a phone's package hold it whole, and as `licenses/RUST-CRATES.txt`
+  among every package's resources. Three checks keep it true: ci's `crate-licences` fails when the committed file is
+  not what the registry gives (`--check`), the build matrix and the Windows workflow read what they built and fail
+  when the notices are not inside whole (`carried`, an `.apk` or `.ipa` read as the archive it is), and the Linux
+  and macOS package checks fail on a package without the file at its committed size. `.gitattributes` keeps git
+  from converting the file's line ends, since it is compared byte for byte on every runner. Run here before CI: the
+  generator against the registry (426 crates, 767,097 bytes), `src/licenceNotices.test.ts` (12 tests), and the
+  shell's `cargo check` and `clippy` for the Windows target. It is a machine check and not legal advice; whether a
+  notice inside the program and a file in the package is all each phone store asks for is not settled by it.
 - **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
   repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
   (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0
@@ -28,7 +45,7 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   (retaken from this commit's image in QEMU), two notes that spelled that mark, and rain mode still called by a
   film's name in a heading and two sentences of the manual, one entry here and the comments of 22 source files (no
   identifier, label or behaviour changed). Found and not fixed here, recorded in `docs/ip-audit.md` §8: the app packages carry no
-  notices for the Rust crates linked into them (the next change generates that file); the boot file of the
+  notices for the Rust crates linked into them (the entry above this one closes that); the boot file of the
   published release tagged `stable-beta` still contains the terminal's earlier name; and where the cover picture
   came from is unrecorded, which the gate prints as an open question on every run. Not checked by this: clearance
   of names in the trademark registers, and anything a lawyer has to read.

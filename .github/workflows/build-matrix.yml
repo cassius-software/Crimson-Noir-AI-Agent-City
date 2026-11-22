@@ -297,6 +297,22 @@ jobs:
         run: |
           node tools/build/macAudit.mjs slices --app "$MAC_APP" --target src-tauri/target
           df -h /
+      - name: What was built holds the notices of the Rust crates it is built with, whole (the program itself; the phones' packages are read as archives)
+        if: ${{ !startsWith(matrix.target, 'uefi-') }}
+        # src-tauri/notices/RUST-CRATES.txt is compiled into the app (src-tauri/src/notices.rs) and shipped among its
+        # resources; the Linux and macOS audits above hold the resource file to the committed size. A commit built by
+        # hand from before the notices existed has none to hold, and says so.
+        run: |
+          [ -f tools/license/notices.mjs ] || { echo "this commit predates the crates' notices: there is nothing to hold"; exit 0; }
+          case "${{ matrix.target }}" in
+            windows-arm64) files=(out/windows-arm64/crimson-noir-app_*.exe) ;;
+            linux-*) files=(src-tauri/target/release/crimson-noir-app) ;;
+            macos-universal) files=("$MAC_APP"/*.app/Contents/MacOS/* "$MAC_APP"/*.app/Contents/Resources/licenses/RUST-CRATES.txt) ;;
+            android-apk) files=(out/android-apk/*.apk) ;;
+            ios-ipa) files=(out/ios-ipa/*.ipa) ;;
+            *) echo "::error::no file is named for ${{ matrix.target }}"; exit 1 ;;
+          esac
+          node tools/license/notices.mjs carried "${files[@]}"
       - name: Bake the UEFI media again from a clean build; the bytes must be the same
         if: startsWith(matrix.target, 'uefi-')
         working-directory: crimson_noir_os

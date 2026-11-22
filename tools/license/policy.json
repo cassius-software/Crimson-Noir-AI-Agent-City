@@ -24,7 +24,7 @@
       { "pattern": "\\bpok[eé]mon\\b|\\bsuper mario\\b|\\bzelda\\b|\\bmarvel\\b|\\bdisney\\b|\\blego\\b", "why": "an entertainment brand" },
       { "pattern": "\\bcrimsonscript\\b", "why": "the language's name is never shortened", "say": "Crimson Noir Script" }
     ],
-    "notOurs": "^third_party/|(?:^|/)(?:package-lock\\.json|Cargo\\.lock|flake\\.lock)$|^docs/autoscaler/[^/]+\\.csv$",
+    "notOurs": "^third_party/|^src-tauri/notices/|(?:^|/)(?:package-lock\\.json|Cargo\\.lock|flake\\.lock)$|^docs/autoscaler/[^/]+\\.csv$",
     "until": {
       "NOTICE.md": { "marker": "\n## Operator notes", "why": "The notice that ships ends there; below it is research for counsel, which has to name the marks it weighs." }
     },

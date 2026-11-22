@@ -19,7 +19,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +38,8 @@ interface Ref { file: string; flags: number; version: string }
 const FILE = 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf'
 const BYTES = 986048768
 const DIR = `usr/lib/${a.PRODUCT}/models/`
+/** Where a package holds the Rust crates' notices: the resource folder, under the path tauri.conf.json gives. */
+const CRATES = `usr/lib/${a.PRODUCT}/${a.NOTICES.path}`
 
 /** A package's entries as the real one lists them, with `change` applied. */
 function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
@@ -48,6 +50,7 @@ function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
     { path: `${DIR}LICENSE`, size: 11343, dir: false },
     { path: `${DIR}NOTICE`, size: 2200, dir: false },
     ...a.LINUX_FILES.map((p: string) => ({ path: p, size: 1078, dir: false })),
+    { path: CRATES, size: a.NOTICES.bytes, dir: false },
   ]
   return change(base)
 }
@@ -132,6 +135,8 @@ test('the package check: a whole package passes, and each missing, empty, wrong-
   one(resize(`${DIR}NOTICE`, 0), /models\/NOTICE is empty/)
   one(drop(a.LINUX_FILES[0]), /no usr\/share\/doc\/crimson-noir-agent-city\/llama\.cpp\/LICENSE \(llama\.cpp, compiled into the app/)
   one(resize(a.LINUX_FILES[1], 0), /llama\.cpp\/NOTICE is empty/)
+  one(drop(CRATES), /no usr\/lib\/.+\/licenses\/RUST-CRATES\.txt \(the Rust crates the app is built with travel with their notices\)/)
+  one(resize(CRATES, a.NOTICES.bytes - 1), /licenses\/RUST-CRATES\.txt is \d+ bytes; the committed notices are \d+/)
   one((e) => [...e, { path: `${DIR}tiny-a.gguf`, size: 600000, dir: false }], /holds the tiny test model/)
   one((e) => e, /is 887443891 bytes: it cannot carry the 986048768-byte model/, { size: Math.floor((BYTES / 10) * 9) })
   assert.deepEqual(problems(entries(), { size: Math.floor((BYTES / 10) * 9) + 1 }), [], 'one byte over nine tenths')
@@ -139,7 +144,8 @@ test('the package check: a whole package passes, and each missing, empty, wrong-
   const tiny = entries((e) => e.map((x) => (x.path === `${DIR}${FILE}` ? { ...x, path: `${DIR}tiny-a.gguf`, size: 600000 } : x)))
   assert.deepEqual(a.packageProblems('pkg.deb', tiny, { file: 'tiny-a.gguf', bytes: 600000, size: 10_680_036 }), [])
   assert.equal(problems(tiny).length, 2, 'with the real pin, the tiny build fails twice: no model, and the tiny one')
-  assert.equal(problems([], { size: 0 }).length, 6, 'an empty package: no model, no LICENSE, no NOTICE, no llama.cpp texts, too small')
+  assert.equal(problems([], { size: 0 }).length, 7, 'an empty package: no model, no LICENSE, no NOTICE, no llama.cpp texts, no crates\' notices, too small')
+  assert.deepEqual(a.NOTICES, { path: 'licenses/RUST-CRATES.txt', bytes: statSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')).size }, 'the resource tauri.conf.json names, at the committed file\'s size')
 })
 
 test('the model overlay puts llama.cpp\'s texts at one path in every Linux package, from third_party/llama.cpp/', () => {
@@ -380,6 +386,7 @@ test('the three commands end to end: each passes a good .deb and fails, naming t
     copyFileSync('/usr/bin/true', join(tree, 'usr', 'bin', 'crimson-noir-app'))
     put(`${DIR}x.gguf`, Buffer.alloc(1000, 1)); put(`${DIR}LICENSE`, 'licence'); put(`${DIR}NOTICE`, 'notice')
     for (const f of a.LINUX_FILES) put(f, 'llama.cpp')
+    put(CRATES, readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')))
     const out = join(dir, 'out'); mkdirSync(out)
     const deb = join(out, 't.deb')
     ok('dpkg-deb', '--build', '--root-owner-group', tree, deb)

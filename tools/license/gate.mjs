@@ -186,7 +186,7 @@ export function registryFindings(fresh, inventory) {
 }
 
 /** Runs `cargo metadata` for one workspace, every feature on (an optional dependency is in the lockfile all the same). */
-function cargoMetadata(ws, run = spawnSync) {
+export function cargoMetadata(ws, run = spawnSync) {
   const r = run('cargo', ['metadata', '--locked', '--all-features', '--format-version', '1', '--manifest-path', join(ROOT, ws, 'Cargo.toml')], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 })
   if (r.error || r.status !== 0) throw new Error(`cargo metadata for ${ws} failed: ${r.error?.message ?? String(r.stderr).trim().split('\n').slice(-3).join(' | ')}`)
   return JSON.parse(r.stdout)

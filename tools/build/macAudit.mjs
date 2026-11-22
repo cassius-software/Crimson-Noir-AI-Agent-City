@@ -13,9 +13,11 @@
  * one its Info.plist names (CFBundleExecutable), or `--binary`:
  *   package --app <app> --file <model file> --bytes <n> [--dmg <file>] [--zip <file>]
  *     The .app holds Contents/Resources/models/<file> (where the runner looks: Tauri's resource folder) at exactly <n>
- *     bytes, with LICENSE and NOTICE beside it, and llama.cpp's LICENSE and NOTICE where src-tauri/tauri.model.conf.json
- *     puts them (bundle.macOS.files); no file is the tiny test model (tiny-a.gguf) and the binary does not hold its
- *     name, unless <file> is that model. The .dmg is attached read-only (hdiutil attach -readonly -nobrowse) and its
+ *     bytes, with LICENSE and NOTICE beside it, llama.cpp's LICENSE and NOTICE where src-tauri/tauri.model.conf.json
+ *     puts them (bundle.macOS.files), and the notices of the Rust crates the app is built with
+ *     (Contents/Resources/licenses/RUST-CRATES.txt, src-tauri/tauri.conf.json bundle.resources) at exactly the
+ *     committed file's size; no file is the tiny test model (tiny-a.gguf) and the binary does not hold its name,
+ *     unless <file> is that model. The .dmg is attached read-only (hdiutil attach -readonly -nobrowse) and its
  *     .app checked the same way, then detached; the zip is listed (unzip -l) and checked the same way. The .dmg and the
  *     zip are each larger than nine tenths of the model and under 2 GiB, GitHub's limit for one release asset.
  *   archs --app <app>
@@ -68,6 +70,16 @@ export const TRIPLES = Object.freeze({ arm64: 'aarch64-apple-darwin', x86_64: 'x
 export const MODEL_DIR = 'Contents/Resources/models/'
 /** llama.cpp's LICENSE and NOTICE in the .app, where the model overlay puts them (bundle.macOS.files, under Contents/). */
 export const MAC_FILES = Object.freeze(Object.keys(conf('tauri.model.conf.json').bundle.macOS.files).map((p) => `Contents/${p.replace(/^\//, '')}`).sort())
+/**
+ * The notices of the Rust crates the app is built with (tools/license/notices.mjs writes them), which the .app
+ * carries among its resources: the path inside the .app (tauri.conf.json bundle.resources) and the committed file's
+ * size, which the packaged copy must have.
+ */
+export const NOTICES = Object.freeze((() => {
+  const found = Object.entries(conf('tauri.conf.json').bundle.resources ?? {}).find(([from]) => from.startsWith('notices/'))
+  if (!found) throw new Error('src-tauri/tauri.conf.json names no notices/ file among bundle.resources')
+  return { path: `Contents/Resources/${found[1]}`, bytes: statSync(join(ROOT, 'src-tauri', found[0])).size }
+})())
 /** The macOS the app promises (bundle.macOS.minimumSystemVersion): no slice may need a newer one. */
 export const MINIMUM = conf('tauri.conf.json').bundle.macOS.minimumSystemVersion
 /** GitHub refuses a release asset of 2 GiB or more: the number is tools/verify/site_budget.mjs's, which every release
@@ -106,9 +118,10 @@ export function insideApp(entries, app) {
 /**
  * Pure. What is wrong with one .app, given its entries (paths inside it): the model at MODEL_DIR<file> at exactly
  * `bytes`, LICENSE and NOTICE beside it (not empty), llama.cpp's texts (`files`) where the overlay puts them (not
- * empty), and no tiny test model in it unless `file` is that model.
+ * empty), the Rust crates' notices (`notices`) at exactly the committed file's size, and no tiny test model in it
+ * unless `file` is that model.
  */
-export function appProblems(name, entries, { file, bytes, files = MAC_FILES }) {
+export function appProblems(name, entries, { file, bytes, files = MAC_FILES, notices = NOTICES }) {
   const problems = []
   const at = new Map(entries.filter((e) => !e.dir).map((e) => [e.path, e]))
   const model = at.get(`${MODEL_DIR}${file}`)
@@ -124,6 +137,9 @@ export function appProblems(name, entries, { file, bytes, files = MAC_FILES }) {
     if (!e) problems.push(`${name}: no ${f} (llama.cpp, compiled into the app, travels with its licence)`)
     else if (e.size === 0) problems.push(`${name}: ${f} is empty`)
   }
+  const held = at.get(notices.path)
+  if (!held) problems.push(`${name}: no ${notices.path} (the Rust crates the app is built with travel with their notices)`)
+  else if (held.size !== notices.bytes) problems.push(`${name}: ${notices.path} is ${held.size} bytes; the committed notices are ${notices.bytes}`)
   if (file !== TINY) {
     for (const e of entries) if (basename(e.path) === TINY) problems.push(`${name}: holds the tiny test model (${e.path}), which only the end-to-end test's build carries`)
   }
