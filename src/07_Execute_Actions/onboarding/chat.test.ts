@@ -380,13 +380,16 @@ test('App: the site\'s model is fetched from the page\'s own folder only, after 
   assert.match(src, /const siteFetch: SiteFetch = \(path, init\) => window\.fetch\(siteUrl\(path, window\.location\.href\), init\)/)
   const get = src.slice(src.indexOf('const siteJob = createSiteJob(async (how, onProgress, signal) => {'), src.indexOf('const siteHost = Object.freeze<SiteModelHost>({'))
   assert.ok(get.length > 100, 'the job\'s work is found')
-  const order = ['PAGE_MODEL_REFUSAL()', 'if (keeping || fetching)', 'fetching = true', 'await keptSite()', 'await inPage.installed()', 'await siteRefusal()', 'fetchSiteModel(source.fetch, pin,', 'return keepPicked([file],']
+  // Straight into a part in the page's storage where a worker can write one (openPart), else downloaded whole as before;
+  // then the part committed, or the file kept as a picked file is.
+  const order = ['PAGE_MODEL_REFUSAL()', 'if (keeping || fetching)', 'fetching = true', 'await keptSite()', 'await inPage.installed()', 'await siteRefusal()', 'part = await PAGE_MODELS().openPart(pin)', 'await downloadSiteModel(source.fetch, pin, part, told, stop, source.from)', 'file = await fetchSiteModel(source.fetch, pin, told, stop, source.from)', 'PAGE_MODELS().commitPart(part as PartSession, pin, progress)', "keepPicked([file as File], keeps, how === 'tap')"]
   const at = order.map((n) => get.indexOf(n))
   at.forEach((i, k) => assert.ok(i >= 0, `${order[k]} is in the job's work`))
   for (let k = 1; k < at.length; k++) assert.ok(at[k - 1] < at[k], `${order[k - 1]} comes before ${order[k]}`)
   const refusal = src.slice(src.indexOf('const siteRefusal = async (): Promise<string | null> => {'), src.indexOf('const siteJob = createSiteJob('))
   assert.match(refusal, /fits\(\[\{ name: pin\.file, bytes: pin\.bytes \}\], env, placement\(env\)\)/, 'the device\'s limits')
   assert.match(refusal, /roomRefusal\(pin\.bytes, room\)/, 'and the storage\'s room')
+  assert.match(refusal, /const part = await PAGE_MODELS\(\)\.part\(pin\)\n\s*return part \? roomRefusal\(pin\.bytes - part\.at, room, true\) : roomRefusal\(pin\.bytes, room\)/, 'only the rest, when a part is there to pick up')
   // One source a build: the Windows app's own model through the shell, else the NixOS launcher's beside its page, else
   // the web copy's site.
   assert.match(src, /const shellFetch = shellModelFetch\(APP_MODEL\)\n\s*const source = shellFetch \? appSource\(shellFetch\) : launcherServes\(window\.location\.href\) \? launcherSource : webSource\n/)
@@ -406,10 +409,10 @@ test('App: the site\'s model is fetched from the page\'s own folder only, after 
   assert.match(launcher, /coming: "the launcher's model is being copied into this page",/)
   assert.match(src, /offered \?\?= source\.offer\(siteEnd\.signal\)\.catch\(\(\) => \{ offered = null; return null \}\)/, 'the offer is asked once a visit')
   assert.match(src, /if \(PAGE_MODEL_REFUSAL\(\) !== null \|\| !source\.served\(\)\) return null/, 'no offer (and no request) where the browser cannot run it, or on a page the source does not serve')
-  assert.match(get, /\}, AbortSignal\.any\(\[signal, siteEnd\.signal\]\), source\.from\)/, 'the words say where it came from')
-  assert.match(get, /onProgress\(\{ step: 'keep', done: 0, total: file\.size \}\)\n\s*return keepPicked\(\[file\], \(done, total\) => onProgress\(\{ step: 'keep', done, total \}\), how === 'tap'\)/, 'the card is told of the hand-off to the copy in the same turn as the last stop check; only a tap sets the provider')
+  assert.match(get, /const stop = AbortSignal\.any\(\[signal, siteEnd\.signal\]\)\n\s*part = await PAGE_MODELS\(\)\.openPart\(pin\)\n\s*if \(part !== null\) await downloadSiteModel\(source\.fetch, pin, part, told, stop, source\.from\)\n\s*else file = await fetchSiteModel\(source\.fetch, pin, told, stop, source\.from\)\n/, 'the words say where it came from, either way')
+  assert.match(get, /onProgress\(\{ step: 'keep', done: 0, total: pin\.bytes \}\)\n\s*const keeps = \(done: number, total: number\): void => onProgress\(\{ step: 'keep', done, total \}\)\n\s*const kept = part !== null\n\s*\? keepWith\(\(progress\) => inPage\.adopt\(\(\) => PAGE_MODELS\(\)\.commitPart\(part as PartSession, pin, progress\)\), keeps, how === 'tap'\)\.finally\(\(\) => part\?\.release\(\)\)\n\s*: keepPicked\(\[file as File\], keeps, how === 'tap'\)\n/, 'the card is told of the hand-off to the keep in the same turn as the last stop check; only a tap sets the provider')
   assert.match(src, /AbortSignal\.any\(\[signal, siteEnd\.signal\]\)/, 'the Stop and the city\'s end both stop the download')
-  assert.match(get, /signal\.throwIfAborted\(\)\n\s*siteEnd\.signal\.throwIfAborted\(\)\n\s*\} finally \{/, 'a stop as the last bytes come keeps nothing')
+  assert.match(get, /signal\.throwIfAborted\(\)\n\s*siteEnd\.signal\.throwIfAborted\(\)\n\s*\} catch \(e\) \{\n\s*part\?\.release\(\)\n\s*throw e\n\s*\} finally \{/, 'a stop as the last bytes come keeps no model, and lets go of the part')
   assert.match(src, /if \(fetching\) throw new Error\(`\$\{source\.coming\}: wait for it to finish, or stop it on Sloane's card`\)/, 'a pick, a drop or the console waits for the site\'s model (or the app\'s), in its own words')
   assert.match(src, /coming: 'the model this site serves is on its way to this page',/)
   assert.match(src, /coming: "the app's model is being copied into this page",/)
@@ -445,7 +448,7 @@ test('App: the page gets the site\'s model by itself once the city is on screen,
   assert.match(src, /const autoRecord = createAutoRecord\(autoStore\(\), autoLocks\(\)\)/)
   // The job's work: a tap holds the page's lock, and the page's own download is not kept over a choice made meanwhile.
   assert.match(src, /const release = how === 'tap' \? await autoRecord\.claim\(\) : noop\n\s*try \{\n\s*return await siteWork\(how, onProgress, signal\)\n\s*\} finally \{\n\s*release\(\)/)
-  assert.match(src, /const other = how === 'auto' \? autoChoice\(\) : null\n\s*if \(other !== null\) throw new SiteJobHeld\('choice', other\)\n[^\n]*\n[^\n]*\n\s*onProgress\(\{ step: 'keep'/, 'checked in the same turn as the hand-off to the copy')
+  assert.match(src, /const other = how === 'auto' \? autoChoice\(\) : null\n\s*if \(other !== null\) \{\n\s*part\?\.release\(\)\n\s*throw new SiteJobHeld\('choice', other\)\n\s*\}\n[^\n]*\n[^\n]*\n\s*onProgress\(\{ step: 'keep'/, 'checked in the same turn as the hand-off to the keep')
   // A halt stops the job and the start, as the city's end does.
   assert.match(src, /e\.onHalt = \(reason\) => \{\n(?:\s*\/\/[^\n]*\n)*\s*if \(haltClass\(reason\) === 'gpu-reset'\) inPage\.noteGpuReset\(\)\n\s*stopSite\(\)/)
   assert.match(src, /stopSite = \(\) => \{\n\s*siteJob\.stop\('page'\)\n\s*siteEnd\.abort\(\)/)

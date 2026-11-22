@@ -131,7 +131,7 @@ const kept = (name: string, bytes = 400 * MIB, keptAt = 1): KeptModel => ({ id: 
 
 /** The model store: `models` newest first; an id in `gone` has lost its files, one in `heads` has that header (else its files are empty). Every call is noted. */
 function fakeStore(models: KeptModel[]) {
-  const s = { models, gone: new Set<string>(), heads: new Map<string, Uint8Array<ArrayBuffer>>(), calls: [] as string[], line: 'kept in this page' }
+  const s = { models, gone: new Set<string>(), heads: new Map<string, Uint8Array<ArrayBuffer>>(), parts: new Map<string, number>(), calls: [] as string[], line: 'kept in this page' }
   const store: ModelStore = {
     keep: async (files) => {
       s.calls.push('keep')
@@ -155,6 +155,12 @@ function fakeStore(models: KeptModel[]) {
       const before = s.models.length
       s.models = id === undefined ? [] : s.models.filter((m) => m.id !== id)
       return before - s.models.length
+    },
+    forgetParts: async (file) => {
+      s.calls.push(`forgetParts ${file}`)
+      const n = s.parts.get(file) ?? 0
+      s.parts.delete(file)
+      return n
     },
     usage: async () => null,
     storageLine: () => s.line,
@@ -1228,6 +1234,18 @@ test('keep chooses what it kept and clears a failed load and a crash mark; forge
   const gone = await harness({ models: [] })
   assert.equal(await gone.mind.forget('tiny'), 'tiny was no longer kept in this page; no model file is chosen now')
   assert.equal(gone.mind.settings().model, null)
+  // A download of a model that stopped is a part, never a kept model: forgetting the file by name removes its parts,
+  // and says so when only they were there; forgetting a kept model removes its parts too; no name asks no part.
+  gone.s.parts.set('site.gguf', 1)
+  assert.equal(await gone.mind.forget('site.gguf'), 'forgot the part of site.gguf that had downloaded: none of it is kept in this page now')
+  await assert.rejects(gone.mind.forget('site.gguf'), /^Error: no model file is kept in this page/, 'once gone, nothing is there to forget')
+  const both = await harness({ models: [kept('both')] })
+  both.s.parts.set('both', 1)
+  assert.equal(await both.mind.forget('both'), 'forgot both: it is no longer kept in this page')
+  assert.equal(both.s.parts.size, 0)
+  both.s.calls.length = 0
+  await both.mind.forget()
+  assert.ok(!both.s.calls.some((c) => c.startsWith('forgetParts')), 'a forget of every model removes parts in the store itself')
 })
 
 test('keep where this page cannot run the runtime copies nothing, chooses nothing and says why (a browser without JSPI, a page opened from a file)', async () => {

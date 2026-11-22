@@ -81,24 +81,64 @@ function compress(h: Uint32Array, w: Uint32Array, view: DataView, off: number): 
 
 /** A SHA-256 fed piece by piece: `update` takes the bytes in order (any split), `digest` gives the 32 bytes of all of
  *  them and ends it. For input too large to hold at once, such as a model file hashed as it arrives
- *  (09_Cognition/siteModel.ts); the digest is the same as `sha256Bytes` over the whole input, however it was split. */
+ *  (09_Cognition/siteModel.ts); the digest is the same as `sha256Bytes` over the whole input, however it was split.
+ *  `save` gives where it stands as plain data (Sha256Saved), so a hash cut short can go on later from exactly there
+ *  (sha256Stream(saved)): a model download that stopped picks up its hash with its bytes (09_Cognition/modelPart.ts). */
 export interface Sha256Stream {
   update(bytes: Uint8Array): void
   digest(): Uint8Array
+  save(): Sha256Saved
 }
 
-/** A new piece-by-piece SHA-256 (see `Sha256Stream`). */
-export function sha256Stream(): Sha256Stream {
-  const h = Uint32Array.from(H0)
+/**
+ * Where a piece-by-piece SHA-256 stands, as plain data (JSON keeps it as it is): the running hash `h` (eight 32-bit
+ * words), the bytes `tail` held short of a whole block (as hex, fewer than 64 bytes), and how many bytes it has taken
+ * in all (`total`, of which `tail` is the last total mod 64). It says nothing of the bytes before the tail: whoever
+ * keeps it keeps the bytes it was taken over beside it, and must hand it back only with exactly those bytes.
+ */
+export interface Sha256Saved {
+  readonly h: readonly number[]
+  readonly tail: string
+  readonly total: number
+}
+
+/** The most bytes a hash may take: its length in bits must stay an exact number (2^53 bits). */
+const MAX_TOTAL = 2 ** 50
+
+/** Whether `s` is a hash's saved state this file could have written: eight 32-bit words, a tail of total mod 64 bytes as
+ *  lower-case hex, and a whole number of bytes in all. Anything else (a half-written note, a hand edit) is not one. */
+export function isSha256Saved(s: unknown): s is Sha256Saved {
+  if (typeof s !== 'object' || s === null) return false
+  const { h, tail, total } = s as { h?: unknown; tail?: unknown; total?: unknown }
+  if (!Array.isArray(h) || h.length !== 8 || !h.every((x) => Number.isInteger(x) && x >= 0 && x <= 0xffffffff)) return false
+  if (typeof total !== 'number' || !Number.isSafeInteger(total) || total < 0 || total > MAX_TOTAL) return false
+  return typeof tail === 'string' && tail.length === (total % BLOCK) * 2 && /^(?:[0-9a-f]{2})*$/.test(tail)
+}
+
+/** A new piece-by-piece SHA-256 (see `Sha256Stream`), or one that goes on from `from` (a `save` of an earlier one);
+ *  throws a TypeError for a `from` that is not a saved state (isSha256Saved). */
+export function sha256Stream(from?: Sha256Saved): Sha256Stream {
+  if (from !== undefined && !isSha256Saved(from)) throw new TypeError('sha256Stream: not a saved hash state')
+  const h = from ? Uint32Array.from(from.h) : Uint32Array.from(H0)
   const w = new Uint32Array(64)
   const tail = new Uint8Array(BLOCK)
   const tailView = new DataView(tail.buffer)
   let held = 0
   let total = 0
+  if (from) {
+    held = from.tail.length / 2
+    for (let i = 0; i < held; i++) tail[i] = parseInt(from.tail.slice(i * 2, i * 2 + 2), 16)
+    total = from.total
+  }
   let done = false
   return {
+    save() {
+      if (done) throw new Error('sha256Stream: save after digest')
+      return { h: Array.from(h), tail: hex(tail.subarray(0, held)), total }
+    },
     update(bytes) {
       if (done) throw new Error('sha256Stream: update after digest')
+      if (total + bytes.length > MAX_TOTAL) throw new RangeError('sha256Stream: more input than a SHA-256 length can count')
       total += bytes.length
       let at = 0
       if (held > 0) {

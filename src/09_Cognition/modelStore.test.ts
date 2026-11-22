@@ -17,6 +17,16 @@
  *   and the sweep of what it left even when a held file delays the removal; a copy in progress never swept, nor
  *   forgotten, by this tab or another (its Web Lock), and one that commits as another tab looks kept; forget one and
  *   all; a kept file the browser cleared; the same model picked twice; the worker's own failures;
+ * - a download straight into a part (openPart through workerPart and the same worker): written 8 MiB at a time, each
+ *   write flushed before the note; a hold kept and picked up by the next download at the same offset and validator;
+ *   one part per pin left to be picked up and every other swept (another pin, no validator, too old, shorter than its
+ *   note, a second one behind); never a kept model; forget removes parts; the room check's rest; null (the page
+ *   downloads as before) where no sync handle or no storage is there; another tab's lock said; two tabs: a second
+ *   download of the same pin refused while the first holds the pin's lock (before its first note too), then told the
+ *   model is kept, so it is kept once; a model another tab keeps as this one opens is looked at again under the
+ *   directory's lock and never written as a part, and the worker opens no part where a meta.json is; commitPart
+ *   renamed and committed (or, where the browser cannot rename, meta.json naming the part file), and a part that is
+ *   not a text model removed; discard removes it;
  * - and that no model is ever committed: *.gguf is ignored, and no tracked file starts with the GGUF magic.
  * What breaks if it is removed? A copy that commits before its files are in, sweeps a copy in progress, takes a picture
  * or half a model into the page's storage, or a model file in a commit, could ship unnoticed.
@@ -28,8 +38,11 @@ import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import { CognitionError } from './localCompute.ts'
-import { GONE, META, MODELS_DIR, SPARE_BYTES, createModelStore, workerCopy, writableCopy } from './modelStore.ts'
-import type { CopyFile, CopyReply, CopyRequest, LockManagerLike, StoreDeps } from './modelStore.ts'
+import { ANOTHER_TAB, GONE, KEPT_ELSEWHERE, META, MODELS_DIR, SPARE_BYTES, createModelStore, roomRefusal, workerCopy, workerPart, writableCopy } from './modelStore.ts'
+import type { CopyFile, CopyReply, CopyRequest, KeptModel, LockManagerLike, PartReply, PartRequest, StoreDeps } from './modelStore.ts'
+import { PART_DAYS, PART_NOTE, WRITE_BYTES, noteText, parseNote, partName, type PartNote, type PartPin } from './modelPart.ts'
+import { sha256Stream } from '../02_Define_The_Rules/integrity.ts'
+import { createHash } from 'node:crypto'
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url))
 const MIB = 2 ** 20
@@ -58,7 +71,9 @@ const domError = (name: string, message: string): DOMException => new DOMExcepti
 /** A file of the fake storage: its bytes, whether a handle holds it, and what each sync access handle did to it. */
 class FakeFile {
   readonly kind = 'file'
-  readonly name: string
+  name: string
+  /** The directory it is in (move renames it there). */
+  parent: FakeDir | null = null
   data: Uint8Array<ArrayBuffer> = new Uint8Array(0)
   /** Held by an open sync access handle (or a worker that has not let go yet): removal is refused, as a browser refuses it. */
   held = false
@@ -78,25 +93,42 @@ class FakeFile {
     return this.last
   }
 
-  async createSyncAccessHandle(): Promise<{ write(b: Uint8Array, o: { at: number }): number; truncate(n: number): void; flush(): void; close(): void }> {
+  async createSyncAccessHandle(): Promise<{ read(b: Uint8Array, o: { at: number }): number; write(b: Uint8Array, o: { at: number }): number; truncate(n: number): void; getSize(): number; flush(): void; close(): void }> {
     if (this.held) throw domError('NoModificationAllowedError', `${this.name} is held by another handle`)
     this.held = true
     return {
+      read: (b, o) => {
+        const n = Math.max(0, Math.min(b.length, this.data.length - o.at))
+        b.set(this.data.subarray(o.at, o.at + n))
+        return n
+      },
+      getSize: () => this.data.length,
       write: (b, o) => {
         const n = Math.max(0, b.length - this.shortBy)
         const end = o.at + n
         if (end > this.data.length) this.data = concat(this.data, new Uint8Array(end - this.data.length))
         this.data.set(b.subarray(0, n), o.at)
         this.calls.push(`write ${o.at}+${n}`)
+        io.push(`${this.name} write ${o.at}+${n}`)
         return n
       },
       truncate: (n) => {
         this.data = n <= this.data.length ? this.data.slice(0, n) : concat(this.data, new Uint8Array(n - this.data.length))
         this.calls.push(`truncate ${n}`)
       },
-      flush: () => { this.calls.push('flush') },
+      flush: () => { this.calls.push('flush'); io.push(`${this.name} flush`) },
       close: () => { this.held = false; this.calls.push('close') },
     }
+  }
+
+  /** Renames the file within its directory (FileSystemHandle.move with a name). */
+  async move(name: string): Promise<void> {
+    const p = this.parent
+    assert.ok(p, `${this.name} is in a directory`)
+    if (p.children.has(name)) throw domError('InvalidModificationError', `${name} is there already`)
+    p.children.delete(this.name)
+    this.name = name
+    p.children.set(name, this)
   }
 
   async createWritable(): Promise<WritableStream<Uint8Array>> {
@@ -130,6 +162,10 @@ class FakeDir {
     if (c) throw domError('TypeMismatchError', `${name} is a directory`)
     if (!o.create) throw domError('NotFoundError', `no file ${name}`)
     const f = new FakeFile(name)
+    f.parent = this
+    // A browser without these leaves the methods out altogether (fakeCaps, set by a test).
+    if (!fakeCaps.sync) Object.defineProperty(f, 'createSyncAccessHandle', { value: undefined })
+    if (!fakeCaps.move) Object.defineProperty(f, 'move', { value: undefined })
     this.children.set(name, f)
     return f
   }
@@ -160,20 +196,24 @@ class FakeDir {
 }
 
 const held = (n: FakeDir | FakeFile): boolean => (n instanceof FakeFile ? n.held : [...n.children.values()].some(held))
+/** What the fake storage's files offer: a test turns one off to stand for a browser without it. */
+const fakeCaps = { sync: true, move: true }
+/** Every write and flush of every sync handle, in order, across files. */
+const io: string[] = []
 const asDir = (d: FakeDir): FileSystemDirectoryHandle => d as unknown as FileSystemDirectoryHandle
 const fake = (d: FileSystemDirectoryHandle): FakeDir => d as unknown as FakeDir
 
 /**
  * navigator.locks as the tabs of one origin share it: exclusive locks by name, granted in turn, or at once refused with
- * ifAvailable (the callback gets null). `beforeTry` runs as an ifAvailable request is made, for a test to let a copy
- * commit at exactly that moment.
+ * ifAvailable (the callback gets null). `beforeTry` runs as an ifAvailable request is made, with the lock's name, for a
+ * test to let a copy commit at exactly that moment.
  */
 class FakeLocks implements LockManagerLike {
   readonly held = new Set<string>()
-  beforeTry: (() => Promise<void>) | null = null
+  beforeTry: ((name: string) => Promise<void>) | null = null
   private wake: (() => void)[] = []
   async request<T>(name: string, options: { ifAvailable?: boolean }, callback: (lock: unknown) => Promise<T>): Promise<T> {
-    if (options.ifAvailable && this.beforeTry) await this.beforeTry()
+    if (options.ifAvailable && this.beforeTry) await this.beforeTry(name)
     while (this.held.has(name)) {
       if (options.ifAvailable) return callback(null)
       await new Promise<void>((r) => this.wake.push(r))
@@ -200,18 +240,20 @@ after(() => { if (navigatorWas) Object.defineProperty(globalThis, 'navigator', n
 class InProcessWorker {
   static current: InProcessWorker | null = null
   static made: InProcessWorker[] = []
-  onmessage: ((e: { data: CopyReply }) => void) | null = null
+  onmessage: ((e: { data: CopyReply | PartReply }) => void) | null = null
   onerror: ((e: { message: string; preventDefault(): void }) => void) | null = null
-  readonly posted: CopyRequest[] = []
-  readonly replies: CopyReply[] = []
+  readonly posted: (CopyRequest | PartRequest)[] = []
+  readonly replies: (CopyReply | PartReply)[] = []
   terminated = false
   constructor() {
     InProcessWorker.made.push(this)
   }
 
-  postMessage(m: CopyRequest): void {
+  postMessage(m: CopyRequest | PartRequest): void {
     this.posted.push(m)
     setTimeout(() => {
+      // An ended worker takes no more messages (one already running goes on: nothing here can stop it).
+      if (this.terminated && 't' in m) return
       InProcessWorker.current = this
       void runWorker({ data: m })
     }, 0)
@@ -224,7 +266,7 @@ class InProcessWorker {
 
 /** Whether any file of the worker's storage was still held open when the worker said done, one entry per done. */
 const heldAtDone: boolean[] = []
-;(globalThis as unknown as { postMessage(m: CopyReply): void }).postMessage = (m) => {
+;(globalThis as unknown as { postMessage(m: CopyReply | PartReply): void }).postMessage = (m) => {
   const w = InProcessWorker.current
   assert.ok(w, 'the worker replies to the worker that was asked')
   if (m.t === 'done') heldAtDone.push(workerRoot !== null && held(workerRoot))
@@ -232,7 +274,7 @@ const heldAtDone: boolean[] = []
   setTimeout(() => { if (!w.terminated) w.onmessage?.({ data: m }) }, 0)
 }
 await import('./modelStore.worker.ts')
-const runWorker = (globalThis as unknown as { onmessage: (e: { data: CopyRequest }) => Promise<void> }).onmessage
+const runWorker = (globalThis as unknown as { onmessage: (e: { data: CopyRequest | PartRequest }) => Promise<void> }).onmessage
 
 const productCopy = (): CopyFile => workerCopy(() => new InProcessWorker() as unknown as Worker)
 
@@ -311,7 +353,7 @@ test('keep copies through the worker, then writes meta.json last as the commit, 
   assert.equal(s.storageLine(), 'kept in this page')
 
   // One worker per file, told where under the storage's root the file goes, and ended once it is done.
-  assert.deepEqual(InProcessWorker.made.map((w) => w.posted.map((p) => [p.dirPath, p.name])), [[[[MODELS_DIR, m.id], 'tiny-a.gguf']], [[[MODELS_DIR, m.id], META]]])
+  assert.deepEqual(InProcessWorker.made.map((w) => w.posted.map((p) => [(p as CopyRequest).dirPath, (p as CopyRequest).name])), [[[[MODELS_DIR, m.id], 'tiny-a.gguf']], [[[MODELS_DIR, m.id], META]]])
   assert.ok(InProcessWorker.made.every((w) => w.terminated))
 
   assert.deepEqual(await s.list(), [m])
@@ -814,7 +856,7 @@ test('the worker never makes a directory, says why a file it cannot open failed,
   const root = new FakeDir('')
   workerRoot = root
   const w = new InProcessWorker()
-  const replies = new Promise<CopyReply>((resolve) => { w.onmessage = (e) => { if (e.data.t !== 'bytes') resolve(e.data) } })
+  const replies = new Promise<CopyReply>((resolve) => { w.onmessage = (e) => { if (e.data.t !== 'bytes') resolve(e.data as CopyReply) } })
   w.postMessage({ dirPath: [MODELS_DIR, 'forgotten'], name: 'm.gguf', file: new File([Uint8Array.of(1)], 'm.gguf') })
   assert.deepEqual(await replies, { t: 'error', name: 'NotFoundError', message: `no directory ${MODELS_DIR}` })
   assert.equal(root.children.size, 0, 'nothing recreated')
@@ -822,14 +864,21 @@ test('the worker never makes a directory, says why a file it cannot open failed,
   const dir = await (await root.getDirectoryHandle(MODELS_DIR, { create: true })).getDirectoryHandle('m', { create: true })
   ;(await dir.getFileHandle('m.gguf', { create: true })).held = true
   const w2 = new InProcessWorker()
-  const replies2 = new Promise<CopyReply>((resolve) => { w2.onmessage = (e) => { if (e.data.t !== 'bytes') resolve(e.data) } })
+  const replies2 = new Promise<CopyReply>((resolve) => { w2.onmessage = (e) => { if (e.data.t !== 'bytes') resolve(e.data as CopyReply) } })
   w2.postMessage({ dirPath: [MODELS_DIR, 'm'], name: 'm.gguf', file: new File([Uint8Array.of(1)], 'm.gguf') })
   assert.deepEqual(await replies2, { t: 'error', name: 'NoModificationAllowedError', message: 'm.gguf is held by another handle' })
 
-  const source = readFileSync(fileURLToPath(new URL('./modelStore.worker.ts', import.meta.url)), 'utf8')
-  const imports = [...source.matchAll(/^import\s+(type\s+)?.*$/gm)]
-  assert.ok(imports.length > 0 && imports.every((m) => m[1] !== undefined), 'type imports only: nothing joins the worker\'s bundle')
-  assert.doesNotMatch(source, /\binstallAirgap\b|\bfetch\s*\(|\bimportScripts\b/)
+  // At run time the worker imports modelPart.ts alone, which imports the pure integrity.ts alone, which imports nothing:
+  // nothing else joins the worker's bundle, and none of the three can reach the network.
+  const read = (f: string): string => readFileSync(fileURLToPath(new URL(f, import.meta.url)), 'utf8')
+  const runtime = (src: string): string[] => [...src.matchAll(/^import\s+(?!type\s).*from\s+'([^']+)'/gm)].map((m) => m[1])
+  const source = read('./modelStore.worker.ts')
+  assert.ok([...source.matchAll(/^import\s+type\s/gm)].length > 0)
+  assert.deepEqual(runtime(source), ['./modelPart.ts'])
+  assert.deepEqual(runtime(read('./modelPart.ts')), ['../02_Define_The_Rules/integrity.ts'])
+  assert.deepEqual(runtime(read('../02_Define_The_Rules/integrity.ts')), [])
+  assert.doesNotMatch(read('../02_Define_The_Rules/integrity.ts'), /^import\s/m)
+  for (const f of ['./modelStore.worker.ts', './modelPart.ts']) assert.doesNotMatch(read(f), /\binstallAirgap\b|\bfetch\s*\(|\bimportScripts\b|\bXMLHttpRequest\b|\bWebSocket\b/, f)
 })
 
 test('a store with no copy given writes through the page\'s own writable stream', async () => {
@@ -847,6 +896,379 @@ test('a store with no copy given writes through the page\'s own writable stream'
   assert.ok(bytes.every((n, i) => i === 0 || n > bytes[i - 1]), 'cumulative')
   const bare = { getFileHandle: async () => ({}) } as unknown as FileSystemDirectoryHandle
   await assert.rejects(writableCopy(bare, 'x', file, () => {}), /writes files into the page's storage only from a worker/)
+})
+
+/** A pin over `bytes`, named `file`. */
+const pinOf = (bytes: Uint8Array, file = 'big.gguf'): PartPin => ({ file, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
+/** Bytes that are not all one value, so a part at the wrong offset cannot pass. */
+const patterned = (n: number): Uint8Array<ArrayBuffer> => Uint8Array.from({ length: n }, (_, i) => (i * 131 + (i >> 9)) & 0xff)
+/** The note in directory `dir`, parsed. */
+const noteIn = (dir: FakeDir): PartNote | null => parseNote(new TextDecoder().decode(dir.file(PART_NOTE).data))
+/**
+ * A store over `root` that downloads through the product's worker (workerPart over modelStore.worker.ts), leaving parts
+ * of `parts`. On the clock's own time, as the worker notes its parts by it.
+ */
+function partStore(root: FakeDir, parts: readonly PartPin[], over: StoreDeps = {}) {
+  workerRoot = root
+  return storeOver(root, [], { part: workerPart(() => new InProcessWorker() as unknown as Worker), parts, now: Date.now, ...over })
+}
+/** `bytes` handed to the session in pieces of `piece` (each handed over, as the page hands them to the worker). */
+async function feed(s: { put(b: Uint8Array): Promise<void> }, bytes: Uint8Array, piece: number): Promise<void> {
+  for (let at = 0; at < bytes.length; at += piece) await s.put(bytes.slice(at, at + piece))
+}
+/** A part written by hand into `models`/`id`: the first `at` bytes of `bytes`, and a note for them, changed by `edit`. */
+async function partBy(models: FakeDir, id: string, pin: PartPin, bytes: Uint8Array, at: number, edit: Partial<PartNote> = {}): Promise<FakeDir> {
+  const dir = await models.getDirectoryHandle(id, { create: true })
+  ;(await dir.getFileHandle(partName(pin.file), { create: true })).data = bytes.slice(0, at)
+  const hash = sha256Stream()
+  hash.update(bytes.subarray(0, at))
+  const note: PartNote = { v: 1, file: pin.file, bytes: pin.bytes, sha256: pin.sha256, at, validator: '"v1"', hash: hash.save(), savedAt: Date.now(), ...edit }
+  ;(await dir.getFileHandle(PART_NOTE, { create: true })).data = new TextEncoder().encode(noteText(note))
+  return dir
+}
+
+test('a download goes straight into its part through the worker: 8 MiB a write, each flushed before the note, ended with the size and the SHA-256; it is no model until committed', async () => {
+  const bytes = patterned(2 * WRITE_BYTES + 12_345)
+  const pin = pinOf(bytes)
+  const root = new FakeDir('')
+  const store = partStore(root, [pin])
+  io.length = 0
+  const s = await store.openPart(pin)
+  assert.ok(s, 'this browser writes parts')
+  assert.equal(s.at, 0)
+  assert.equal(s.validator, null)
+  assert.equal(store.storageLine(), 'downloading 0%')
+  s.begin(0, '"v1"')
+  await feed(s, bytes, 1_000_003)
+  const end = await s.end()
+  assert.deepEqual(end, { bytes: bytes.length, sha256: pin.sha256 })
+  const dir = root.dir(MODELS_DIR).dir(s.id)
+  assert.deepEqual(dir.file(partName(pin.file)).data, bytes)
+  const writes = io.filter((l) => l.startsWith(`${partName(pin.file)} write`))
+  assert.deepEqual(writes, [`${partName(pin.file)} write 0+${WRITE_BYTES}`, `${partName(pin.file)} write ${WRITE_BYTES}+${WRITE_BYTES}`, `${partName(pin.file)} write ${2 * WRITE_BYTES}+12345`])
+  for (const w of writes) {
+    const i = io.indexOf(w)
+    assert.deepEqual([io[i + 1], io[i + 2].replace(/ \d+\+\d+$/, '')], [`${partName(pin.file)} flush`, `${PART_NOTE} write`], `${w}: flushed, then noted`)
+  }
+  assert.equal(noteIn(dir)?.at, bytes.length)
+  assert.ok(!dir.children.has(META), 'no meta.json: not a model yet')
+  assert.ok(![...dir.children.values()].some(held), 'the worker closed both files before it said so')
+  s.release()
+  assert.deepEqual(await store.list(), [], 'a part is never a kept model')
+  assert.ok(root.dir(MODELS_DIR).children.has(s.id), 'and it is left to be picked up')
+  assert.equal(store.storageLine(), 'kept in this page')
+})
+
+test('a hold keeps what arrived; the next download opens the same part there, under the same validator, asks the rest, and the whole file\'s SHA-256 comes out right', async () => {
+  const bytes = patterned(WRITE_BYTES + 3_000_017)
+  const pin = pinOf(bytes)
+  const root = new FakeDir('')
+  const store = partStore(root, [pin])
+  const s = await store.openPart(pin)
+  assert.ok(s)
+  s.begin(0, '"v1"')
+  const cut = WRITE_BYTES + 1_000_001
+  await feed(s, bytes.subarray(0, cut), 999_983)
+  assert.equal(await s.hold(), cut, 'everything that arrived is written and noted, not only the whole writes')
+  assert.equal(store.storageLine(), 'kept in this page', 'a hold ends the download')
+  assert.deepEqual(await store.part(pin), { id: s.id, at: cut })
+  assert.deepEqual(await store.list(), [])
+  const again = await store.openPart(pin)
+  assert.ok(again)
+  assert.deepEqual([again.id, again.at, again.validator], [s.id, cut, '"v1"'])
+  again.begin(cut, '"v1"')
+  await feed(again, bytes.subarray(cut), 1_048_576)
+  assert.deepEqual(await again.end(), { bytes: bytes.length, sha256: pin.sha256 })
+  assert.deepEqual(root.dir(MODELS_DIR).dir(s.id).file(partName(pin.file)).data, bytes)
+  again.release()
+  // A second session while one is open is refused; so is a keep.
+  const one = await store.openPart(pin)
+  assert.ok(one)
+  await assert.rejects(store.openPart(pin), /another model file is being copied into this page/)
+  await assert.rejects(store.keep(tiny()), /another model file is being copied into this page/)
+  one.release()
+})
+
+test('list leaves one part per pin to be picked up, the furthest, and sweeps every other; forget removes parts too, and forgetParts by the file\'s name', async () => {
+  const bytes = patterned(50_000)
+  const pin = pinOf(bytes)
+  const other = pinOf(patterned(50_001), 'old.gguf')
+  const root = new FakeDir('')
+  const models = await root.getDirectoryHandle(MODELS_DIR, { create: true })
+  const store = partStore(root, [pin])
+  await partBy(models, 'best', pin, bytes, 30_000)
+  await partBy(models, 'behind', pin, bytes, 10_000)
+  await partBy(models, 'other-pin', other, patterned(50_001), 10_000)
+  await partBy(models, 'no-validator', pin, bytes, 40_000, { validator: null })
+  await partBy(models, 'too-old', pin, bytes, 40_000, { savedAt: Date.now() - (PART_DAYS + 1) * 24 * 3600_000 })
+  const short = await partBy(models, 'short', pin, bytes, 40_000)
+  short.file(partName(pin.file)).data = bytes.slice(0, 100)
+  const junk = await partBy(models, 'junk', pin, bytes, 40_000)
+  junk.file(PART_NOTE).data = new TextEncoder().encode('{"v":1,')
+  assert.deepEqual(await store.list(), [])
+  assert.deepEqual([...models.children.keys()], ['best'])
+  assert.deepEqual(await store.part(pin), { id: 'best', at: 30_000 })
+  assert.equal(await store.part(other), null)
+  // A store that leaves no part (none named) sweeps it as a copy cut short.
+  assert.deepEqual(await storeOver(root, []).list(), [])
+  assert.equal(models.children.size, 0)
+  await partBy(models, 'again', pin, bytes, 30_000)
+  const [m] = await (async () => { await store.keep(tiny()); return store.list() })()
+  assert.equal(await store.forget(), 1, 'forget counts the model')
+  assert.equal(models.children.size, 0, 'and removes the part as well')
+  assert.ok(m)
+  // By the model file's name: its parts go (any pin of that name), a kept model and another file's part stay, and a
+  // download under way is left to it.
+  const both = partStore(root, [pin, other])
+  await both.keep(tiny())
+  await partBy(models, 'mine', pin, bytes, 30_000)
+  await partBy(models, 'mine-old-pin', { ...pin, sha256: '0'.repeat(64) }, bytes, 30_000)
+  await partBy(models, 'theirs', other, patterned(50_001), 10_000)
+  const running = await both.openPart(other)
+  assert.ok(running)
+  assert.equal(running.id, 'theirs')
+  assert.equal(await both.forgetParts?.(pin.file), 2)
+  assert.equal(await both.forgetParts?.(other.file), 0, 'the download under way holds its part')
+  await running.hold()
+  running.release()
+  assert.deepEqual([...models.children.keys()].filter((k) => k !== 'theirs').length, 1, 'the kept model stays')
+  assert.ok(models.children.has('theirs'))
+  assert.equal(await both.forgetParts?.(other.file), 1, 'once it lets go, its part goes too')
+  assert.equal(await both.forgetParts?.('none.gguf'), 0)
+  assert.equal((await both.list()).length, 1)
+})
+
+test('where no sync handle opens, no storage is given, or the store makes no parts, openPart is null and the page downloads as before; another tab\'s lock is said', async () => {
+  const bytes = patterned(5_000)
+  const pin = pinOf(bytes)
+  const root = new FakeDir('')
+  fakeCaps.sync = false
+  try {
+    const store = partStore(root, [pin])
+    assert.equal(await store.openPart(pin), null)
+    assert.equal(root.dir(MODELS_DIR).children.size, 0, 'the directory it made is gone')
+    assert.equal(store.storageLine(), 'kept in this page')
+    // The copy refuses as plainly where the handle is missing.
+    await assert.rejects(createModelStore({ directory: async () => asDir(root), copy: productCopy(), now: () => NOW }).keep(tiny()), /writes no file of the page's storage from a worker/)
+  } finally {
+    fakeCaps.sync = true
+  }
+  assert.equal(await storeOver(root, []).openPart(pin), null, 'a store built without part')
+  const refused = createModelStore({ directory: async () => { throw domError('SecurityError', 'no storage') }, part: workerPart(() => new InProcessWorker() as unknown as Worker), now: () => NOW })
+  assert.equal(await refused.openPart(pin), null, 'no storage the page may write')
+  workerRoot = null
+  const noWorkerStorage = partStore(root, [pin])
+  workerRoot = null
+  assert.equal(await noWorkerStorage.openPart(pin), null, 'a worker given no storage')
+  const locks = new FakeLocks()
+  const store = partStore(root, [pin], { locks })
+  const models = await root.getDirectoryHandle(MODELS_DIR, { create: true })
+  await partBy(models, 'theirs', pin, bytes, 2_000)
+  let letGo = (): void => undefined
+  const holding = new Promise<void>((r) => { letGo = r })
+  void locks.request(`${MODELS_DIR}/theirs`, {}, () => holding)
+  await assert.rejects(store.openPart(pin), (e: unknown) => e instanceof CognitionError && e.message === ANOTHER_TAB)
+  assert.ok(models.children.has('theirs'), 'their part is left alone')
+  letGo()
+  await new Promise((r) => setTimeout(r, 0))
+  const mine = await store.openPart(pin)
+  assert.equal(mine?.at, 2_000)
+  mine?.release()
+})
+
+/** A download of `model` through `store`, whole and ended under `validator`, not yet committed. */
+async function wholePart(store: ReturnType<typeof partStore>, model: Uint8Array, pin: PartPin, validator: string | null = '"v1"') {
+  const s = await store.openPart(pin)
+  assert.ok(s)
+  s.begin(0, validator)
+  await feed(s, model, 4096)
+  assert.equal((await s.end()).sha256, pin.sha256)
+  return s
+}
+
+test('two tabs that start the same download at once: the second is refused while the first holds the pin\'s lock, then told it is kept; one model is kept', async () => {
+  const model = tinyGgufFiles({ letter: 'a', split: false })[0].bytes
+  const pin = pinOf(model, 'tiny-a.gguf')
+  const root = new FakeDir('')
+  const locks = new FakeLocks()
+  const a = partStore(root, [pin], { locks })
+  const b = partStore(root, [pin], { locks })
+  const sa = await a.openPart(pin)
+  assert.ok(sa)
+  const models = root.dir(MODELS_DIR)
+  // Before its first bytes come tab A's directory has no note another tab may pick up (and with no validator, as the
+  // app's copy gives none, it never has): only the pin's lock says this model is downloading.
+  assert.equal(await b.part(pin), null)
+  assert.equal((await failure(b.openPart(pin))).message, ANOTHER_TAB)
+  assert.deepEqual([...models.children.keys()], [sa.id], 'tab B made no directory of its own')
+  sa.begin(0, null)
+  await feed(sa, model, 4096)
+  assert.equal((await sa.end()).sha256, pin.sha256)
+  assert.equal((await failure(b.openPart(pin))).message, ANOTHER_TAB, 'refused until tab A lets go')
+  const kept = await a.commitPart(sa, pin)
+  assert.equal((await failure(b.openPart(pin))).message, KEPT_ELSEWHERE, 'then told it is kept, with nothing downloaded')
+  assert.deepEqual((await b.list()).map((m) => m.id), [kept.id], 'kept once')
+  assert.equal(locks.held.size, 0, 'every lock let go')
+  // Forgotten, it may be downloaded again.
+  assert.equal(await b.forget(kept.id), 1)
+  const again = await b.openPart(pin)
+  assert.ok(again)
+  assert.equal(again.at, 0)
+  again.release()
+})
+
+test('two tabs: a model another tab keeps just as this one opens its part is never written as a part; this tab is refused, and the model stays whole', async () => {
+  for (const movable of [true, false]) {
+    const model = tinyGgufFiles({ letter: 'a', split: false })[0].bytes
+    const pin = pinOf(model, 'tiny-a.gguf')
+    const root = new FakeDir('')
+    const locks = new FakeLocks()
+    fakeCaps.move = movable
+    try {
+      const a = partStore(root, [pin], { locks })
+      const b = partStore(root, [pin], { locks })
+      const sa = await wholePart(a, model, pin)
+      // Tab A commits (meta.json in, its note gone, every lock let go) just as tab B asks for its first lock.
+      const done: { kept: KeptModel | null } = { kept: null }
+      locks.beforeTry = async () => {
+        locks.beforeTry = null
+        done.kept = await a.commitPart(sa, pin)
+      }
+      assert.equal((await failure(b.openPart(pin))).message, KEPT_ELSEWHERE, `rename ${movable}`)
+      const kept = done.kept
+      assert.ok(kept, 'tab A committed as tab B asked')
+      const models = root.dir(MODELS_DIR)
+      assert.deepEqual([...models.children.keys()], [kept.id], 'tab B made no directory')
+      assert.deepEqual([...models.dir(kept.id).children.keys()].sort(), [META, movable ? pin.file : partName(pin.file)].sort(), 'the model and its meta.json alone')
+      const [f] = await a.open(kept.id)
+      assert.deepEqual(await bytesOf(f), model, 'the model is whole')
+      assert.deepEqual((await b.list()).map((m) => m.id), [kept.id], 'kept once')
+      assert.equal(locks.held.size, 0, 'every lock let go')
+    } finally {
+      fakeCaps.move = true
+    }
+  }
+})
+
+test('a part another tab keeps while this one waits for its directory\'s lock is looked at again under the lock, and the worker is never asked to open it', async () => {
+  for (const movable of [true, false]) {
+    const model = tinyGgufFiles({ letter: 'a', split: false })[0].bytes
+    const pin = pinOf(model, 'tiny-a.gguf')
+    const root = new FakeDir('')
+    const locks = new FakeLocks()
+    const models = await root.getDirectoryHandle(MODELS_DIR, { create: true })
+    const asked: string[][] = []
+    const link = workerPart(() => new InProcessWorker() as unknown as Worker)
+    const b = partStore(root, [pin], { locks, part: (dirPath, p) => { asked.push([...dirPath]); return link(dirPath, p) } })
+    // Another tab, of a build that takes no pin's lock, holds the directory of a whole part it is about to keep.
+    const dir = await partBy(models, 'theirs', pin, model, model.length)
+    let letGo = (): void => undefined
+    void locks.request(`${MODELS_DIR}/theirs`, {}, () => new Promise<void>((r) => { letGo = r }))
+    locks.beforeTry = async (name) => {
+      // As tab B asks for the directory's lock (after the pin's), the other tab keeps the part (renamed where the
+      // browser can, else meta.json names the part file) and lets go.
+      if (name !== `${MODELS_DIR}/theirs`) return
+      locks.beforeTry = null
+      if (movable) await dir.file(partName(pin.file)).move(pin.file)
+      const files = [movable ? { name: pin.file, bytes: pin.bytes } : { name: pin.file, bytes: pin.bytes, stored: partName(pin.file) }]
+      ;(await dir.getFileHandle(META, { create: true })).data = new TextEncoder().encode(JSON.stringify({ id: 'theirs', name: pin.file, files, bytes: pin.bytes, keptAt: 1, v: 1 }))
+      await dir.removeEntry(PART_NOTE)
+      letGo()
+      await new Promise((r) => setTimeout(r, 0))
+    }
+    assert.equal((await failure(b.openPart(pin))).message, KEPT_ELSEWHERE, `rename ${movable}`)
+    assert.deepEqual(asked, [], 'refused before the worker was asked to open anything there')
+    assert.deepEqual([...dir.children.keys()].sort(), [META, movable ? pin.file : partName(pin.file)].sort())
+    const [f] = await b.open('theirs')
+    assert.deepEqual(await bytesOf(f), model, 'the model is whole')
+    assert.deepEqual([...models.children.keys()], ['theirs'])
+    assert.equal(locks.held.size, 0)
+  }
+})
+
+test('the worker opens no part where a meta.json says a model is kept, and makes and changes nothing there', async () => {
+  const model = tinyGgufFiles({ letter: 'a', split: false })[0].bytes
+  const pin = pinOf(model, 'tiny-a.gguf')
+  const root = new FakeDir('')
+  workerRoot = root
+  const dir = await (await root.getDirectoryHandle(MODELS_DIR, { create: true })).getDirectoryHandle('kept', { create: true })
+  // Kept where the browser could not rename it: the model's own file is the part file's name.
+  ;(await dir.getFileHandle(partName(pin.file), { create: true })).data = model.slice()
+  ;(await dir.getFileHandle(META, { create: true })).data = new TextEncoder().encode('{}')
+  await assert.rejects(workerPart(() => new InProcessWorker() as unknown as Worker)([MODELS_DIR, 'kept'], pin), (e: unknown) => (e as Error).name === 'InvalidModificationError')
+  assert.deepEqual([...dir.children.keys()].sort(), [META, partName(pin.file)].sort(), 'no note made')
+  assert.deepEqual(dir.file(partName(pin.file)).data, model, 'and the kept file untouched')
+  assert.ok(![...dir.children.values()].some(held), 'nothing left open')
+})
+
+test('commitPart keeps the part as a model: renamed, header read, meta.json last, the note gone; where the browser cannot rename, meta.json names the part file', async () => {
+  for (const movable of [true, false]) {
+    const model = tinyGgufFiles({ letter: 'a', split: false })[0].bytes
+    const pin = pinOf(model, 'tiny-a.gguf')
+    const root = new FakeDir('')
+    const events: string[] = []
+    fakeCaps.move = movable
+    try {
+      workerRoot = root
+      const store = storeOver(root, events, { part: workerPart(() => new InProcessWorker() as unknown as Worker), parts: [pin], now: Date.now })
+      const s = await store.openPart(pin)
+      assert.ok(s)
+      s.begin(0, '"v1"')
+      await feed(s, model, 4096)
+      assert.equal((await s.end()).sha256, pin.sha256)
+      const seen: [number, number][] = []
+      const kept = await store.commitPart(s, pin, (d, t) => seen.push([d, t]))
+      assert.deepEqual(seen, [[0, pin.bytes], [pin.bytes, pin.bytes]])
+      assert.equal(kept.name, 'tiny-a.gguf')
+      assert.deepEqual(kept.files, [movable ? { name: 'tiny-a.gguf', bytes: pin.bytes } : { name: 'tiny-a.gguf', bytes: pin.bytes, stored: partName('tiny-a.gguf') }])
+      const dir = root.dir(MODELS_DIR).dir(kept.id)
+      assert.deepEqual([...dir.children.keys()].sort(), [META, movable ? 'tiny-a.gguf' : partName('tiny-a.gguf')].sort(), 'the note is gone')
+      assert.deepEqual(events, [`copy ${META}`, `copied ${META}`, 'persist'])
+      assert.deepEqual((await store.list()).map((m) => m.id), [kept.id])
+      const [f] = await store.open(kept.id)
+      assert.equal(f.name, 'tiny-a.gguf', 'opened under the model\'s name either way')
+      assert.deepEqual(await bytesOf(f), model)
+      assert.equal(store.storageLine(), 'kept in this page')
+    } finally {
+      fakeCaps.move = true
+    }
+  }
+})
+
+test('commitPart refuses a part that is not a text model, or not the pin\'s size, and removes it; discard removes a part', async () => {
+  const junk = patterned(9_000)
+  const pin = pinOf(junk, 'junk.gguf')
+  const root = new FakeDir('')
+  const store = partStore(root, [pin])
+  const s = await store.openPart(pin)
+  assert.ok(s)
+  s.begin(0, '"v1"')
+  await feed(s, junk, 4096)
+  await s.end()
+  const no = await failure(store.commitPart(s, pin))
+  assert.match(no.message, /junk\.gguf was not kept/)
+  assert.equal(root.dir(MODELS_DIR).children.size, 0, 'the part went with it')
+  const short = await store.openPart(pin)
+  assert.ok(short)
+  short.begin(0, '"v1"')
+  await feed(short, junk.subarray(0, 100), 100)
+  await short.end()
+  assert.match((await failure(store.commitPart(short, pin))).message, /holds 100 of its 9000 bytes/)
+  assert.equal(root.dir(MODELS_DIR).children.size, 0)
+  const gone = await store.openPart(pin)
+  assert.ok(gone)
+  gone.begin(0, '"v1"')
+  await feed(gone, junk.subarray(0, 5000), 1000)
+  await gone.discard()
+  assert.equal(root.dir(MODELS_DIR).children.size, 0)
+  assert.equal(store.storageLine(), 'kept in this page')
+})
+
+test('the room check counts only the rest when a download goes on from a part', () => {
+  const room = { used: 0, quota: 300 * MIB }
+  assert.equal(roomRefusal(400 * MIB, room), "this model needs 400 MB and this page's storage has 300 MB free (64 MB is kept spare as well): free some space in this browser, or choose a smaller model")
+  assert.equal(roomRefusal(400 * MIB - 300 * MIB, { used: 300 * MIB, quota: 600 * MIB }, true), null, 'the part\'s 300 MB are in use already; the 100 MB to come fit')
+  assert.match(roomRefusal(400 * MIB, { used: 100 * MIB, quota: 300 * MIB }, true) ?? '', /^the rest of this model needs 400 MB and this page's storage has 200 MB free/)
 })
 
 test('no model file is ever committed: *.gguf is ignored, and no tracked file starts with the GGUF magic', (t) => {

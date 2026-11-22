@@ -73,7 +73,9 @@ test('App: one runtime and one store per page, made on first use; the store copi
   assert.match(APP, /^import CopyWorker from '\.\/09_Cognition\/modelStore\.worker\.ts\?worker&inline'$/m)
   assert.match(APP, /^import \{ createWllamaRuntime \} from '\.\/09_Cognition\/wllamaRuntime\.ts'$/m)
   assert.match(APP, /^const PAGE_RUNTIME = once\(\(\) => createWllamaRuntime\(\{ debug: new URLSearchParams\(window\.location\.search\)\.has\('debug'\) \}\)\)$/m)
-  assert.match(APP, /^const PAGE_MODELS = once\(\(\) => createModelStore\(\{ copy: workerCopy\(copyWorker\) \}\)\)$/m)
+  // The site's model (or the app's, or the launcher's) downloads into a part through a worker of the same kind, and the
+  // parts the store leaves to be picked up are this build's two pins'.
+  assert.match(APP, /^const PAGE_MODELS = once\(\(\) => createModelStore\(\{ copy: workerCopy\(copyWorker\), part: workerPart\(copyWorker\), parts: \[SITE_MODEL, APP_MODEL\] \}\)\)$/m)
   assert.equal(APP_CODE.match(/\bcreateWllamaRuntime\(/g)?.length, 1)
   assert.equal(APP_CODE.match(/\bcreateModelStore\(/g)?.length, 1)
   before(APP, 'const pageFetch = loopbackFetch(', 'const PAGE_RUNTIME = once(', 'beside the page\'s other singletons, outside every component')
@@ -154,9 +156,12 @@ test('the Menu: a Model file item that calls the host inside its click handler, 
 })
 
 test('App: a file picked or dropped is kept, chosen, and the inpage provider answers; a desktop loads it at once, a phone only when asked', () => {
-  const keep = between(CITY, '        const keepPicked = async (files: readonly File[], onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {', '\n        }\n')
-  before(keep, 'kept = await inPage.keep(files, (done, total) => {', 'local.setProvider(\'inpage\')', 'chosen only once it is kept')
-  // The site's model (siteModel.ts) is kept through this same path, its copy's progress told to Sloane's card as well.
+  // A picked file's keep is the copy (inPage.keep) inside keepWith, which the site's model's commit from its part goes
+  // through as well (siteWork).
+  assert.match(CITY, /const keepPicked = \(files: readonly File\[\], onCopy\?: \(done: number, total: number\) => void, provider = true\): Promise<string> =>\n\s+keepWith\(\(progress\) => inPage\.keep\(files, progress\), onCopy, provider\)\n/)
+  const keep = between(CITY, '        const keepWith = async (keep: (progress: (done: number, total: number) => void) => Promise<KeptModel>, onCopy?: (done: number, total: number) => void, provider = true): Promise<string> => {', '\n        }\n')
+  before(keep, 'kept = await keep((done, total) => {', 'local.setProvider(\'inpage\')', 'chosen only once it is kept')
+  // The site's model (siteModel.ts) is kept through this same path, its keep's progress told to Sloane's card as well.
   assert.match(keep, /keepLine = `keeping the model file in this page \$\{[^\n]*\n\s+onCopy\?\.\(done, total\)/)
   before(keep, 'local.setProvider(\'inpage\')', 'local.setModel(kept.name)', 'the provider, then its model')
   // A file the page got by itself (the site's model, siteAuto.ts) leaves the provider as the visitor had it: under auto

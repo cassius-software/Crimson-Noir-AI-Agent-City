@@ -1315,7 +1315,9 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   the size and SHA-256 the page was built with, keeps it in this browser exactly as a picked file is kept, and chooses
   it (A model in this page, The site's model). While it comes, a line and a bar on the card show the megabytes and then
   the copy into the page (a hairline on Sloane's chip shows the same), and **Stop** ends the download and keeps
-  nothing; a download that ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the wait reads "Starting the model…
+  no model (where the page can, what arrived waits for the next try, which asks only for the rest); a download that
+  ends short says why on the card. Once the model is kept, the last thing you said is asked again by itself, and the
+  wait reads "Starting the model…
   the first answer takes longer". Where nothing serves that model beside the page (the bare Windows .exe, `dist/index.html`
   opened from a file or from a local server, the NixOS launcher and the flake), or where this browser cannot run a
   model in the page, no such button shows; the Windows app's installer offers its own instead, **Get the model · 940
@@ -3324,14 +3326,15 @@ macOS app's model, below).
     on the way stops it, and a download the connection cut (the browser offline, or now on mobile data) counts as a
     pause, not a try that ended short: a toast says it waits ("Sloane's model waits: this device is on mobile data; the
     page gets it on a later visit, or now with the button on Sloane's card"). A provider or a model of your own chosen
-    while it comes ends it too, keeping nothing. It keeps and chooses the model without changing the provider, so under
-    `auto` a model server on this machine (Ollama, llama.cpp, an OpenAI-compatible server) still answers first, and a
-    toast says so ("… is kept in this page (379 MB): it answers whenever no model server on this machine does", and on
-    a computer "and it is loading"); the Claude gateway, which `auto` asks after a model kept in the page, no longer
-    answers under `auto` once it is kept, so choose it by name (`ask provider claude`) to keep it first, which also
-    holds the page back. A try that ends short says why in a toast too, and the card still offers the tap. A **Stop** is
-    remembered in this browser (`civic-simulation:sitemodel:auto:v1`), and from then on the page waits for the tap; a
-    halt of the city stops a download under way;
+    while it comes ends it too, keeping no model (what arrived waits as a part, below). It keeps and chooses the model
+    without changing the provider, so under `auto` a model server on this machine (Ollama, llama.cpp, an
+    OpenAI-compatible server) still answers first, and a toast says so ("… is kept in this page (379 MB): it answers
+    whenever no model server on this machine does", and on a computer "and it is loading"); the Claude gateway, which
+    `auto` asks after a model kept in the page, no longer answers under `auto` once it is kept, so choose it by name
+    (`ask provider claude`) to keep it first, which also holds the page back. A try that ends short says why in a toast
+    too, and the card still offers the tap. A **Stop** is remembered in this browser
+    (`civic-simulation:sitemodel:auto:v1`), and from then on the page waits for the tap; a halt of the city stops a
+    download under way;
   - otherwise, when Sloane's card first says no model answers, the page asks for `models/manifest.json` once a visit
     (again later only if the site could not be reached or answered with an error), and offers the model only when the
     manifest names exactly the pin the page was built with. Only the web copy asks (the page that names a web app
@@ -3339,20 +3342,62 @@ macOS app's model, below).
     iPhone today), on `dist/index.html` however it is opened or served, or on a page not served over http or https;
   - the tap checks, in this order: that this browser can run a model in the page, that no file is being kept already,
     whether this browser keeps the model already (then it is only chosen, and nothing is downloaded), that the device's
-    limits admit it (How large a model, below), and that the page's storage has room for it with 64 MB spare. Only
-    then is it downloaded, so nothing comes that could not be kept or run here. While it downloads, a pick from the
-    Menu, a drop or `ask file` is refused (it says to wait for the download or stop it on Sloane's card) and keeps
-    nothing, so neither copy throws the other away;
+    limits admit it (How large a model, below), and that the page's storage has room for it with 64 MB spare (for what
+    is left of it, when part of it is there to pick up). Only then is it downloaded, so nothing comes that could not be
+    kept or run here. While it downloads, a pick from the Menu, a drop or `ask file` is refused (it says to wait for the
+    download or stop it on Sloane's card) and keeps nothing, so neither copy throws the other away;
   - it comes only from a `models/` file beside the page on the page's own site (`siteModel.ts siteUrl`: never the
     origin's root, which on GitHub Pages is another site), through the page's guarded fetch, outside the browser's
     HTTP cache. It is counted and hashed with SHA-256 as it streams (`02_Define_The_Rules/integrity.ts
-    sha256Stream`), refused the moment it runs past the pinned size, and becomes a file only once every byte has
-    arrived and the hash is the pin's. A short or broken download, a different file or an HTTP error (a 429 says too
-    many downloads for now) keeps nothing, and the card says why;
-  - it is then kept and chosen exactly as a picked file is (the header check, the copy into the page's storage, a
-    computer's load at once), with the provider `inpage` when you tapped for it, and the card asks the last turn again
-    if the conversation on it found no model (a reply on its way, stopped or held is left as it is). **Stop** ends the
-    download; the copy into the page, once begun, runs to its end;
+    sha256Stream`) and refused the moment it runs past the pinned size. Where a worker of the page can write its
+    storage, what arrives goes straight into a part file there (below); elsewhere it becomes a file only once every
+    byte has arrived. Either way it is kept as a model only once every byte is there and the size and the hash are the
+    pin's: a different file or a long one is deleted. An HTTP error (a 429 says too many downloads for now) keeps
+    nothing new, a short or broken download keeps only what arrived, as a part, and the card says why;
+  - a download that stopped goes on from where it stopped, where a worker can write the page's storage
+    (`siteModel.ts downloadSiteModel`, `09_Cognition/modelPart.ts`, `modelStore.ts openPart`). The page fetches, and
+    the worker that copies a picked file (`modelStore.worker.ts`) writes what arrives into
+    `agent-city-models/<id>/<file>.part` in the page's storage, with a note beside it, `part.json`: the pin it is for,
+    how many bytes are written, the server's validator and the SHA-256 so far. It writes 8 MiB at a time and flushes
+    the part before each note, so the note never says more than the part holds. A dropped connection, the **Stop**, a
+    halt of the city and the page's end each write what arrived first; a tab that is closed or killed loses what was
+    not yet noted, at most about 24 MiB: up to 8 MiB buffered in the worker, and about 16 MiB more (`AHEAD_BYTES`) the
+    page had sent on to it. The next try asks only for the rest: `Range` from where the part ends, with `If-Range` set
+    to the server's strong ETag, or to its `Last-Modified` when it gives no ETag at all (never a weak ETag, and never
+    a body the server compressed). It goes on only on a 206 whose `Content-Range` starts where the part ends and runs
+    to the pin's size; a 200 (the server ignored the range, or the file changed) starts over from the first byte, and
+    so do a 416 and a 206 that does not fit, asked once more without a range. A note is trusted only when everything
+    agrees: the same pin, a validator, saved within 7 days, a part at least that long, and the part's bytes up to
+    there, read back and hashed again from the first, coming to exactly the hash state the note saved, so a byte
+    changed on disk anywhere since starts the download over (a part of this model near its end is about 398 MB read
+    and hashed once, before the rest is asked for). The hash goes on from that state over the bytes that come after,
+    hashed as they arrive (they are not read back), so the check at the end covers every byte of the file, and only it
+    writes `meta.json`: the part is renamed to the model's name (where the browser cannot rename a file of its
+    storage, `meta.json` names the part file) and the note removed. The card says when the next try asks only for the
+    rest ("the download stopped at 62,796 of 156,992 bytes: try again, and the next try asks this site only for the
+    rest"), the brain readout says the model is held and why, and its count starts where the part ends. A download
+    holds a lock for its pin (a Web Lock, which every tab of the page's origin sees) as well as its directory's:
+    another tab of the city that asks for the same model meanwhile is told "another tab of the city is downloading
+    this model into the page just now: wait for it to finish there", and once that tab has kept it, "another tab of
+    the city has just kept this model in the page: try again to choose it" (the next try chooses it, and nothing is
+    downloaded twice). A kept model's directory is never written as a part: it is looked at again under its lock, and
+    the worker opens no part beside a `meta.json`. A part is never a kept model: the store keeps one part for each pin
+    the page is built with (the site's model and the app's), the one that has come furthest, and every look at it
+    sweeps the rest (a part for another pin, or saved more than 7 days ago). `ask file forget <file>` removes that
+    file's parts (a download under way is left to finish or stop), and forgetting every model removes them all. The
+    room check counts only what is left to come. The app's and the launcher's copies go into a part the same way, but
+    neither gives a validator, so one that stopped starts over;
+  - which browsers take that path: the part needs a worker's synchronous handle onto the page's storage
+    (`createSyncAccessHandle`). Chrome, Edge and the other Chromium browsers have it (the browser smoke runs it in
+    Chromium); Firefox and Safari offer it too by their own documentation, but run no model in the page today (Which
+    browsers, below), so they download nothing. Where it is missing, or the page gets no storage it may write (a
+    private window, for one), the page downloads as before: into a file held in memory, then copied into the page's
+    storage as a picked file is, with nothing to pick up if it stops (the browser smoke no longer runs this way);
+  - it is then kept and chosen as a picked file is (the header check; then the part committed where it lies, or, with
+    no part, the copy into the page's storage; a computer's load at once), with the provider `inpage` when you tapped
+    for it, and the card asks the last turn again if the conversation on it found no model (a reply on its way,
+    stopped or held is left as it is). **Stop** ends the download and leaves what arrived to be picked up; the keep,
+    once begun, runs to its end;
   - the service worker leaves `models/` to the network (On an iPhone, below), so its cache holds no second copy: the
     page's storage keeps the one.
 
@@ -3361,7 +3406,14 @@ macOS app's model, below).
   dist-web` (`check --from <folder>` only checks it). Every full download counts against the site's bandwidth: GitHub
   Pages has a soft limit of 100 GB a month, about 250 full downloads of this model, so after a publish the web
   workflow only reads the served manifest and the size the site reports for the model, and never downloads the model
-  itself. What is verified: the pin, the manifest, the address rule, the checked download (a flipped byte, a short
+  itself. It also asks for the model's first byte, and its second under `If-Range` with the ETag the site gave, and
+  warns (never fails) when either is not a 206 of that byte, when the ETag is weak or missing, or when the deploy
+  changed the ETag of a model that did not change: a download stopped before such a deploy starts over after it. The
+  look at the ETag before the publish and the range looks after it have a time limit each, and every call the workflow
+  makes to the site has one, the look at the manifest and the size included (20 s a call, the manifest asked six times
+  at most; that look has no limit of its own), so a slow site holds the publish 2 minutes at most and cannot hold the
+  workflow after it without end.
+  What is verified: the pin, the manifest, the address rule, the checked download (a flipped byte, a short
   body, a long one, a broken connection, an HTTP error, a stop) and the placing, in `siteModel.test.ts`,
   `integrity.test.ts`, `webApp.test.ts` and `chat.test.ts`; the page's own start in `siteAuto.test.ts` (each reason it
   holds back, in order, before the site is asked for anything; the wait until the page is seen; the facts read again
@@ -3372,8 +3424,27 @@ macOS app's model, below).
   machine with a tiny model standing in under a swapped pin, the page getting it by itself with no click, asking
   nothing off its site until Sloane is spoken to, its Stop and that the Stop is remembered on the next visit, a fresh
   browser keeping it by itself and Sloane answering with it, a flipped byte ending the page's own try with a toast and
-  the card's tap still offered, and the tap. Not verified: a real download from GitHub Pages (its compression, the type it serves the file as, its rate limits), how
-  well and how fast this model converses, and any real phone or GPU.
+  the card's tap still offered, and the tap. The part path is verified in `modelPart.test.ts` (8 MiB writes, each
+  flushed before its note; what a stop leaves, and a kill between writes; every way a note is refused, a byte changed
+  on disk anywhere in a part among them, at the real 8 MiB write too), `siteModel.test.ts` against a server on this
+  machine that answers a range with a 206, ignores it, changes its ETag, gives only `Last-Modified`, a weak ETag or a
+  compressed body, answers 416 or another range, or cuts off partway through a write (and a whole part with a byte
+  changed on disk, asked again whole), and `modelStore.test.ts` (the worker's writes, the hold and the pick-up, the
+  sweep, forget, the commit with and without a rename, the old path where no handle opens, and two tabs: the same
+  download started in both at once, a model kept by one as the other opens its part, and the worker refusing a kept
+  model's directory); the browser smoke's `sitemodel` scenario stops the page's own download at a fifth and finds the
+  part and the readout's held, picks it up on the next visit with a 206, has the server drop the connection two fifths
+  in, and finishes on the next click with each byte the part lacked sent once. Not verified: a real download from
+  GitHub Pages (its compression, the type it serves the file as, its rate limits, whether it answers a range with a
+  206 and keeps a model's ETag from one deploy to the next, which the web workflow only warns about), the web
+  workflow's range and ETag looks themselves, and the new time limits on the calls of its look at the manifest and the
+  size, until CI runs them (they ran only against a fake site and a fake `gh`, and `webApp.test.ts` reads only their
+  time limits), the part path in Firefox, Safari, the Windows app's WebView2 and Chrome on Android, a full-size
+  (397,808,192-byte) download and resume and how long the read-back hash takes in a browser, the rename fallback
+  (`meta.json` naming the part file) and handles whose calls return promises anywhere but the Node tests' fakes, the
+  storage running out partway and two tabs contending for a part in a real browser, a tab killed while it writes, the
+  download where no synchronous handle opens (now run only by `modelStore.test.ts` and `siteModel.test.ts`, no longer
+  by the browser smoke), how well and how fast this model converses, and any real phone or GPU.
 - **The app's model** (`siteModel.ts` `APP_MODEL`, `src-tauri/src/model.rs`, `07_Execute_Actions/desktopShell.ts`).
   The Windows app's installer and its .msi carry one model beside the app, so Sloane talks from the first launch with
   no model server and nothing to download: Qwen2.5 1.5B Instruct at Q4_K_M (`Qwen2.5-1.5B-Instruct-Q4_K_M.gguf`,
@@ -3598,13 +3669,14 @@ macOS app's model, below).
   the same way.
 - **Where the file is kept.** In the browser's own storage for this page (its origin private file system, under
   `agent-city-models/`), on this device only. Keeping is a copy: the file you picked stays where it was, so the device
-  holds the model twice until you delete the original. Before the copy the browser is asked how much room is left, and
-  a model that would leave less than 64 MB free is refused with both sizes. The copy counts only once every byte is
-  written, so one cut short (a closed tab, a full disk) is swept at the next look, and the page asks the browser to
-  keep its storage, which it may refuse. Each way of opening the city is an origin of its own with storage of its own:
-  the preview, the NixOS launcher, the Windows app and the web copy each keep their own files. Where the browser keeps
-  no files for the page (a private window, for one), the file is held for this visit only, and the storage row says so
-  and why. A file the browser has cleared since is reported as gone: choose it again.
+  holds the model twice until you delete the original (the site's model and the app's are not copied: they go straight
+  in, as a part until every byte is checked; The site's model, above). Before the copy the browser is asked how much
+  room is left, and a model that would leave less than 64 MB free is refused with both sizes. The copy counts only once
+  every byte is written, so one cut short (a closed tab, a full disk) is swept at the next look, and the page asks the
+  browser to keep its storage, which it may refuse. Each way of opening the city is an origin of its own with storage of
+  its own: the preview, the NixOS launcher, the Windows app and the web copy each keep their own files. Where the
+  browser keeps no files for the page (a private window, for one), the file is held for this visit only, and the storage
+  row says so and why. A file the browser has cleared since is reported as gone: choose it again.
 - **At the console.** `ask file` and `ask gpu` work without `operator unlock`, since neither sends a prompt:
   - `ask file`: choose and keep a file (above);
   - `ask file load`: load the chosen file now, and say where it runs and how long it took (it also clears the crash
@@ -3682,7 +3754,9 @@ macOS app's model, below).
   `10_Network/airgap.test.ts` pins. On the web copy the page makes two requests of its own for the site's model, both
   GETs to the site the page came from and neither carrying anything of yours (no prompt, no key, no file): the
   manifest, once a visit, once the city is on screen or when Sloane's card first says no model answers, and the model
-  itself, by the page once the city is on screen or when you tap for it (The site's model, above). The runtime's workers are made from `blob:` URLs and live under the page's
+  itself, by the page once the city is on screen or when you tap for it (The site's model, above), or only the rest
+  of it, with `Range` and `If-Range`, when a download of it stopped (a third request only when the site sends a range
+  that does not fit, asking it again whole). The runtime's workers are made from `blob:` URLs and live under the page's
   Content-Security-Policy, which admits no host but the page's own and this machine. The kept files and their settings
   stay in this browser's storage for the page's origin, readable by whatever can read that origin's storage: on the
   public web copy that origin, `cassius-software.github.io`, is shared by every Pages site of the organization (On an

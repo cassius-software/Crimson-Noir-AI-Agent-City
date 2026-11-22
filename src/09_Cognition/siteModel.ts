@@ -10,10 +10,18 @@
  * an offer only when the manifest names exactly this pin), asked once the city is on screen (siteAuto.ts says whether
  * the page gets it by itself: where it can run and keep it, no other model was chosen and the connection does not say
  * the data costs) or when Sloane's card says no model answers, and fetches it then or on the visitor's tap
- * (fetchSiteModel, one job at a time: siteJob.ts): from the page's own origin and its own folder (siteUrl: a
- * models/ path relative to the page, never the origin's root, which on GitHub Pages is another site), counted and
- * hashed piece by piece as it arrives (integrity.ts sha256Stream), refused the moment it runs long, and turned into a
- * File only once every byte has passed. That File is then kept exactly as a picked file is (App.tsx keepPicked).
+ * (one job at a time: siteJob.ts) from the page's own origin and its own folder (siteUrl: a models/ path relative to
+ * the page, never the origin's root, which on GitHub Pages is another site), counted and hashed piece by piece as it
+ * arrives (integrity.ts sha256Stream), and refused the moment it runs long. Where a worker can write the page's
+ * storage (modelStore.ts openPart), it downloads straight into a part file there (downloadSiteModel): a part that
+ * stopped is picked up with Range and If-Range (the server's strong ETag, else its Last-Modified; never a weak ETag),
+ * and only a 206 whose Content-Range starts where the part ends and totals the pin's size goes on from there; a 200
+ * (the server ignores Range, or the file changed) starts over from the first byte, and so does a 416 or a 206 that
+ * does not fit, asked once more without Range. The size and the SHA-256 of the whole file (a part picked up is read
+ * back and hashed again first, modelPart.ts) are compared to the pin before anything is kept, and a part that fails is
+ * deleted. Elsewhere (no synchronous handle in a worker, no storage the page may write) it downloads as before
+ * (fetchSiteModel): into a File, only once every byte has passed, then kept exactly as a picked file is (App.tsx
+ * keepPicked).
  * Nothing here fetches by itself: the fetch is handed in (App.tsx siteFetch, under the global air gap, which admits
  * the page's own origin as the content policy's connect-src 'self' does).
  * The Windows app carries a model of its own the same way (APP_MODEL, beside the app rather than beside a page): the
@@ -165,10 +173,11 @@ const MIB = 1024 * 1024
  * The plain sentence for a download that ended short of the model: whole megabytes while they differ, bytes once it
  * stopped inside the last megabyte, so a download that ended short never reads "379 of 379 MB".
  */
-const shortOf = (got: number, pin: SiteModelPin, from: SiteModelFrom = 'site'): string => {
+const shortOf = (got: number, pin: SiteModelPin, from: SiteModelFrom = 'site', kept = false): string => {
   const mb = (n: number): number => Math.floor(n / MIB)
   const at = mb(got) < mb(pin.bytes) ? `${mb(got)} of ${mb(pin.bytes)} MB` : `${got.toLocaleString('en-US')} of ${pin.bytes.toLocaleString('en-US')} bytes`
-  return `${from === 'site' ? 'the download' : `the copy from ${sender(from)}`} stopped at ${at}: try again`
+  // `kept`: what arrived waits in a part the next try picks up, so that try asks only for the rest.
+  return `${from === 'site' ? 'the download' : `the copy from ${sender(from)}`} stopped at ${at}: try again${kept && got > 0 ? `, and the next try asks ${sender(from)} only for the rest` : ''}`
 }
 
 /** Who sent the model, in a sentence. */
@@ -244,6 +253,177 @@ export async function fetchSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, on
   // A stop that came as the last bytes did, while the browser was still making them one file: nothing is handed on.
   signal?.throwIfAborted()
   return new File([blob], pin.file, { type: 'application/octet-stream' })
+}
+
+/**
+ * What a download writes into: the part kept in the page's storage (modelStore.ts PartSession), as far as this file
+ * needs it. `at` bytes are there to pick up under `validator` (0 and null: a fresh start); `begin` starts at 0 or
+ * `at`; `put` takes the next bytes (they are the sink's from then on) and resolves when it can take more; `hold`
+ * leaves what arrived to be picked up; `end` gives the size written and, when whole, the SHA-256 of the whole file;
+ * `discard` deletes the part.
+ */
+export interface SiteSink {
+  readonly at: number
+  readonly validator: string | null
+  begin(at: number, validator: string | null): void
+  put(bytes: Uint8Array): Promise<void>
+  hold(): Promise<number>
+  end(): Promise<{ readonly bytes: number; readonly sha256: string | null }>
+  discard(): Promise<void>
+}
+
+/** An answer's body is encoded (gzip, br, …): its bytes are not the file's, so no range of them can be picked up. */
+const encoded = (h: Headers): boolean => {
+  const e = h.get('content-encoding')
+  return e !== null && e.trim() !== '' && e.trim().toLowerCase() !== 'identity'
+}
+
+/**
+ * What a later request can send in If-Range to pick up this answer's file where it stopped: its strong ETag; else,
+ * when it has no ETag, its Last-Modified; null when neither can (a weak ETag, W/…, which If-Range never matches; an
+ * encoded body; Accept-Ranges: none; nothing given). Null means a part of it is never picked up.
+ */
+export function validatorOf(h: Headers): string | null {
+  if (encoded(h) || h.get('accept-ranges')?.trim().toLowerCase() === 'none') return null
+  const etag = h.get('etag')?.trim()
+  if (etag !== undefined && etag !== '') return /^"[\x21\x23-\x7e]*"$/.test(etag) ? etag : null
+  const modified = h.get('last-modified')?.trim()
+  return modified !== undefined && modified !== '' && !Number.isNaN(Date.parse(modified)) ? modified : null
+}
+
+/** A Content-Range header's `bytes first-last/total`, or null for anything else (an unsatisfied range, junk). */
+export function contentRange(text: string | null): { first: number; last: number; total: number } | null {
+  const m = /^\s*bytes\s+(\d+)-(\d+)\/(\d+)\s*$/i.exec(text ?? '')
+  if (!m) return null
+  const [first, last, total] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  return Number.isSafeInteger(total) && first <= last && last < total ? { first, last, total } : null
+}
+
+/**
+ * Whether `res`, the answer to a request for the rest of `pin` from `at` under `validator`, is that rest: a 206 whose
+ * Content-Range runs from `at` to the last byte of the pin's size, whose body is not encoded, whose length (when
+ * given) is the rest's, and whose ETag or Last-Modified (when given) is still `validator`.
+ */
+export function restFits(res: Response, at: number, pin: SiteModelPin, validator: string): boolean {
+  if (res.status !== 206 || encoded(res.headers)) return false
+  const r = contentRange(res.headers.get('content-range'))
+  if (r === null || r.first !== at || r.last !== pin.bytes - 1 || r.total !== pin.bytes) return false
+  const length = res.headers.get('content-length')
+  if (length !== null && Number(length) !== pin.bytes - at) return false
+  const said = validator.startsWith('"') ? res.headers.get('etag')?.trim() : res.headers.get('last-modified')?.trim()
+  return said === undefined || said === validator
+}
+
+/**
+ * The pinned model from this site (or the app, or the launcher: `from`) straight into `sink`, the part in the page's
+ * storage (see the file's comment). A part that holds the whole file already is checked as it is, with no request.
+ * `onBytes(done, total)` is told as bytes arrive; a download that goes on from a part counts from where it stopped.
+ * Resolves once the whole file is in the sink and its size and SHA-256 are the pin's (the caller then keeps it).
+ * Rejects with a plain sentence, the sink left as it should be: the site could not be reached or did not send the
+ * model (the part kept as it was), the download stopped short (what arrived kept, to be picked up), what arrived is
+ * not the pinned model (the part deleted), or the page's storage refused it (the sink says why). Aborting `signal`
+ * stops it, keeps what arrived, and rejects with the signal's reason.
+ */
+export async function downloadSiteModel(siteFetch: SiteFetch, pin: SiteModelPin, sink: SiteSink, onBytes: (done: number, total: number) => void, signal?: AbortSignal, from: SiteModelFrom = 'site'): Promise<void> {
+  /** What arrived is kept for the next try (as it is, when nothing has begun); a sink that fails here changes nothing. */
+  const keep = (): Promise<number> => sink.hold().catch(() => -1)
+  const notModel = async (): Promise<never> => {
+    await sink.discard().catch(() => undefined)
+    throw new Error(`what ${sender(from)} sent is not the model this page was built for (its SHA-256 differs), so nothing was kept`)
+  }
+  const ending = async (): Promise<void> => {
+    const r = await sink.end()
+    if (r.bytes !== pin.bytes) throw new Error(shortOf(r.bytes, pin, from))
+    if (r.sha256 !== pin.sha256) await notModel()
+  }
+  try {
+    signal?.throwIfAborted()
+  } catch (e) {
+    await keep()
+    throw e
+  }
+  if (sink.at === pin.bytes) {
+    onBytes(pin.bytes, pin.bytes)
+    await ending()
+    return
+  }
+  // Picked up only with a validator the server can match; anything else starts from the first byte.
+  let start = sink.validator !== null && sink.at > 0 ? sink.at : 0
+  let res: Response
+  for (;;) {
+    const init: RequestInit = start > 0 && sink.validator !== null
+      ? { cache: 'no-store', signal, headers: { Range: `bytes=${start}-`, 'If-Range': sink.validator } }
+      : { cache: 'no-store', signal }
+    try {
+      res = await siteFetch(`${SITE_DIR}${pin.file}`, init)
+    } catch (e) {
+      await keep()
+      signal?.throwIfAborted()
+      throw new Error(unreached(from, e instanceof Error ? e.message : String(e)))
+    }
+    if (start > 0 && sink.validator !== null && res.status === 206) {
+      if (restFits(res, start, pin, sink.validator) && res.body) {
+        sink.begin(start, sink.validator)
+        break
+      }
+      // A range that does not fit the part: asked again from the first byte.
+      void res.body?.cancel().catch(() => undefined)
+      start = 0
+      continue
+    }
+    if (start > 0 && res.status === 416) {
+      // The server cannot send that range (the file is shorter now, or the part is wrong): from the first byte.
+      void res.body?.cancel().catch(() => undefined)
+      start = 0
+      continue
+    }
+    if (!res.ok || !res.body) {
+      void res.body?.cancel().catch(() => undefined)
+      await keep()
+      throw new Error(`${sender(from)} did not send the model (HTTP ${res.status}${res.status === 429 ? ', too many downloads for now' : ''}): try again later`)
+    }
+    // A whole answer (a 200: the server ignored Range, or the file changed since the part began): from the first byte.
+    start = 0
+    sink.begin(0, validatorOf(res.headers))
+    break
+  }
+  const resumable = start > 0 || validatorOf(res.headers) !== null
+  let got = start
+  onBytes(got, pin.bytes)
+  const reader = res.body!.getReader()
+  for (;;) {
+    let piece: ReadableStreamReadResult<Uint8Array>
+    try {
+      piece = await reader.read()
+    } catch {
+      // The connection broke off, or the stop: what arrived is written and noted, to be picked up.
+      const kept = await keep()
+      signal?.throwIfAborted()
+      throw new Error(shortOf(kept >= 0 ? kept : got, pin, from, resumable && kept > 0))
+    }
+    if (piece.done) break
+    const bytes = piece.value
+    if (got + bytes.byteLength > pin.bytes) {
+      void reader.cancel().catch(() => undefined)
+      await sink.discard().catch(() => undefined)
+      throw new Error(`what ${sender(from)} sent is larger than the model this page was built for (${pin.file}), so nothing was kept`)
+    }
+    got += bytes.byteLength
+    try {
+      await sink.put(bytes)
+    } catch (e) {
+      void reader.cancel().catch(() => undefined)
+      signal?.throwIfAborted()
+      throw e
+    }
+    onBytes(got, pin.bytes)
+  }
+  if (got < pin.bytes) {
+    const kept = await keep()
+    signal?.throwIfAborted()
+    throw new Error(shortOf(kept >= 0 ? kept : got, pin, from, resumable && kept > 0))
+  }
+  await ending()
 }
 
 /** What Sloane's card is told about the site's model: its name, its size in plain words, and whether this browser keeps it already. */
