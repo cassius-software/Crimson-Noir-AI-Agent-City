@@ -40,6 +40,7 @@ interface FileRecord { name: string; sha256: string; size: number }
 interface Target { commit: string; files: FileRecord[] }
 interface State { schema: number; tag: string; tagAt?: string; commit?: string; time?: string; targets: Record<string, Target> }
 interface Run { workflow: string; created: string; sha: string }
+interface Ended { workflow: string; created: string; conclusion: string }
 interface Facts {
   now: string
   tip?: string
@@ -48,6 +49,7 @@ interface Facts {
   release: { state: State; staged: boolean; tag: string | null; assets: { name: string; size: number; digest: string | null }[] } | { error: string } | null
   media: Record<string, string | null>
   runs: Run[]
+  ended?: Ended[]
   served: string | null
   runsError?: string
 }
@@ -103,20 +105,35 @@ test('in sync: the web copy, the release\'s record, every target, the tag, the b
   assert.ok(v.rows.slice(1).every((r) => r[1] === C2 && r[2] === 'same commit'), 'every row at the one commit')
   assert.ok(v.rows.some((r) => r[0] === '  ios-ipa (best effort)'))
   // The limits the header and the workflow's words give, in minutes.
-  assert.deepEqual(s.GRACE, { start: 10, web: 45, current: 180, served: 15, ci: 100 })
+  assert.deepEqual(s.GRACE, { start: 10, web: 35, current: 145, served: 15, ci: 90, queued: 180 })
   assert.ok(Object.isFrozen(s.GRACE))
 })
 
 test('21 November 2026: ci passed on a commit, the web copy took it and the downloads did not; settling for ten minutes, then red, naming the downloads, each required target and the tag', () => {
   // 17:01:52 ci passed on C2. The web copy was published from it at 17:03; the release stayed at C1 behind a green run.
-  const then = (now: string): Facts => {
+  const then = (now: string, ended: Ended[] = []): Facts => {
     const release = releaseAt(C1)
-    return { now, green: { sha: C2, ci: 'ci', at: '2026-11-21T17:01:52Z' }, web: { stamp: stampOf(C2), probe: cacheOf(C2) }, release, media: mediaOf(release), runs: [], served: '2026-11-21T17:03:39Z' }
+    return { now, green: { sha: C2, ci: 'ci', at: '2026-11-21T17:01:52Z' }, web: { stamp: stampOf(C2), probe: cacheOf(C2) }, release, media: mediaOf(release), runs: [], ended, served: '2026-11-21T17:03:39Z' }
   }
+  // Before either publisher's run shows, both are simply on their way.
   const soon = judge(then(at('17:04')))
   assert.equal(soon.status, 'settling')
   assert.deepEqual(soon.problems, [])
   assert.ok(soon.waiting.every((w) => w.endsWith('(ci passed 2 min ago)')), soon.waiting.join('\n'))
+  // What happened: the current run begun at 17:01:53 ended at 17:02:15, green, having built nothing. That run was
+  // the downloads' answer, so the look its end starts is red at once, not an hour later.
+  const itsRun: Ended = { workflow: 'current', created: '2026-11-21T17:01:53Z', conclusion: 'success' }
+  const atOnce = judge(then('2026-11-21T17:02:20Z', [itsRun]))
+  assert.equal(atOnce.status, 'drift')
+  assert.deepEqual(atOnce.waiting, [])
+  assert.match(atOnce.problems[0], /^the downloads are built from /)
+  assert.equal(judge(then('2026-11-21T17:02:20Z', [{ ...itsRun, conclusion: 'failure' }])).status, 'drift', 'a run that failed is an answer too')
+  assert.equal(judge(then('2026-11-21T17:02:20Z', [{ ...itsRun, created: '2026-11-21T17:01:50Z' }])).status, 'drift', 'GitHub stamps the run\'s end a little after it starts the publisher: within a minute counts')
+  // No answer: a run skipped whole (another ci run's, one that did not pass), a run begun before ci passed (the
+  // commit before's), and a web run, which says nothing about the downloads.
+  assert.equal(judge(then('2026-11-21T17:02:20Z', [{ ...itsRun, conclusion: 'skipped' }])).status, 'settling')
+  assert.equal(judge(then('2026-11-21T17:02:20Z', [{ ...itsRun, created: '2026-11-21T17:00:52Z' }])).status, 'settling')
+  assert.equal(judge(then('2026-11-21T17:02:20Z', [{ ...itsRun, workflow: 'web' }])).status, 'settling')
   const later = judge(then(at('17:30')))
   assert.equal(later.status, 'drift')
   const required = IDS.filter((id) => !(c.BEST_EFFORT as string[]).includes(id))
@@ -149,27 +166,30 @@ test('behind is not drift while something can still mend it: a publisher\'s run 
   }
   assert.equal(behindRelease([{ workflow: 'current', created: at('17:10'), sha: C2 }]).status, 'settling')
   assert.ok(behindRelease([{ workflow: 'current', created: at('17:10'), sha: C2 }]).waiting.every((w) => w.endsWith('(a current run has not ended)')))
-  assert.equal(behindRelease([{ workflow: 'current', created: at('15:01'), sha: C2 }]).status, 'settling', '179 minutes: still a run')
-  assert.equal(behindRelease([{ workflow: 'current', created: at('15:00'), sha: C2 }]).status, 'drift', '180 minutes: a run that hung mends nothing')
+  // A run's age is counted from its creation, its wait for runners included: its jobs' limits and three hours.
+  assert.equal(behindRelease([{ workflow: 'current', created: at('12:36'), sha: C2 }]).status, 'settling', '324 minutes: still a run')
+  assert.equal(behindRelease([{ workflow: 'current', created: at('12:35'), sha: C2 }]).status, 'drift', '325 minutes (145 of jobs, 180 of waiting): a run that hung mends nothing')
   assert.equal(behindRelease([{ workflow: 'web', created: at('17:55'), sha: C2 }]).status, 'drift', 'a web run does not publish the downloads')
   assert.equal(behindRelease([{ workflow: 'ci', created: at('17:55'), sha: C3 }]).status, 'drift', 'the downloads do not wait for main\'s tip')
 
   const behindWeb = (over: Partial<Facts>): Verdict => judge({ ...inSync(), web: { stamp: stampOf(C1), probe: cacheOf(C1) }, served: at('16:00'), ...over })
   assert.equal(behindWeb({}).status, 'drift')
-  assert.equal(behindWeb({ runs: [{ workflow: 'web', created: at('17:16'), sha: C2 }] }).status, 'settling', '44 minutes')
-  assert.equal(behindWeb({ runs: [{ workflow: 'web', created: at('17:15'), sha: C2 }] }).status, 'drift', '45 minutes')
+  assert.equal(behindWeb({ runs: [{ workflow: 'web', created: at('17:29'), sha: C2 }] }).status, 'settling', '31 minutes, as a web run waited for its runner on 21 November')
+  assert.equal(behindWeb({ runs: [{ workflow: 'web', created: at('14:26'), sha: C2 }] }).status, 'settling', '214 minutes')
+  assert.equal(behindWeb({ runs: [{ workflow: 'web', created: at('14:25'), sha: C2 }] }).status, 'drift', '215 minutes (35 of jobs, 180 of waiting)')
   assert.equal(behindWeb({ runs: [{ workflow: 'current', created: at('17:55'), sha: C2 }] }).status, 'drift', 'a current run does not publish the web copy')
   // The host may serve the copy before for ten minutes after a publish: fifteen are allowed.
   const served = behindWeb({ served: at('17:46') })
   assert.equal(served.status, 'settling')
-  assert.match(served.waiting[0], /\(a web run ended 14 min ago, and the host may serve the copy before for ten\)$/)
+  assert.match(served.waiting[0], /\(a web run published 14 min ago, and the host may serve the copy before for ten\)$/)
   assert.equal(behindWeb({ served: at('17:45') }).status, 'drift')
   assert.equal(behindWeb({ served: null }).status, 'drift')
   // web.yml publishes main's tip alone, so while ci runs on a newer commit the web copy waits for that one.
   const tip = behindWeb({ runs: [{ workflow: 'ci', created: at('17:30'), sha: C3 }] })
   assert.equal(tip.status, 'settling')
   assert.match(tip.waiting[0], new RegExp(`\\(ci is still running on ${C3.slice(0, 7)}, and the web copy waits for main's tip\\)$`))
-  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('16:20'), sha: C3 }] }).status, 'drift', '100 minutes: that ci hung')
+  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('13:31'), sha: C3 }] }).status, 'settling', '269 minutes')
+  assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('13:30'), sha: C3 }] }).status, 'drift', '270 minutes (90 of jobs, 180 of waiting): that ci hung')
   assert.equal(behindWeb({ runs: [{ workflow: 'ci', created: at('17:30'), sha: C2 }] }).status, 'drift', 'a second ci run on the very commit is not a newer one')
   // Both behind, one on its way: red for the other.
   const release = releaseAt(C1)
@@ -182,6 +202,12 @@ test('behind is not drift while something can still mend it: a publisher\'s run 
   const fresh = judge({ ...inSync(), now: at('17:09'), web: { stamp: stampOf(C1), probe: cacheOf(C1) }, served: at('16:00'), release, media: mediaOf(release) })
   assert.equal(fresh.status, 'settling')
   assert.equal(judge({ ...inSync(), now: at('17:10'), web: { stamp: stampOf(C1), probe: cacheOf(C1) }, served: at('16:00'), release, media: mediaOf(release) }).status, 'drift', 'ten minutes with no run begun')
+  // "Just after" ends for each publisher on its own, when a run of it begun since ci passed has ended.
+  const one = judge({ ...inSync(), now: at('17:09'), web: { stamp: stampOf(C1), probe: cacheOf(C1) }, served: at('16:00'), release, media: mediaOf(release), ended: [{ workflow: 'web', created: at('17:00'), conclusion: 'failure' }] })
+  assert.equal(one.status, 'drift')
+  assert.equal(one.problems.length, 1)
+  assert.match(one.problems[0], /^the web copy is built from /)
+  assert.ok(one.waiting.length > 0 && one.waiting.every((w) => w.endsWith('(ci passed 9 min ago)')), 'the downloads are still on their way')
 })
 
 test('a web copy without its stamp, or whose build.txt and build.json name two builds, is behind; a missing release too', () => {
@@ -224,11 +250,21 @@ test('inside the release: one required target behind is red and named; the iOS b
   assert.match(under.waiting[0], /^a publish is under way or stopped half way \(current\.next\.json is on the release\) \(a current run has not ended\)$/)
   assert.equal(judge({ ...inSync(), release: staged }).status, 'drift', 'no run: the publish stopped half way')
 
+  // The tag somewhere the record does not say (moved by hand): red. The release already holds the commit, so a run
+  // by hand builds nothing without its "force", and the line says so.
   const tagBehind = { ...releaseAt(C2), tag: C1 }
   const t = judge({ ...inSync(), release: tagBehind })
   assert.equal(t.status, 'drift')
-  assert.deepEqual(t.problems, [`the tag current is at ${C1.slice(0, 7)}, and the release's record says ${C2.slice(0, 7)}: Actions > current > Run workflow, on main`])
+  assert.deepEqual(t.problems, [`the tag current is at ${C1.slice(0, 7)}, and the release's record says ${C2.slice(0, 7)}: Actions > current > Run workflow, on main, with "force" ticked (the release already holds that commit, so a run without it builds nothing)`])
   assert.deepEqual(t.rows.at(-1), ['tag current', C1, 'another commit'])
+  // The tag where the record says the publish left it (GitHub refused the move; the files went up all the same):
+  // the one disagreement a finished publish leaves on purpose. Noted, not red; the next publish tries again.
+  const leftBehind = { ...releaseAt(C2), tag: C1 }
+  leftBehind.state.tagAt = C1
+  const left = judge({ ...inSync(), release: leftBehind })
+  assert.equal(left.status, 'in-sync')
+  assert.deepEqual(left.warnings, [`the tag current is at ${C1.slice(0, 7)}, where the last publish left it: GitHub refused to move it to ${C2.slice(0, 7)} (as it is reported to when a later commit on main changed a workflow file), and the next publish tries again`])
+  assert.deepEqual(left.rows.at(-1), ['tag current', C1, 'another commit'])
   assert.match(judge({ ...inSync(), release: { ...releaseAt(C2), tag: null } }).problems[0], /^the tag current is at nothing, /)
 
   const noRecord = releaseAt(C2)
@@ -257,6 +293,39 @@ test('the bytes: a recorded file missing from the release, or there with another
   const w = judge({ ...inSync(), release: mid, runs: [{ workflow: 'current', created: at('17:40'), sha: C2 }] })
   assert.equal(w.status, 'settling')
   assert.deepEqual(w.problems, [])
+})
+
+test('a look in the middle of a publish is not red: the tag is moved first, each file is replaced under its own name, and the record is written last, so while a current run has not ended all of that is on its way', () => {
+  // As current.mjs publishes C2 over C1: the record still C1's and no staged one yet, the tag already at C2, one
+  // file already C2's, one deleted and going up, and the x86-64 image already C2's (its GUID with it).
+  const release = releaseAt(C1)
+  const now2 = releaseAt(C2)
+  release.tag = C2
+  release.assets[2] = now2.assets[2]
+  const [going] = release.assets.splice(6, 1)
+  const image = release.assets.findIndex((a) => a.name === 'crimson_noir_os.img')
+  release.assets[image] = now2.assets.find((a) => a.name === 'crimson_noir_os.img') ?? release.assets[image]
+  const facts: Facts = { ...inSync(), release, media: { ...mediaOf(release), 'uefi-x64': s.mediaGuid(C2, '') as string }, runs: [{ workflow: 'current', created: at('17:20'), sha: C2 }] }
+  const v = judge(facts)
+  assert.equal(v.status, 'settling', v.problems.join('\n'))
+  assert.deepEqual(v.problems, [])
+  assert.ok(v.waiting.every((l) => l.endsWith('(a current run has not ended)')))
+  for (const said of [
+    `the downloads are built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}`,
+    `the tag current is at ${C2.slice(0, 7)}, and the release's record says ${C1.slice(0, 7)}`,
+    `${release.assets[2].name} (${IDS[2]}) on the release is not the file its record names (size or SHA-256 differs)`,
+    `${going.name} (${IDS[6]}) is in the release's record and not on the release`,
+    `crimson_noir_os.img carries the disk GUID ${s.mediaGuid(C2, '')}, which is not the one ${C1.slice(0, 7)} bakes (${s.mediaGuid(C1, '')}): the image is not the commit its record names`,
+  ]) assert.ok(v.waiting.includes(`${said} (a current run has not ended)`), said)
+  // The same state with no run under way is a publish that died among its uploads: red, the files named as broken
+  // and the rest with the run that mends it (pick builds C2 again: the record is not C2's).
+  const dead = judge({ ...facts, runs: [] })
+  assert.equal(dead.status, 'drift')
+  assert.ok(dead.problems.includes(`${going.name} (${IDS[6]}) is in the release's record and not on the release`))
+  assert.ok(dead.problems.includes(`the tag current is at ${C2.slice(0, 7)}, and the release's record says ${C1.slice(0, 7)}: Actions > current > Run workflow, on main`))
+  // A run that only waits for its runner is under way too, and one for a pull request's dry run is never listed.
+  assert.equal(judge({ ...facts, runs: [{ workflow: 'current', created: at('17:59'), sha: C2 }] }).status, 'settling')
+  assert.equal(judge({ ...facts, runs: [{ workflow: 'web', created: at('17:59'), sha: C2 }] }).status, 'drift', 'a web run replaces no download')
 })
 
 test('the UEFI disk images say their commit themselves: the GUID in the image must be the one the recorded commit bakes; an image that could not be read is a warning', () => {
@@ -326,6 +395,8 @@ interface World {
   green: string[]
   release: { state: State | null; staged: boolean; tag: string | null; extra?: string[] } | null
   runs: Record<string, Record<string, unknown>[]>
+  /** The jobs of a web run, by its id, where a test gives them; a web run with none here published (see DEPLOYED). */
+  jobs?: Record<string, Record<string, unknown>[]>
   site: Record<string, { status: number; body: string | Buffer }>
   media: Record<string, { status: number; body: Buffer } | 'fail'>
   fail?: (path: string) => string | null
@@ -334,6 +405,14 @@ interface World {
 function world(w: Partial<World> = {}): World {
   return { history: [C1, C2], green: [C1, C2], release: { state: releaseAt(C2).state, staged: false, tag: C2 }, runs: {}, site: { 'build.txt': { status: 200, body: `${cacheOf(C2)}\n` }, 'build.json': { status: 200, body: JSON.stringify(stampOf(C2)) } }, media: {}, ...w }
 }
+
+/** A web run's jobs as GitHub lists them (read from run 44960627672 of 21 November 2026): one that published, one
+ * whose deploy job found main had moved on (the job passes, its deploy step is skipped), one whose pick found that. */
+const step = (name: string, conclusion: string) => ({ name, status: 'completed', conclusion })
+const job = (name: string, conclusion: string, steps: ReturnType<typeof step>[] = []) => ({ name, status: 'completed', conclusion, steps: [step('Set up job', 'success'), ...steps, step('Complete job', 'success')] })
+const DEPLOYED = [job('pick', 'success'), job('build', 'success'), job('deploy', 'success', [step('Still main\'s tip (an automatic run only)', 'success'), step('Run actions/deploy-pages@v4', 'success'), step('The site serves the model (its manifest and its size; a note only)', 'success')])]
+const DECLINED = [job('pick', 'success'), job('build', 'success'), job('deploy', 'success', [step('Still main\'s tip (an automatic run only)', 'success'), step('Run actions/deploy-pages@v4', 'skipped'), step('The site serves the model (its manifest and its size; a note only)', 'skipped')])]
+const MOVED_ON = [job('pick', 'success'), { name: 'build', status: 'completed', conclusion: 'skipped', steps: [] }, { name: 'deploy', status: 'completed', conclusion: 'skipped', steps: [] }]
 
 function gptWith(guid: string): Buffer {
   const hex = guid.replace(/-/g, '')
@@ -376,6 +455,8 @@ function standIns(w: World) {
     }
     k = /^actions\/workflows\/(web|current|ci)\.yml\/runs\?per_page=30$/.exec(path)
     if (k) return ok({ workflow_runs: w.runs[k[1]] ?? [] })
+    k = /^actions\/runs\/(\d+)\/jobs\?per_page=30$/.exec(path)
+    if (k) return ok({ total_count: 3, jobs: w.jobs?.[k[1]] ?? DEPLOYED })
     k = /^releases\/tags\/([a-z-]+)$/.exec(path)
     if (k) return w.release && k[1] === 'current' ? ok({ id: 7, tag_name: 'current', body: '', assets: assets() }) : missing
     if (path === 'releases/assets/1' || path === 'releases/assets/2') return ok(JSON.stringify(w.release?.state))
@@ -407,18 +488,23 @@ test('gather reads the newest green commit, the site past every cache, the relea
   const w = world({
     media: bothImages(C2),
     runs: {
-      web: [{ status: 'completed', conclusion: 'skipped', head_branch: 'main', event: 'workflow_run', head_sha: C2, updated_at: at('17:20') }, { status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C2, updated_at: at('17:05') }, { status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C1, updated_at: at('12:00') }],
+      web: [
+        { id: 96, status: 'completed', conclusion: 'skipped', head_branch: 'main', event: 'workflow_run', head_sha: C2, created_at: at('17:19'), updated_at: at('17:20') },
+        { id: 95, status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C2, run_started_at: at('17:01'), created_at: at('17:01'), updated_at: at('17:05') },
+        { id: 94, status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C1, created_at: at('11:58'), updated_at: at('12:00') },
+        { id: 93, status: 'completed', conclusion: 'success', head_branch: 'claude/thread', event: 'pull_request', head_sha: commitOf(9), created_at: at('17:30'), updated_at: at('17:31') },
+      ],
       current: [
         { status: 'in_progress', head_branch: 'claude/thread', event: 'pull_request', head_sha: commitOf(9), run_started_at: at('17:50') },
         { status: 'queued', head_branch: 'main', event: 'workflow_run', head_sha: C2, created_at: at('17:40') },
         { status: 'in_progress', head_branch: 'main', event: 'workflow_dispatch', head_sha: C2, run_started_at: at('17:45'), created_at: at('17:44') },
-        { status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C1 },
+        { status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C1, created_at: at('16:10') },
       ],
       ci: [{ status: 'in_progress', head_branch: 'main', event: 'push', head_sha: C3, run_started_at: at('17:55') }, { status: 'in_progress', head_branch: 'claude/thread', event: 'push', head_sha: commitOf(9), run_started_at: at('17:56') }],
     },
   })
   const io = standIns(w)
-  const f: Facts = await s.gather({ repo: REPO, now: at('18:00') }, io.gh, io.get)
+  const f: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, io.gh, io.get)
   assert.deepEqual(f.green, { sha: C2, ci: `https://ci/${C2.slice(0, 7)}`, at: at('17:00') })
   assert.equal(f.tip, C2)
   assert.deepEqual(f.web, { stamp: stampOf(C2), probe: cacheOf(C2) })
@@ -435,7 +521,16 @@ test('gather reads the newest green commit, the site past every cache, the relea
     { workflow: 'current', created: at('17:45'), sha: C2 },
     { workflow: 'ci', created: at('17:55'), sha: C3 },
   ])
-  assert.equal(f.served, at('17:05'), 'the last web run that passed, not the skipped one after it')
+  assert.equal(f.served, at('17:05'), 'the last web run that published, not the skipped one after it')
+  assert.deepEqual(io.asked.filter((x) => x.includes('/jobs')), ['actions/runs/95/jobs?per_page=30'], 'only a run of the last hour that passed is asked for its jobs')
+  // The publishers' runs on main that have ended, newest first, each with when it began and how it ended (ci's are
+  // not kept: only a publisher's own run answers for it).
+  assert.deepEqual(f.ended, [
+    { workflow: 'web', created: at('17:19'), conclusion: 'skipped' },
+    { workflow: 'web', created: at('17:01'), conclusion: 'success' },
+    { workflow: 'web', created: at('11:58'), conclusion: 'success' },
+    { workflow: 'current', created: at('16:10'), conclusion: 'success' },
+  ])
   assert.equal(f.runsError, undefined)
   assert.equal(s.verdict(f).status, 'in-sync')
   // The site is asked under an address no cache has seen, the images for their first sectors alone.
@@ -452,7 +547,7 @@ test('gather reads the newest green commit, the site past every cache, the relea
 test('gather keeps each failure where it belongs: a site without a stamp, a site that fails, a release that cannot be read, images that cannot be read, runs that cannot be listed', async () => {
   // No build.json yet (a copy published before the stamp): null, and the verdict calls the web copy behind.
   const before = standIns(world({ site: { 'build.txt': { status: 200, body: `${cacheOf(C1)}\n` } }, media: bothImages(C2) }))
-  const f1: Facts = await s.gather({ repo: REPO, now: at('18:00') }, before.gh, before.get)
+  const f1: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, before.gh, before.get)
   assert.deepEqual(f1.web, { stamp: null, probe: cacheOf(C1) })
   assert.equal(s.verdict(f1).status, 'drift')
 
@@ -467,60 +562,154 @@ test('gather keeps each failure where it belongs: a site without a stamp, a site
     [{ 'build.txt': { status: 200, body: `${cacheOf(C2)}\n` }, 'build.json': { status: 200, body: 'null' } }, /build\.json names no commit$/],
   ] as [World['site'], RegExp][]) {
     const io = standIns(world({ site, media: bothImages(C2) }))
-    const f: Facts = await s.gather({ repo: REPO, now: at('18:00') }, io.gh, io.get)
+    const f: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, io.gh, io.get)
     assert.ok('error' in f.web, JSON.stringify(site))
     assert.match(f.web.error, said)
     assert.equal(s.verdict(f).status, 'unknown')
   }
   const down = standIns(world())
-  const f2: Facts = await s.gather({ repo: REPO, now: at('18:00') }, down.gh, async () => { throw new Error('getaddrinfo ENOTFOUND') })
+  const f2: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, down.gh, async () => { throw new Error('getaddrinfo ENOTFOUND') })
   assert.deepEqual(f2.web, { error: `${SITE} could not be read (getaddrinfo ENOTFOUND)` })
   assert.deepEqual(f2.media, { 'uefi-x64': null, 'uefi-arm64': null }, 'the images too: a warning each, were the rest readable')
 
   // The release: none at all; files without a record; GitHub not answering.
   const none = standIns(world({ release: null }))
-  const f3: Facts = await s.gather({ repo: REPO, now: at('18:00') }, none.gh, none.get)
+  const f3: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, none.gh, none.get)
   assert.equal(f3.release, null)
   assert.deepEqual(f3.media, {})
   const bare = standIns(world({ release: { state: null, staged: false, tag: C2, extra: ['orphan.bin'] } }))
-  const f4: Facts = await s.gather({ repo: REPO, now: at('18:00') }, bare.gh, bare.get)
+  const f4: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, bare.gh, bare.get)
   assert.ok(f4.release && 'error' in f4.release)
   assert.match(f4.release.error, /holds files but neither current\.json nor current\.next\.json/)
   const refused = standIns(world({ fail: (p) => (p.startsWith('releases/tags/') ? 'gh: Server Error (HTTP 500)' : null) }))
-  const f5: Facts = await s.gather({ repo: REPO, now: at('18:00') }, refused.gh, refused.get)
+  const f5: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, refused.gh, refused.get)
   assert.ok(f5.release && 'error' in f5.release)
   assert.equal(s.verdict(f5).status, 'unknown')
   // A staged record is the newer of the two, and is said.
   const staged = standIns(world({ release: { state: releaseAt(C2).state, staged: true, tag: C2 }, media: bothImages(C2) }))
-  const f6: Facts = await s.gather({ repo: REPO, now: at('18:00') }, staged.gh, staged.get)
+  const f6: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, staged.gh, staged.get)
   assert.ok(f6.release && !('error' in f6.release) && f6.release.staged)
 
   // The newest green commit: GitHub not answering is an error kept in its place, nothing green is null.
   const mute = standIns(world({ fail: (p) => (p.startsWith('actions/workflows/ci.yml/runs?branch=main') ? 'gh: Bad Gateway (HTTP 502)' : null), media: bothImages(C2) }))
-  const f7: Facts = await s.gather({ repo: REPO, now: at('18:00') }, mute.gh, mute.get)
+  const f7: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, mute.gh, mute.get)
   assert.ok(f7.green && 'error' in f7.green)
   assert.match(f7.green.error, /HTTP 502/)
   const red = standIns(world({ green: [], media: bothImages(C2) }))
-  assert.equal(((await s.gather({ repo: REPO, now: at('18:00') }, red.gh, red.get)) as Facts).green, null)
+  assert.equal(((await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, red.gh, red.get)) as Facts).green, null)
 
   // An image that answers 404, a page, or nothing: null, and a warning in the verdict, never red on its own.
   const odd = standIns(world({ media: { 'crimson_noir_os.img': { status: 404, body: Buffer.alloc(0) }, 'crimson_noir_os-aarch64.img': 'fail' } }))
-  const f8: Facts = await s.gather({ repo: REPO, now: at('18:00') }, odd.gh, odd.get)
+  const f8: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, odd.gh, odd.get)
   assert.deepEqual(f8.media, { 'uefi-x64': null, 'uefi-arm64': null })
   const v8: Verdict = s.verdict(f8)
   assert.equal(v8.status, 'in-sync')
   assert.equal(v8.warnings.length, 2)
   const page = standIns(world({ media: { ...bothImages(C2), 'crimson_noir_os.img': { status: 200, body: Buffer.from('<html>') } } }))
-  assert.equal(((await s.gather({ repo: REPO, now: at('18:00') }, page.gh, page.get)) as Facts).media['uefi-x64'], null)
+  assert.equal(((await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, page.gh, page.get)) as Facts).media['uefi-x64'], null)
 
   // Runs that cannot be listed: nothing counts as on its way, and the report says why "behind" reads as drift.
   const blind = standIns(world({ release: { state: releaseAt(C1).state, staged: false, tag: C1 }, media: bothImages(C1), fail: (p) => (/^actions\/workflows\/[a-z]+\.yml\/runs\?per_page=30$/.test(p) ? 'gh: rate limit (HTTP 403)' : null) }))
-  const f9: Facts = await s.gather({ repo: REPO, now: at('18:00') }, blind.gh, blind.get)
+  const f9: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, blind.gh, blind.get)
   assert.match(f9.runsError ?? '', /rate limit/)
   assert.deepEqual(f9.runs, [])
   const v9: Verdict = s.verdict(f9)
   assert.equal(v9.status, 'drift')
   assert.ok(s.report(v9, f9).lines.some((l: string) => /^::warning::the runs under way could not be listed \(.*rate limit.*\), so nothing counts as on its way$/.test(l)))
+})
+
+test('a read of GitHub that got no answer is made again, three times in all, so one lost call is neither "unknown" nor a red; an answer GitHub gave is final', async () => {
+  // Each of the look's reads fails once with a 502, then answers: the same verdict as with no failure at all.
+  const paths: string[] = []
+  const flaky = (w: World) => {
+    const seen = new Set<string>()
+    w.fail = (path) => { paths.push(path); if (seen.has(path)) return null; seen.add(path); return 'gh: Bad Gateway (HTTP 502)' }
+    return standIns(w)
+  }
+  const once = flaky(world({ media: bothImages(C2) }))
+  const f: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, once.gh, once.get)
+  assert.equal(f.runsError, undefined)
+  assert.equal(s.verdict(f).status, 'in-sync')
+  for (const path of ['git/ref/heads/main', 'releases/tags/current', 'git/ref/tags/current', 'actions/workflows/web.yml/runs?per_page=30', 'actions/workflows/current.yml/runs?per_page=30', 'actions/workflows/ci.yml/runs?per_page=30']) {
+    assert.equal(paths.filter((x) => x === path).length, 2, `${path}: asked again once`)
+  }
+  // A build under way and one lost call to list the runs: still "settling", not a red.
+  const under = flaky(world({ release: { state: releaseAt(C1).state, staged: false, tag: C1 }, media: bothImages(C1), runs: { current: [{ status: 'in_progress', head_branch: 'main', event: 'workflow_run', head_sha: C2, run_started_at: at('17:40') }] } }))
+  const g: Facts = await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, under.gh, under.get)
+  assert.equal(s.verdict(g).status, 'settling')
+
+  // Three failures in a row are the answer "could not look"; a 4xx is GitHub's answer and is not asked for again.
+  const calls: string[][] = []
+  const dead = s.patient((argv: string[]) => { calls.push(argv); return { ok: false, out: '', err: 'connection reset' } }, { wait: 0 })
+  assert.deepEqual(dead(['api', 'x']), { ok: false, out: '', err: 'connection reset' })
+  assert.equal(calls.length, 3)
+  calls.length = 0
+  const told = s.patient((argv: string[]) => { calls.push(argv); return { ok: false, out: '', err: 'gh: Not Found (HTTP 404)' } }, { wait: 0 })
+  assert.equal(told(['api', 'x']).ok, false)
+  assert.equal(calls.length, 1)
+  calls.length = 0
+  const fine = s.patient((argv: string[]) => { calls.push(argv); return { ok: true, out: '{}', err: '' } }, { wait: 0 })
+  assert.equal(fine(['api', 'x']).ok, true)
+  assert.equal(calls.length, 1)
+})
+
+test('the look a publisher\'s end starts sees that publisher\'s answer: a current run that ended green having built nothing is red at once, read from GitHub\'s own lists', async () => {
+  // ci passed on C2 at 17:00 (the stand-in's time for every ci run); the release stays at C1; the current run that
+  // pass started began at 17:00 and has ended, green. The web copy took C2.
+  const ended = { status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C2, run_started_at: at('17:00'), created_at: at('17:00'), updated_at: at('17:01') }
+  const w = world({ release: { state: releaseAt(C1).state, staged: false, tag: C1 }, media: bothImages(C1), runs: { current: [ended] } })
+  const io = standIns(w)
+  const f: Facts = await s.gather({ repo: REPO, now: at('17:02'), wait: 0 }, io.gh, io.get)
+  assert.deepEqual(f.ended, [{ workflow: 'current', created: at('17:00'), conclusion: 'success' }])
+  const v: Verdict = s.verdict(f)
+  assert.equal(v.status, 'drift')
+  assert.match(v.problems[0], /^the downloads are built from .*: Actions > current > Run workflow, on main$/)
+  // Before that run shows in GitHub's list, the same look is "settling": the publisher may not have begun.
+  const early = standIns(world({ release: { state: releaseAt(C1).state, staged: false, tag: C1 }, media: bothImages(C1) }))
+  assert.equal(s.verdict(await s.gather({ repo: REPO, now: at('17:02'), wait: 0 }, early.gh, early.get)).status, 'settling')
+})
+
+test('a web run that passed is a publish only when its deploy step ran: one that found main had moved on published nothing, and the look its end starts is red, not "served minutes ago"', async () => {
+  const run = (id: number, begun: string, ended: string) => ({ id, status: 'completed', conclusion: 'success', head_branch: 'main', event: 'workflow_run', head_sha: C2, run_started_at: at(begun), created_at: at(begun), updated_at: at(ended) })
+  const behind = { site: { 'build.txt': { status: 200, body: `${cacheOf(C1)}\n` }, 'build.json': { status: 200, body: JSON.stringify(stampOf(C1)) } }, media: bothImages(C2) }
+  // ci passed on C2 at 17:00. Its web run waited for a runner, found main at C3 (where ci failed), published nothing
+  // and ended green at 17:30. Nothing is on its way: red at the look that run's end starts, with why a run by hand
+  // would not mend it.
+  for (const jobs of [MOVED_ON, DECLINED]) {
+    const w = world({ ...behind, history: [C1, C2, C3], runs: { web: [run(97, '17:00', '17:30')] }, jobs: { 97: jobs } })
+    const io = standIns(w)
+    const f: Facts = await s.gather({ repo: REPO, now: at('17:31'), wait: 0 }, io.gh, io.get)
+    assert.equal(f.served, null)
+    const v: Verdict = s.verdict(f)
+    assert.equal(v.status, 'drift')
+    assert.deepEqual(v.problems, [`the web copy is built from ${C1.slice(0, 7)}, not ${C2.slice(0, 7)}: ci has not passed on main's tip (${C3.slice(0, 7)}), the one commit web.yml publishes, so the web copy follows when ci passes there (a web run by hand would publish that tip untested)`])
+  }
+  // The same run, having published: the host may serve the copy before for ten minutes, so that settles.
+  const did = standIns(world({ ...behind, runs: { web: [run(97, '17:00', '17:30')] } }))
+  const g: Facts = await s.gather({ repo: REPO, now: at('17:31'), wait: 0 }, did.gh, did.get)
+  assert.equal(g.served, at('17:30'))
+  const settled: Verdict = s.verdict(g)
+  assert.equal(settled.status, 'settling')
+  assert.match(settled.waiting[0], /\(a web run published 1 min ago, and the host may serve the copy before for ten\)$/)
+  // A run that published nothing after one that did: the earlier one's time. Runs that ended over an hour ago are
+  // served everywhere by now, and are not asked for their jobs.
+  const two = standIns(world({ ...behind, runs: { web: [run(99, '17:40', '17:50'), run(98, '17:10', '17:20'), run(90, '15:00', '15:10')] }, jobs: { 99: DECLINED } }))
+  assert.equal(((await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, two.gh, two.get)) as Facts).served, at('17:20'))
+  assert.deepEqual(two.asked.filter((x) => x.includes('/jobs')), ['actions/runs/99/jobs?per_page=30', 'actions/runs/98/jobs?per_page=30'])
+  const old = standIns(world({ ...behind, runs: { web: [run(90, '15:00', '15:10')] } }))
+  assert.equal(((await s.gather({ repo: REPO, now: at('18:00'), wait: 0 }, old.gh, old.get)) as Facts).served, null)
+  assert.deepEqual(old.asked.filter((x) => x.includes('/jobs')), [])
+  // Jobs that cannot be read are runs that cannot be read: said, and nothing counts as on its way.
+  const mute = standIns(world({ ...behind, runs: { web: [run(97, '17:00', '17:30')] }, fail: (p) => (p.includes('/jobs') ? 'gh: Server Error (HTTP 500)' : null) }))
+  const h: Facts = await s.gather({ repo: REPO, now: at('17:31'), wait: 0 }, mute.gh, mute.get)
+  assert.match(h.runsError ?? '', /actions\/runs\/97\/jobs: gh: Server Error \(HTTP 500\)/)
+  assert.equal(h.served, null)
+
+  // The names this reads are web.yml's: a job called deploy, and in it the Pages action as a step with no name of
+  // its own (GitHub then calls it "Run actions/deploy-pages@v4").
+  const web = read('.github/workflows/web.yml')
+  assert.match(web, /^ {2}deploy:\n {4}needs: \[pick, build\]$/m)
+  assert.match(web, /\n {6}- id: deployment\n {8}if: steps\.tip\.outputs\.deploy == 'true'\n {8}uses: actions\/deploy-pages@v\d+\n/)
 })
 
 test('the report and the command line: one line each in the log, red for wrong, a table for the summary; exit 0 in sync or settling, 1 for drift, 2 for unknown; --report-only never red for what it finds', async () => {
@@ -630,8 +819,9 @@ test('sync.mjs loads from a checkout of tools/ alone, as the workflow checks out
   const tool = read('tools/build/sync.mjs')
   // Every call to GitHub in the tool itself is a plain `gh api <path>`: no method, no field, no `gh release`.
   assert.doesNotMatch(tool, /'-X'|'-f'|'-F'|'--method'|\['release'|\['workflow'|\['run'/)
-  assert.equal((tool.match(/gh\(\[/g) ?? []).length, 1, 'one call of its own, the runs; the rest go through current.mjs\'s readers')
+  assert.equal((tool.match(/gh\(\[/g) ?? []).length, 2, 'two calls of its own, a workflow\'s runs and a run\'s jobs; the rest go through current.mjs\'s readers')
   assert.match(tool, /const r = gh\(\['api', `repos\/\$\{repo\}\/actions\/workflows\/\$\{file\}\/runs\?per_page=30`\]\)/)
+  assert.match(tool, /const r = gh\(\['api', `repos\/\$\{repo\}\/actions\/runs\/\$\{run\.id\}\/jobs\?per_page=30`\]\)/)
   // And of current.mjs it takes the readers alone, never publish or the tag's movers.
   const taken = /import \{ ([^}]+) \} from '\.\/current\.mjs'/.exec(tool)?.[1].split(', ') ?? []
   assert.deepEqual(taken, ['BEST_EFFORT', 'STAGED', 'TAG', 'choose', 'getRelease', 'mainTip', 'readState', 'realGh', 'tagAt'])
@@ -651,7 +841,19 @@ test('the workflow: after each run of web or current on main, every hour, by han
   // Red for what it finds everywhere but on a pull request, whose run reports.
   assert.match(jobs, /REPORT_ONLY: \$\{\{ github\.event_name == 'pull_request' \}\}\n {8}run: \|\n {10}args=\(check --summary "\$GITHUB_STEP_SUMMARY"\)\n {10}if \[ "\$REPORT_ONLY" = true \]; then args\+=\(--report-only\); fi\n {10}node tools\/build\/sync\.mjs "\$\{args\[@\]\}"\n$/)
   assert.doesNotMatch(jobs, /continue-on-error|\|\| true|\|\| exit 0/, 'nothing swallows its exit')
-  assert.match(WORKFLOW, /^concurrency:\n {2}group: \$\{\{ github\.event_name == 'pull_request' && format\('sync-pr-\{0\}', github\.event\.pull_request\.number\) \|\| 'sync' \}\}\n {2}cancel-in-progress: \$\{\{ github\.event_name == 'pull_request' \}\}$/m)
+  // One look at a time. A run whose job will be skipped (a publisher's run that was skipped) takes a group of its
+  // own, as the two publishers' no-op runs do: GitHub takes the group before it reads the job's condition, and a run
+  // that looks at nothing must not take a waiting look's place.
+  assert.ok(WORKFLOW.includes([
+    'concurrency:',
+    '  group: >-',
+    '    ${{ github.event_name == \'pull_request\' && format(\'sync-pr-{0}\', github.event.pull_request.number)',
+    '    || (github.event_name == \'workflow_run\' && github.event.workflow_run.conclusion == \'skipped\') && format(\'sync-skip-{0}\', github.run_id)',
+    '    || \'sync\' }}',
+    '  cancel-in-progress: ${{ github.event_name == \'pull_request\' }}',
+    '',
+  ].join('\n')))
+  assert.match(jobs, /github\.event\.workflow_run\.conclusion != 'skipped'/, 'the same runs the job\'s condition passes over')
   for (const line of WORKFLOW.split('\n').filter((l) => /^\s*(- )?uses:/.test(l))) assert.match(line, /uses: actions\/[a-z-]+@v\d+$/, line)
   assert.doesNotMatch(WORKFLOW, /persist-credentials: true/)
   // The two publishers it follows are the two that publish: their names are their workflows' names.

@@ -19,13 +19,17 @@
  *   is; and the runs of web, current and ci on main that have not ended.
  * - The verdict (`verdict`, a pure function over those facts):
  *   `in-sync`  the web copy, the release's record, every required target, the tag and the bytes all name that commit;
- *   `settling` something is behind, and something can still mend it: ci passed on that commit a few minutes ago, a
- *              publisher's run has not ended (and is not older than a run can be), the web copy was published
- *              minutes ago (the host may serve the copy before for ten minutes), or, for the web copy alone, ci
- *              is still running on a newer commit (web.yml publishes main's tip alone, so it waits for that one);
+ *   `settling` something is behind, and something can still mend it: ci passed on that commit a few minutes ago and
+ *              no run of that publisher begun since has ended, a publisher's run has not ended (and is not older
+ *              than a run can be, its wait for runners included), the web copy was published minutes ago (the host
+ *              may serve the copy before for ten minutes), or, for the web copy alone, ci is still running on a
+ *              newer commit (web.yml publishes main's tip alone, so it waits for that one). While a current run
+ *              has not ended, files that are not yet the ones the record names are behind too: a publish moves the
+ *              tag, then replaces each file under its name, and writes the record last;
  *   `drift`    something is behind and nothing is on its way: exit 1, one error line for each thing, each with the
  *              commit it is at and the workflow to run by hand;
- *   `unknown`  a source could not be read after three tries: exit 2, since "could not look" is not "in sync".
+ *   `unknown`  a source could not be read after three tries (every read of GitHub and of the site is made again
+ *              when it got no answer): exit 2, since "could not look" is not "in sync".
  *   The iOS build is best effort everywhere (build-matrix.yml, current.mjs BEST_EFFORT): behind, it is a warning.
  *   `--report-only` prints the same and exits 0 (a pull request that changes this tool: what is published is not
  *   the pull request's doing).
@@ -43,12 +47,15 @@ import { IDS } from './matrix.mjs'
 
 /**
  * How long each thing may take, in minutes, before "behind" stops being "on its way": `start` after ci passed (the
- * two publishers are started by that and may wait for a runner); `web` and `current` for a run of each that has not
- * ended (web.yml's jobs are limited to 35 minutes in all, current.yml's builds to about two hours, and both can wait
- * for runners first); `served` after a web run ended (GitHub Pages lets an answer be kept ten minutes); `ci` for a ci
- * run on a newer commit that has not ended (its browser job alone is limited to 45 minutes).
+ * two publishers are started by that; it ends for a publisher as soon as a run of it begun since has ended);
+ * `web`, `current` and `ci` are what the jobs of one run may take once they have runners (web.yml's are limited to
+ * 35 minutes in all; current.yml's to 145: its pick, the builds' 90 and the publish's 45; ci.yml's longest, the
+ * browser and Kani jobs, to 90 each), and `queued` is how long a run may wait for runners on top of that. GitHub
+ * gives a run's creation alone, not when its jobs got runners, so a run that has not ended counts as on its way
+ * while it is younger than the two together (on 21 November 2026 a web run waited 29 minutes for 2 of work).
+ * `served` is after a web run that published ended (GitHub Pages lets an answer be kept ten minutes).
  */
-export const GRACE = Object.freeze({ start: 10, web: 45, current: 180, served: 15, ci: 100 })
+export const GRACE = Object.freeze({ start: 10, web: 35, current: 145, served: 15, ci: 90, queued: 180 })
 
 /**
  * The UEFI disk images and the word crimson_noir_os/tools/build-image.sh puts before the commit for the image's GUIDs
@@ -97,7 +104,8 @@ export function siteOf(repo) {
  *            points or null, assets: [{ name, size, digest }] }, null when there is no release, or { error }
  *   media    { <target>: the image's disk GUID, or null when it could not be read }
  *   runs     [{ workflow: 'web' | 'current' | 'ci', created, sha }] runs on main that have not ended
- *   served   ISO time the last web run that passed ended, or null
+ *   ended    [{ workflow: 'web' | 'current', created, conclusion }] the newest runs on main of each that have
+ *   served   ISO time the last web run that published ended (see `published`), or null
  * Returns { status, problems, waiting, warnings, rows }: `rows` is [thing, commit, state] for the summary.
  */
 export function verdict(facts, grace = GRACE) {
@@ -112,6 +120,10 @@ export function verdict(facts, grace = GRACE) {
   const behind = { web: [], current: [] }
   const problems = []
   const warnings = []
+  const age = (iso) => minutes(facts.now, iso)
+  // A run that has not ended is on its way while it is younger than its jobs' limits and the wait for runners.
+  const running = (workflow, limit, which = () => true) => (facts.runs ?? []).find((r) => r.workflow === workflow && which(r) && age(r.created) < limit + grace.queued)
+  const publishing = Boolean(running('current', grace.current))
   const rows = [['main, newest commit ci passed on', G, `ci passed ${facts.green.at || 'at a time GitHub did not give'}`]]
 
   // The web copy: its stamp names the commit, and the build the host names is the stamp's.
@@ -129,6 +141,7 @@ export function verdict(facts, grace = GRACE) {
 
   // The release: its record, every required target, the tag, and the bytes GitHub holds under each recorded name.
   const rel = facts.release
+  let held = false
   if (!rel) {
     behind.current.push('there is no `current` release')
     rows.push(['downloads (the current release)', '', 'no release'])
@@ -148,16 +161,26 @@ export function verdict(facts, grace = GRACE) {
       if (best) warnings.push(`${said} (best effort: it never turns a publish red)`)
       else behind.current.push(said)
     }
-    if (s.commit && rel.tag !== s.commit) behind.current.push(`the tag ${TAG} is at ${short(rel.tag)}, and the release's record says ${short(s.commit)}`)
+    // A publish moves the tag first, then replaces each file under its own name (the old one deleted, the new one
+    // uploaded), and writes the record last (staged for the seconds that takes). So while a current run has not
+    // ended, or a staged record is there, the tag, the files and the record disagree by design: behind, and mended
+    // when that publish ends. With no publish under way they must agree, and a file that is not the one the record
+    // names is broken, not behind.
+    const midway = rel.staged || publishing
+    const broken = midway ? behind.current : problems
+    if (s.commit && rel.tag !== s.commit) {
+      // The one state a finished publish leaves on purpose: GitHub refused to move the tag, the files went up all
+      // the same, and the record says where the tag stayed. Noted; the next publish tries again.
+      if (!midway && s.tagAt && s.tagAt === rel.tag) warnings.push(`the tag ${TAG} is at ${short(rel.tag)}, where the last publish left it: GitHub refused to move it to ${short(s.commit)} (as it is reported to when a later commit on main changed a workflow file), and the next publish tries again`)
+      else behind.current.push(`the tag ${TAG} is at ${short(rel.tag)}, and the release's record says ${short(s.commit)}`)
+    }
     rows.push([`tag ${TAG}`, rel.tag ?? '', rel.tag && rel.tag === G ? 'same commit' : 'another commit'])
-    // While a publish replaces files one at a time the names and the record disagree by design; once the record is
-    // whole (no staged one), every recorded file must be there as recorded. That is broken, not behind.
     if (!rel.staged) {
       const have = new Map(rel.assets.map((a) => [a.name, a]))
       for (const id of IDS) for (const f of s.targets[id]?.files ?? []) {
         const a = have.get(f.name)
-        if (!a) problems.push(`${f.name} (${id}) is in the release's record and not on the release`)
-        else if (a.size !== f.size || (a.digest && a.digest !== `sha256:${f.sha256}`)) problems.push(`${f.name} (${id}) on the release is not the file its record names (size or SHA-256 differs)`)
+        if (!a) broken.push(`${f.name} (${id}) is in the release's record and not on the release`)
+        else if (a.size !== f.size || (a.digest && a.digest !== `sha256:${f.sha256}`)) broken.push(`${f.name} (${id}) on the release is not the file its record names (size or SHA-256 differs)`)
       }
     }
     // The disk images say their commit themselves: the GUID in the image is the recorded commit's.
@@ -166,23 +189,29 @@ export function verdict(facts, grace = GRACE) {
       if (!t) continue
       const guid = facts.media?.[id]
       if (!guid) warnings.push(`${file}: its disk GUID could not be read, so the image was not asked which commit it is`)
-      else if (guid !== mediaGuid(t.commit, arch)) problems.push(`${file} carries the disk GUID ${guid}, which is not the one ${short(t.commit)} bakes (${mediaGuid(t.commit, arch)}): the image is not the commit its record names`)
+      else if (guid !== mediaGuid(t.commit, arch)) broken.push(`${file} carries the disk GUID ${guid}, which is not the one ${short(t.commit)} bakes (${mediaGuid(t.commit, arch)}): the image is not the commit its record names`)
     }
+    // A run by hand builds nothing when the release already holds the commit for every required target (pick), so
+    // what is still behind then (the tag moved by hand, say) needs the run's "force".
+    const required = IDS.filter((id) => !BEST_EFFORT.includes(id))
+    held = !rel.staged && s.commit === G && required.every((id) => s.targets[id]?.commit === G)
   }
 
   // What can still mend "behind": ci passed moments ago, a publisher that has not ended, a publish minutes old, or
-  // (the web copy alone, while web.yml publishes main's tip alone) ci still running on a newer commit.
-  const age = (iso) => minutes(facts.now, iso)
-  const fresh = facts.green.at && age(facts.green.at) < grace.start
-  const running = (workflow, limit) => (facts.runs ?? []).find((r) => r.workflow === workflow && age(r.created) < limit)
+  // (the web copy alone, while web.yml publishes main's tip alone) ci still running on a newer commit. "Moments ago"
+  // covers the time a publisher takes to begin, so it ends for a publisher once a run of it begun since ci passed
+  // has ended: that run was its answer (a run skipped whole was for another ci run, one that did not pass), and a
+  // look started by that very run's end must not read "on its way" where nothing is.
+  const answered = (workflow) => (facts.ended ?? []).some((r) => r.workflow === workflow && r.conclusion !== 'skipped' && minutes(r.created, facts.green.at) > -1)
+  const fresh = (workflow) => Boolean(facts.green.at) && age(facts.green.at) < grace.start && !answered(workflow)
   const waiting = []
   const settle = (list, why) => { for (const p of list) waiting.push(`${p} (${why})`) }
   if (behind.web.length) {
     const web = running('web', grace.web)
-    const ci = (facts.runs ?? []).find((r) => r.workflow === 'ci' && r.sha !== G && age(r.created) < grace.ci)
-    if (fresh) settle(behind.web, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
+    const ci = running('ci', grace.ci, (r) => r.sha !== G)
+    if (fresh('web')) settle(behind.web, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
     else if (web) settle(behind.web, 'a web run has not ended')
-    else if (facts.served && age(facts.served) < grace.served) settle(behind.web, `a web run ended ${Math.max(0, Math.round(age(facts.served)))} min ago, and the host may serve the copy before for ten`)
+    else if (facts.served && age(facts.served) < grace.served) settle(behind.web, `a web run published ${Math.max(0, Math.round(age(facts.served)))} min ago, and the host may serve the copy before for ten`)
     else if (ci) settle(behind.web, `ci is still running on ${short(ci.sha)}, and the web copy waits for main's tip`)
     else {
       // web.yml publishes main's tip alone, by hand too: when ci has not passed on the tip, a run by hand would
@@ -194,9 +223,10 @@ export function verdict(facts, grace = GRACE) {
     }
   }
   if (behind.current.length) {
-    if (fresh) settle(behind.current, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
-    else if (running('current', grace.current)) settle(behind.current, 'a current run has not ended')
-    else for (const p of behind.current) problems.push(`${p}: Actions > current > Run workflow, on main`)
+    const mend = `Actions > current > Run workflow, on main${held ? ', with "force" ticked (the release already holds that commit, so a run without it builds nothing)' : ''}`
+    if (publishing) settle(behind.current, 'a current run has not ended')
+    else if (fresh('current')) settle(behind.current, `ci passed ${Math.max(0, Math.round(age(facts.green.at)))} min ago`)
+    else for (const p of behind.current) problems.push(`${p}: ${mend}`)
   }
   return { status: problems.length ? 'drift' : waiting.length ? 'settling' : 'in-sync', problems, waiting, warnings, rows }
 }
@@ -257,18 +287,50 @@ export async function readWeb(site, get, salt) {
   }
 }
 
+/** A pause that holds the thread, as `gh` does (it is run with spawnSync). */
+function pause(ms) { if (ms > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
+
+/**
+ * `gh`, with a call that got no answer (a lost connection, a 5xx from GitHub) made again, three times in all, a
+ * little longer apart each time. An answer GitHub gave (HTTP 4xx: no such release, no such tag) is final.
+ */
+export function patient(gh, { wait = 5000 } = {}) {
+  return (argv) => {
+    let r = gh(argv)
+    for (let i = 1; i < 3 && !r.ok && !/HTTP 4\d\d/.test(r.err); i++) {
+      pause(wait * i)
+      r = gh(argv)
+    }
+    return r
+  }
+}
+
 function runsOf(gh, repo, file) {
   const r = gh(['api', `repos/${repo}/actions/workflows/${file}/runs?per_page=30`])
   if (!r.ok) throw new Error(`gh api actions/workflows/${file}/runs: ${r.err.trim() || 'failed'}`)
   return JSON.parse(r.out).workflow_runs ?? []
 }
 
+/**
+ * Whether a web run published: its `deploy` job passed and the step that hands the copy to GitHub Pages
+ * (actions/deploy-pages, which GitHub names "Run actions/deploy-pages@v4") ran and passed in it. A web run also ends
+ * green having published nothing: its pick found main had moved on (the jobs after it are skipped), or its deploy job
+ * found that at the last moment (the job passes, the step is skipped).
+ */
+function published(gh, repo, run) {
+  const r = gh(['api', `repos/${repo}/actions/runs/${run.id}/jobs?per_page=30`])
+  if (!r.ok) throw new Error(`gh api actions/runs/${run.id}/jobs: ${r.err.trim() || 'failed'}`)
+  const deploy = (JSON.parse(r.out).jobs ?? []).find((j) => j.name === 'deploy')
+  return deploy?.conclusion === 'success' && (deploy.steps ?? []).some((step) => /actions\/deploy-pages@/.test(step.name ?? '') && step.conclusion === 'success')
+}
+
 /** Everything `verdict` judges, read now. No source's failure stops the others: each is recorded where it belongs. */
-export async function gather({ repo, site = siteOf(repo), now = new Date().toISOString() }, gh, get) {
-  const facts = { now, runs: [], served: null, media: {} }
+export async function gather({ repo, site = siteOf(repo), now = new Date().toISOString(), wait = 5000 }, once, get) {
+  const gh = patient(once, { wait })
+  const facts = { now, runs: [], ended: [], served: null, media: {} }
   try {
     facts.tip = mainTip(gh, repo)
-    facts.green = choose({ repo }, gh, facts.tip).green
+    facts.green = choose({ repo, wait }, gh, facts.tip).green
   } catch (e) { facts.green = { error: e.message } }
   facts.web = await readWeb(site, get, now)
   try {
@@ -276,7 +338,7 @@ export async function gather({ repo, site = siteOf(repo), now = new Date().toISO
     if (!release) facts.release = null
     else {
       facts.release = {
-        state: readState(gh, repo, release),
+        state: readState(gh, repo, release, { wait }),
         staged: release.assets.some((a) => a.name === STAGED),
         tag: tagAt(gh, repo, TAG),
         assets: release.assets.map(({ name, size, digest }) => ({ name, size, digest })),
@@ -290,12 +352,20 @@ export async function gather({ repo, site = siteOf(repo), now = new Date().toISO
       }
     }
   } catch (e) { facts.release = { error: e.message } }
-  // The runs that have not ended, on main alone: a pull request's dry run of current.yml publishes nothing.
+  // The runs on main alone (a pull request's dry run of current.yml publishes nothing): those that have not ended,
+  // and the newest of each publisher that have (whether a run begun since ci passed has already given its answer).
   try {
     for (const [workflow, file] of [['web', 'web.yml'], ['current', 'current.yml'], ['ci', 'ci.yml']]) {
       const runs = runsOf(gh, repo, file).filter((r) => r.head_branch === 'main' && r.event !== 'pull_request')
-      for (const r of runs) if (r.status !== 'completed') facts.runs.push({ workflow, created: r.run_started_at ?? r.created_at, sha: r.head_sha })
-      if (workflow === 'web') facts.served = runs.find((r) => r.status === 'completed' && r.conclusion === 'success')?.updated_at ?? null
+      const begun = (r) => r.run_started_at ?? r.created_at
+      for (const r of runs) if (r.status !== 'completed') facts.runs.push({ workflow, created: begun(r), sha: r.head_sha })
+      if (workflow !== 'ci') for (const r of runs.filter((x) => x.status === 'completed').slice(0, 10)) facts.ended.push({ workflow, created: begun(r), conclusion: r.conclusion ?? '' })
+      // When the web copy was last published: the newest web run of the last hour that passed and did publish (a
+      // publish older than that is served everywhere by now, so its jobs are not read).
+      if (workflow === 'web') {
+        const lately = runs.filter((r) => r.status === 'completed' && r.conclusion === 'success' && minutes(now, r.updated_at) < 60).slice(0, 3)
+        facts.served = lately.find((r) => published(gh, repo, r))?.updated_at ?? null
+      }
     }
   } catch (e) {
     // Without the runs nothing is known to be on its way, so "behind" reads as drift: said, so the red is understood.

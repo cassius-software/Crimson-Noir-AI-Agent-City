@@ -4871,11 +4871,14 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   still on main and at least as new as what the release holds (asked again after the build). When the release's
   record cannot be read, or GitHub cannot say whether a commit is on main or compare it with the release's, nothing is
   written and the run is red. The ci run that starts a run counts by GitHub's answer for that very run, asked for by
-  its id, because the list of ci's runs can trail a run that has just ended: on 21 November 2026 it did, and a run
-  ended green having built nothing for a commit ci had just passed on. A run that GitHub does not show as ci,
-  finished and passed on main in this repository is never taken on the workflow's word: that run is red. One run at a time, and one waiting: a run that comes while another waits takes its
-  place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
-  release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
+  its id and its attempt (a run that is run again keeps its id, and the attempt that ended is the one that passed),
+  because the list of ci's runs can trail a run that has just ended: on 21 November 2026 it did, and a run ended
+  green having built nothing for a commit ci had just passed on. A run that GitHub does not show as ci, finished and
+  passed on main in this repository is never taken on the workflow's word: the newest commit ci's list shows is
+  built all the same, with a warning, and when that builds nothing the run is red, because the commit that run
+  passed on may have been passed over. One run at a time, and one waiting: a run that comes while another waits
+  takes its place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of
+  merges the release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
   attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
   holds a newer one), and red too when GitHub cannot answer, so someone runs the workflow by hand.
 - **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
@@ -4910,13 +4913,23 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   `build.txt`, asked for past every cache; `current.json` (the commit of the publish and of each target's files) and
   whether a staged record is still there; where the tag `current` points; each recorded file's size and SHA-256 as
   GitHub holds it; and the first two sectors of each UEFI disk image, whose disk GUID
-  `crimson_noir_os/tools/build-image.sh` derives from the commit it bakes, so the image itself says which commit it is. Behind is not red while something can still
-  mend it: ci passed less than ten minutes ago, a run of the publisher has not ended (45 minutes for web, three hours
-  for current), the web copy was published less than fifteen minutes ago (GitHub Pages may serve the copy before
-  for ten), or, for the web copy alone, ci is still running on a newer commit (the web workflow publishes main's tip
-  alone, so it waits for that one). Otherwise each thing that is behind is one red line with the commit it is at and
-  what to do, and a source that could not be read is red as well, since "could not look" is not "in step". The iOS
-  build, best effort everywhere, is a warning. The run's summary is a table of every published thing and its commit.
+  `crimson_noir_os/tools/build-image.sh` derives from the commit it bakes, so the image itself says which commit it
+  is. Behind is not red while something can still mend it: ci passed less than ten minutes ago and no run of that
+  publisher begun since has ended (a publisher's own run is its answer, so the look that run's end starts sees a
+  run that built nothing at once); a run of the publisher has not ended (GitHub gives a run's creation alone, so a
+  run counts while it is younger than its jobs' limits and three hours of waiting for runners: 3 hours 35 minutes
+  for web, 5 hours 25 minutes for current); the web copy was published less than fifteen minutes ago, by a web run
+  whose deploy step ran (GitHub Pages may serve the copy before for ten); or, for the web copy alone, ci is still
+  running on a newer commit (the web workflow publishes main's tip alone, so it waits for that one). While a
+  current run has not ended, a file that is not yet the one the record names is behind too, not broken: a publish
+  moves the tag, then replaces each file under its own name, and writes the record last. Otherwise each thing that
+  is behind is one red line with the commit it is at and what to do, and when main's newest green commit, the web
+  copy or the release could not be read (each read of GitHub and of the site is made three times) the run is red as
+  well, since "could not look" is not "in step". Warnings, not red: the iOS build, best effort everywhere; a disk
+  image whose first sectors could not be read (its size and SHA-256 are still held against the record); and the tag
+  where the last publish left it because GitHub refused to move it (the record says so, and the next publish tries
+  again). When the runs cannot be listed, nothing counts as on its way, and that is said. The run's summary is a
+  table of every published thing and its commit.
   It runs after each run of web or current on main, every hour (GitHub may start a scheduled run late), and by hand
   (Actions > sync > Run workflow); it only reads, with read access alone. It mends nothing by itself: a red run says
   which publisher to run by hand. One case it reports and cannot advise away: when ci has passed on a commit and

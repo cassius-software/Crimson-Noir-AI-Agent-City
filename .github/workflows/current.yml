@@ -117,6 +117,7 @@ jobs:
           EVENT: ${{ github.event_name }}
           TESTED: ${{ github.event.workflow_run.head_sha }}
           STARTED_BY: ${{ github.event.workflow_run.id }}
+          STARTED_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           FORCE: ${{ inputs.force }}
         run: |
@@ -132,8 +133,9 @@ jobs:
               args=(--sha "$GITHUB_SHA" --strict)
               if [ "$FORCE" = true ]; then args+=(--force); fi ;;
             # The ci run that started this run: asked for by its id, so its commit counts as green even while ci's
-            # list of runs does not show it yet (the job's condition above has already said it passed on main).
-            *) args=(--sha "$TESTED" --tested "$STARTED_BY") ;;
+            # list of runs does not show it yet (the job's condition above has already said it passed on main). By
+            # its attempt too: a run that is run again keeps its id, and the attempt that ended is the one that passed.
+            *) args=(--sha "$TESTED" --tested "$STARTED_BY" --attempt "$STARTED_ATTEMPT") ;;
           esac
           node tools/build/current.mjs pick "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 

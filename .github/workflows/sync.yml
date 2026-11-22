@@ -9,7 +9,8 @@
 # commit it is built from.
 # When it runs:
 # - after each run of web or current on main ends (a run that was skipped, for a ci that did not pass, starts nothing
-#   here), so a publish that skipped or failed is seen at once;
+#   here), so a publish that skipped or failed is seen at once: a publisher's run that has ended is its answer, and
+#   a web run counts as a publish only when its deploy step ran;
 # - every hour, so a publisher that never started, or a run that hung, is seen within the hour (GitHub may start a
 #   scheduled run late, and stops scheduling in a repository with no activity for 60 days);
 # - by hand: Actions > sync > Run workflow;
@@ -41,9 +42,14 @@ on:
 
 permissions: {}
 
-# One look at a time; a newer look takes the place of one still waiting, never of one under way.
+# One look at a time; a newer look takes the place of one still waiting, never of one under way. A run whose job
+# will be skipped (a publisher's run that was itself skipped) gets a group of its own: GitHub takes the group before
+# it reads the job's condition, and a run that looks at nothing must not take a waiting look's place.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('sync-pr-{0}', github.event.pull_request.number) || 'sync' }}
+  group: >-
+    ${{ github.event_name == 'pull_request' && format('sync-pr-{0}', github.event.pull_request.number)
+    || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'skipped') && format('sync-skip-{0}', github.run_id)
+    || 'sync' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:

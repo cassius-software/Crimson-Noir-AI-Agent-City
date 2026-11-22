@@ -78,6 +78,8 @@ function fakeGitHub(history: string[], { green = history, listed, workflows = {}
     listed: listed ? new Set(listed) : null as Set<string> | null,
     // What GitHub answers for a run asked for by id, where a test wants something other than the commit's own run.
     runs: new Map<number, Record<string, unknown>>(),
+    // And for one attempt of a run (`<run id>/<attempt>`), where a test has a run that was run again.
+    attempts: new Map<string, Record<string, unknown>>(),
     workflows: { ...workflows } as Record<string, string>,
     refs,
     get tag() { return refs.get('current') ?? null },
@@ -126,7 +128,11 @@ function fakeGitHub(history: string[], { green = history, listed, workflows = {}
         const fork = { ...run(tip()), event: 'pull_request', head_repository: { full_name: 'someone/fork' }, html_url: 'https://fork' }
         return ok({ workflow_runs: [fork, ...[...s.history].reverse().filter((c) => s.green.has(c) && (s.listed?.has(c) ?? true)).map(run)] })
       }
-      k = /^actions\/runs\/(\d+)$/.exec(p)
+      // One attempt of a run, where `attempts` holds one (a run that was run again); else the run as it stands.
+      k = /^actions\/runs\/(\d+)\/attempts\/(\d+)$/.exec(p)
+      const one = k ? s.attempts.get(`${k[1]}/${k[2]}`) : null
+      if (one) return ok(one)
+      k = /^actions\/runs\/(\d+)(?:\/attempts\/\d+)?$/.exec(p)
       if (k) {
         const id = Number(k[1])
         const given = s.runs.get(id)
@@ -985,11 +991,12 @@ test('pick: the ci run that started the run counts by GitHub\'s answer for it, s
   } finally { t.done() }
 })
 
-test('pick: a run named as the one that started it is believed only as ci, finished and passed, on a push or a run by hand to main here; anything else is refused in red, and an unanswered question stops the run', () => {
+test('pick: a run named as the one that started it is believed only as ci, finished and passed, on a push or a run by hand to main here; anything else is not taken on its word (red when nothing is built), and an unanswered question stops the run', () => {
   const [c1, c2, c3] = [commitOf(1), commitOf(2), commitOf(3)]
   const base = (sha: string) => ({ id: ciId(sha), path: '.github/workflows/ci.yml', status: 'completed', conclusion: 'success', head_sha: sha, head_branch: 'main', event: 'push', head_repository: { full_name: REPO }, html_url: ciUrl(sha) })
+  // Nothing else to build (ci's list shows no pass): the run's commit is not built on its word, and that is red.
   const refusedWith = (change: Record<string, unknown>, why: RegExp) => {
-    const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+    const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [] })
     gh.s.runs.set(ciId(c2), { ...base(c2), ...change })
     const r = c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, gh.gh)
     assert.equal(r.sha, undefined, `nothing picked: ${JSON.stringify(change)}`)
@@ -997,6 +1004,7 @@ test('pick: a run named as the one that started it is believed only as ci, finis
     assert.equal(r.unconfirmed, true)
     assert.match(r.skip, /^the ci run that started this run is not taken as a pass on main \(/)
     assert.match(r.skip, why)
+    assert.match(r.skip, /: nothing is built, and the commit that run passed on may have been passed over \(Actions > current > Run workflow, on main, /)
   }
   refusedWith({ conclusion: 'failure' }, /completed, failure, a push on main/)
   refusedWith({ conclusion: 'cancelled' }, /cancelled/)
@@ -1017,16 +1025,61 @@ test('pick: a run named as the one that started it is believed only as ci, finis
   assert.equal(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, slow.gh).sha, c2)
   assert.equal(asked, 3)
 
-  // No such run, or no run id at all: refused, without a second try for an answer GitHub gave.
+  // No such run, or no run id at all: not believed, without a second try for an answer GitHub gave. The commit ci's
+  // list shows is green whatever that run was, so it is built, with the doubt said as a warning.
   const gh = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
   const gone = c.pick({ sha: c2, tested: '999', repo: REPO, wait: 0 }, gh.gh)
-  assert.match(gone.skip, /GitHub has no run 999 to show \(gh: Not Found \(HTTP 404\)\)/)
+  assert.equal(gone.sha, c1)
+  assert.equal(gone.ci, ciUrl(c1))
+  assert.equal(gone.skip, undefined)
+  assert.match(gone.warn, new RegExp(`^the ci run that started this run is not taken as a pass on main \\(GitHub has no run 999 to show \\(gh: Not Found \\(HTTP 404\\)\\)\\); ${c1}, the newest commit ci's list of runs shows, is built all the same$`))
   assert.equal(gh.s.calls.filter((a) => a[a.length - 1].endsWith('/actions/runs/999')).length, 1)
   for (const bad of ['', '0', '-1', '12x', 'main', '1; rm -rf /', '99999999999999999999']) {
     const r = bad === '' ? null : c.pick({ sha: c2, tested: bad, repo: REPO, wait: 0 }, gh.gh)
-    if (r) { assert.equal(r.unconfirmed, true, bad); assert.match(r.skip, /not a run id/) }
+    if (r) { assert.equal(r.sha, c1, bad); assert.match(r.warn, /not a run id/) }
   }
-  assert.equal(gh.s.calls.some((a) => /actions\/runs\/[^0-9]/.test(a[a.length - 1])), false, 'only a number reaches GitHub')
+  for (const bad of ['0', '-1', '2x', '1/../..', '1234567']) {
+    const r = c.pick({ sha: c2, tested: String(ciId(c2)), nth: bad, repo: REPO, wait: 0 }, gh.gh)
+    assert.equal(r.sha, c1, bad)
+    assert.match(r.warn, /not an attempt of a run/)
+  }
+  assert.equal(gh.s.calls.some((a) => /actions\/runs\/[^0-9]/.test(a[a.length - 1]) || /attempts\/(?![1-9]\d{0,5}$)/.test(a[a.length - 1])), false, 'only numbers reach GitHub')
+  // Once the release holds that commit whole there is nothing to build, and the doubt is red: the commit the run
+  // passed on may have been passed over.
+  const t = scratch()
+  try {
+    c.publish({ media: artifacts(join(t.dir, 'm'), allBuilt('a')), stage: join(t.dir, 's'), sha: c1, repo: REPO, log: quiet }, gh.gh)
+    const held = c.pick({ sha: c2, tested: '999', repo: REPO, wait: 0 }, gh.gh)
+    assert.equal(held.sha, undefined)
+    assert.equal(held.unconfirmed, true)
+    assert.equal(held.refused, true)
+    assert.match(held.skip, new RegExp(`^the ci run that started this run is not taken as a pass on main \\(GitHub has no run 999 to show .*\\), and the release already holds ${c1} for every required target.*: nothing is built, and the commit that run passed on may have been passed over`))
+    assert.equal(c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, gh.gh).sha, c2, 'and the run itself, confirmed, is built')
+  } finally { t.done() }
+
+  // A run that is run again keeps its id. The attempt that ended and started this run passed; the second attempt is
+  // under way (or failed, or was cancelled by the next push) when pick asks, and GitHub answers for the newest
+  // attempt unless the attempt is named. Named, the first attempt's pass is what counts.
+  for (const second of [{ status: 'in_progress', conclusion: null }, { status: 'completed', conclusion: 'failure' }, { status: 'completed', conclusion: 'cancelled' }]) {
+    const again = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
+    again.s.runs.set(ciId(c2), { ...base(c2), ...second, run_attempt: 2 })
+    again.s.attempts.set(`${ciId(c2)}/1`, { ...base(c2), run_attempt: 1, updated_at: ciAt(c2) })
+    again.s.attempts.set(`${ciId(c2)}/2`, { ...base(c2), ...second, run_attempt: 2 })
+    const first = c.pick({ sha: c2, tested: String(ciId(c2)), nth: '1', repo: REPO, wait: 0 }, again.gh)
+    assert.equal(first.sha, c2, `the attempt that ended: ${JSON.stringify(second)}`)
+    assert.equal(first.warn, undefined)
+    assert.equal(again.s.calls.some((a) => a[a.length - 1].endsWith(`/actions/runs/${ciId(c2)}/attempts/1`)), true)
+    assert.equal(again.s.calls.some((a) => a[a.length - 1].endsWith(`/actions/runs/${ciId(c2)}`)), false, 'the run as it stands now is not asked for')
+    assert.deepEqual(c.choose({ tested: ciId(c2), nth: 1, repo: REPO, wait: 0 }, again.gh), { green: { sha: c2, ci: ciUrl(c2), at: ciAt(c2) }, lagged: true, why: '' }, 'a number is an attempt as well')
+    // Not named (an event that gave none), the newest attempt answers: not believed, and the list's commit is built.
+    const unnamed = c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, again.gh)
+    assert.equal(unnamed.sha, c1)
+    assert.match(unnamed.warn, /is not taken as a pass on main \(GitHub says run \d+ is /)
+    // The second attempt named: its own answer.
+    const later = c.pick({ sha: c2, tested: String(ciId(c2)), nth: '2', repo: REPO, wait: 0 }, again.gh)
+    assert.equal(later.sha, c1)
+    assert.match(later.warn, /GitHub says run \d+, attempt 2 is \.github\/workflows\/ci\.yml, /)
+  }
 
   // A lost connection is not an answer: the run stops rather than build nothing behind a green tick.
   const lost = fakeGitHub([c1, c2], { green: [c1, c2], listed: [c1] })
@@ -1040,7 +1093,8 @@ test('pick: a run named as the one that started it is believed only as ci, finis
     odd.s.fail = (argv) => (argv[argv.length - 1] === `repos/${REPO}/compare/${c1}...${c2}?per_page=1` ? { ok: true, out: JSON.stringify({ status: 'diverged' }), err: '' } : null)
     assert.throws(() => c.pick({ sha: c2, tested: String(ciId(c2)), repo: REPO, wait: 0 }, odd.gh), /GitHub could not say which is newer, .* diverged; nothing is picked/)
 
-    // The command line: red for a run not confirmed, with or without --strict; the outputs stay empty.
+    // The command line: a run not confirmed builds the list's commit with a warning; red, with or without --strict
+    // and with the outputs empty, when that leaves nothing to build.
     const out: string[] = []
     const err: string[] = []
     const log = console.log
@@ -1051,9 +1105,16 @@ test('pick: a run named as the one that started it is believed only as ci, finis
       assert.equal(c.main(['pick', '--sha', c2, '--tested', String(ciId(c2)), '--repo', REPO], cli.gh), 0)
       assert.deepEqual(out.splice(0), [`sha=${c2}\nci=${ciUrl(c2)}`])
       assert.match(err.splice(0).join('\n'), /::notice::ci's list of runs does not show run \d+ yet/)
-      assert.equal(c.main(['pick', '--sha', c3, '--tested', String(ciId(c3)), '--repo', REPO], cli.gh), 1, 'ci did not pass on c3')
+      assert.equal(c.main(['pick', '--sha', c3, '--tested', String(ciId(c3)), '--attempt', '1', '--repo', REPO], cli.gh), 0, 'ci did not pass on c3: the list\'s commit')
+      assert.deepEqual(out.splice(0), [`sha=${c1}\nci=${ciUrl(c1)}`])
+      assert.match(err.splice(0).join('\n'), new RegExp(`^::warning::the ci run that started this run is not taken as a pass on main \\(GitHub says run \\d+, attempt 1 is \\.github/workflows/ci\\.yml, completed, failure, a push on main of [^)]*\\); ${c1}, the newest commit ci's list of runs shows, is built all the same\\n::notice::building ${c1}, `))
+      const bare = fakeGitHub([c1, c2, c3], { green: [c1, c2], listed: [] })
+      assert.equal(c.main(['pick', '--sha', c3, '--tested', String(ciId(c3)), '--repo', REPO], bare.gh), 1, 'ci did not pass on c3, and its list shows nothing')
       assert.deepEqual(out.splice(0), [])
       assert.match(err.splice(0).join('\n'), /^::error::the ci run that started this run is not taken as a pass on main \(GitHub says run \d+ is \.github\/workflows\/ci\.yml, completed, failure, a push on main of /)
+      assert.equal(c.main(['pick', '--sha', c2, '--tested', String(ciId(c2)), '--attempt', '', '--repo', REPO], cli.gh), 0, 'an event that names no attempt: the run as it stands')
+      assert.deepEqual(out.splice(0), [`sha=${c2}\nci=${ciUrl(c2)}`])
+      err.splice(0)
       cli.s.fail = (argv) => (argv[argv.length - 1] === `repos/${REPO}/compare/${c1}...${c2}?per_page=1` ? { ok: true, out: JSON.stringify({ status: 'diverged' }), err: '' } : null)
       assert.equal(c.main(['pick', '--sha', c2, '--tested', String(ciId(c2)), '--repo', REPO], cli.gh), 1, 'an unanswered question')
       assert.deepEqual(out.splice(0), [])
@@ -1142,9 +1203,12 @@ test('the workflow: started by a green ci on main, a pull request that touches i
   // The run that started this one is named to pick for a workflow_run event alone (the job's condition has said it
   // passed on main), from the event's own id: never for a run by hand or a pull request, whose commit nothing vouches for.
   assert.match(WORKFLOW, /^ {10}STARTED_BY: \$\{\{ github\.event\.workflow_run\.id \}\}$/m)
-  assert.match(WORKFLOW, /^ {12}\*\) args=\(--sha "\$TESTED" --tested "\$STARTED_BY"\) ;;$/m)
+  // By its attempt too: a run that is run again keeps its id, and the attempt that ended is the one that passed.
+  assert.match(WORKFLOW, /^ {10}STARTED_ATTEMPT: \$\{\{ github\.event\.workflow_run\.run_attempt \}\}$/m)
+  assert.match(WORKFLOW, /^ {12}\*\) args=\(--sha "\$TESTED" --tested "\$STARTED_BY" --attempt "\$STARTED_ATTEMPT"\) ;;$/m)
   assert.equal(WORKFLOW.split('--tested').length - 1, 1, 'in that one branch')
   assert.equal(WORKFLOW.split('STARTED_BY').length - 1, 2, 'set once, used once')
+  assert.equal(WORKFLOW.split('STARTED_ATTEMPT').length - 1, 2, 'set once, used once')
   assert.match(WORKFLOW, /workflow_dispatch\)\n {14}\[ "\$GITHUB_REF" = refs\/heads\/main \] \|\| \{[^\n]*\n {14}args=\(--sha "\$GITHUB_SHA" --strict\)\n/)
   const jobs = WORKFLOW.split(/^jobs:$/m)[1] ?? ''
   const job = (name: string) => (jobs.split(new RegExp(`^ {2}${name}:$`, 'm'))[1] ?? '').split(/^ {2}[a-z-]+:$/m)[0]
