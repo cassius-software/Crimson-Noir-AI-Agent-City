@@ -11,8 +11,9 @@
  *                                            [--binary <file>]...
  *     Each package holds usr/lib/<product>/models/<file> (the resource folder the runner looks in: tauri.conf.json's
  *     productName) at exactly <n> bytes, with LICENSE and NOTICE beside it, and llama.cpp's LICENSE and NOTICE where
- *     src-tauri/tauri.model.conf.json puts them for every Linux package (usr/share/doc/...); each is larger than nine
- *     tenths of the model;
+ *     src-tauri/tauri.model.conf.json puts them for every Linux package (usr/share/doc/...), and the notices of the
+ *     Rust crates the app is built with (usr/lib/<product>/licenses/RUST-CRATES.txt, at the committed file's size);
+ *     each is larger than nine tenths of the model;
  *     no package lists the tiny test model (tiny-a.gguf) and no binary (the one inside the .deb, and each --binary)
  *     holds its name, unless <file> is that model (the end-to-end rehearsal's build). The .deb is listed with
  *     dpkg-deb -c, the .rpm with rpm -qp, and the AppImage's squashfs with unsquashfs -lls at the offset its ELF
@@ -29,8 +30,9 @@
  *     sections of llama.cpp's static libraries it kept, and objdump -t on those libraries (the llama-cpp-sys-2 rlib
  *     the map names, found in --deps) says which symbols each section holds: the run fails when a kept section holds
  *     a symbol of llama.cpp's common library's download, Hugging Face cache, Docker, HTTP or subprocess code, or of
- *     cpp-httplib, OpenSSL or curl. Then the binary itself: none of those parts' distinctive strings, no import of a
- *     network call (socket, connect, getaddrinfo...), and no OpenSSL, curl or OpenMP library among those it needs.
+ *     cpp-httplib, OpenSSL or curl. Then the binary itself: none of those parts' distinctive strings (read with the
+ *     crates' notices set aside: the binary holds them whole, and they name those parts' licence files), no import of
+ *     a network call (socket, connect, getaddrinfo...), and no OpenSSL, curl or OpenMP library among those it needs.
  *     The process calls it imports (fork, exec, posix_spawn) are printed, not refused: ggml's crash handler forks a
  *     debugger unless GGML_NO_BACKTRACE is set, which src-tauri/src/main.rs sets before anything else runs.
  * .github/workflows/build-matrix.yml runs all three in the Linux jobs after the build. Programs run with argument
@@ -63,6 +65,18 @@ export const FLOOR = Object.freeze({ GLIBC: '2.35', GLIBCXX: '3.4.30', CXXABI: '
  */
 export const LINUX_FILES = Object.freeze(Object.keys(JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.model.conf.json'), 'utf8')).bundle.linux.deb.files)
   .map((p) => p.replace(/^\//, '')).sort())
+
+/**
+ * The notices of the Rust crates the app is built with (tools/license/notices.mjs writes them), which every package
+ * carries among its resources: the path inside the resource folder (src-tauri/tauri.conf.json bundle.resources) and
+ * the committed file's size, which the packaged copy must have.
+ */
+export const NOTICES = Object.freeze((() => {
+  const resources = JSON.parse(readFileSync(join(ROOT, 'src-tauri', 'tauri.conf.json'), 'utf8')).bundle.resources ?? {}
+  const found = Object.entries(resources).find(([from]) => from.startsWith('notices/'))
+  if (!found) throw new Error('src-tauri/tauri.conf.json names no notices/ file among bundle.resources')
+  return { path: found[1], bytes: statSync(join(ROOT, 'src-tauri', found[0])).size }
+})())
 
 /** Where the runner looks for the carried model: `models/` in the resource folder, usr/lib/<product>/ once installed. */
 export function modelDir(product = PRODUCT) {
@@ -114,10 +128,10 @@ export function appImageOffset(head) {
 /**
  * Pure. What is wrong with one package, given its entries and its size: the model at `models/<file>` in the resource
  * folder at exactly `bytes`, LICENSE and NOTICE beside it (not empty), llama.cpp's texts (`files`) where the overlay
- * puts them (not empty), the package larger than nine tenths of the model, and no tiny test model in it unless `file`
- * is that model.
+ * puts them (not empty), the Rust crates' notices (`notices`) in the resource folder at exactly the committed file's
+ * size, the package larger than nine tenths of the model, and no tiny test model in it unless `file` is that model.
  */
-export function packageProblems(name, entries, { file, bytes, size, product = PRODUCT, files = LINUX_FILES }) {
+export function packageProblems(name, entries, { file, bytes, size, product = PRODUCT, files = LINUX_FILES, notices = NOTICES }) {
   const problems = []
   const dir = modelDir(product)
   const at = new Map(entries.filter((e) => !e.dir).map((e) => [e.path, e]))
@@ -134,6 +148,10 @@ export function packageProblems(name, entries, { file, bytes, size, product = PR
     if (!e) problems.push(`${name}: no ${f} (llama.cpp, compiled into the app, travels with its licence)`)
     else if (e.size === 0) problems.push(`${name}: ${f} is empty`)
   }
+  const crates = `usr/lib/${product}/${notices.path}`
+  const held = at.get(crates)
+  if (!held) problems.push(`${name}: no ${crates} (the Rust crates the app is built with travel with their notices)`)
+  else if (held.size !== notices.bytes) problems.push(`${name}: ${crates} is ${held.size} bytes; the committed notices are ${notices.bytes}`)
   if (!(size > Math.floor((bytes / 10) * 9))) problems.push(`${name} is ${size} bytes: it cannot carry the ${bytes}-byte model`)
   if (file !== TINY) {
     for (const e of entries) if (basename(e.path) === TINY) problems.push(`${name}: holds the tiny test model (${e.path}), which only the end-to-end test's build carries`)
@@ -311,10 +329,36 @@ export function keptBanned(archive, symbols, kept) {
   return symbols.filter((s) => BANNED_SYMBOLS.test(s.name) && kept.has(`${archive}(${s.member}):${s.section}`)).map((s) => `${s.member} ${s.section} ${s.name}`)
 }
 
-/** Pure. Which of BANNED_STRINGS a binary's bytes hold. */
-export function bannedStrings(bytes) {
-  return BANNED_STRINGS.filter((s) => bytes.includes(Buffer.from(s)))
+/**
+ * Pure. `bytes` with every whole copy of `text` cut out and one zero byte in its place, so nothing reads across the
+ * cut. A copy that is not whole stays where it is.
+ */
+export function withoutCopies(bytes, text) {
+  const needle = Buffer.isBuffer(text) ? text : Buffer.from(text)
+  if (needle.length === 0) return bytes
+  const parts = []
+  let from = 0
+  for (let at = bytes.indexOf(needle); at >= 0; at = bytes.indexOf(needle, from)) {
+    parts.push(bytes.subarray(from, at), Buffer.alloc(1))
+    from = at + needle.length
+  }
+  return from === 0 ? bytes : Buffer.concat([...parts, bytes.subarray(from)])
 }
+
+/**
+ * Pure. Which of BANNED_STRINGS a binary's bytes hold. `notices`, when given, is the text the program is built to
+ * hold whole (the crates' notices, src-tauri/src/notices.rs): each whole copy is set aside first. That text names
+ * the licence files of the very parts this looks for (llama.cpp/vendor/cpp-httplib/LICENSE) and is no code of
+ * theirs; ci holds it to the registry word for word, so nothing else can be put there. Anything outside a whole
+ * copy is still read, a damaged copy included.
+ */
+export function bannedStrings(bytes, notices = null) {
+  const read = notices ? withoutCopies(bytes, notices) : bytes
+  return BANNED_STRINGS.filter((s) => read.includes(Buffer.from(s)))
+}
+
+/** The committed notices, as the program built from this commit holds them (tools/license/notices.mjs writes them). */
+export const noticesBytes = () => readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt'))
 
 // ---- Running the tools --------------------------------------------------------------------------------------------
 
@@ -455,8 +499,9 @@ async function symbols(args) {
     if (found.length === 0) problems.push(`${basename(deb)} installs no ELF file`)
     elves.push(...found.map((p) => ({ path: p, name: p.slice(dir.length + 1) })))
   }
+  const notices = noticesBytes()
   for (const { path: elf, name } of elves) {
-    const strings = bannedStrings(readFileSync(elf))
+    const strings = bannedStrings(readFileSync(elf), notices)
     const und = parseDynamicSymbols(run('objdump', ['-T', elf])).filter((s) => s.section === '*UND*').map((s) => s.name.replace(/@.*$/, ''))
     const net = [...new Set(und.filter((n) => NETWORK_IMPORTS.test(n)))]
     const proc = [...new Set(und.filter((n) => PROCESS_IMPORTS.test(n)))].sort()

@@ -19,7 +19,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,6 +38,8 @@ interface Ref { file: string; flags: number; version: string }
 const FILE = 'Qwen2.5-1.5B-Instruct-Q4_K_M.gguf'
 const BYTES = 986048768
 const DIR = `usr/lib/${a.PRODUCT}/models/`
+/** Where a package holds the Rust crates' notices: the resource folder, under the path tauri.conf.json gives. */
+const CRATES = `usr/lib/${a.PRODUCT}/${a.NOTICES.path}`
 
 /** A package's entries as the real one lists them, with `change` applied. */
 function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
@@ -48,6 +50,7 @@ function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
     { path: `${DIR}LICENSE`, size: 11343, dir: false },
     { path: `${DIR}NOTICE`, size: 2200, dir: false },
     ...a.LINUX_FILES.map((p: string) => ({ path: p, size: 1078, dir: false })),
+    { path: CRATES, size: a.NOTICES.bytes, dir: false },
   ]
   return change(base)
 }
@@ -132,6 +135,9 @@ test('the package check: a whole package passes, and each missing, empty, wrong-
   one(resize(`${DIR}NOTICE`, 0), /models\/NOTICE is empty/)
   one(drop(a.LINUX_FILES[0]), /no usr\/share\/doc\/crimson-noir-agent-city\/llama\.cpp\/LICENSE \(llama\.cpp, compiled into the app/)
   one(resize(a.LINUX_FILES[1], 0), /llama\.cpp\/NOTICE is empty/)
+  one(drop(CRATES), /no usr\/lib\/.+\/licenses\/RUST-CRATES\.txt \(the Rust crates the app is built with travel with their notices\)/)
+  one(resize(CRATES, a.NOTICES.bytes - 1), new RegExp(`licenses/RUST-CRATES\\.txt is ${a.NOTICES.bytes - 1} bytes; the committed notices are ${a.NOTICES.bytes}`))
+  one(resize(CRATES, a.NOTICES.bytes + 1), new RegExp(`licenses/RUST-CRATES\\.txt is ${a.NOTICES.bytes + 1} bytes; the committed notices are ${a.NOTICES.bytes}`))
   one((e) => [...e, { path: `${DIR}tiny-a.gguf`, size: 600000, dir: false }], /holds the tiny test model/)
   one((e) => e, /is 887443891 bytes: it cannot carry the 986048768-byte model/, { size: Math.floor((BYTES / 10) * 9) })
   assert.deepEqual(problems(entries(), { size: Math.floor((BYTES / 10) * 9) + 1 }), [], 'one byte over nine tenths')
@@ -139,7 +145,8 @@ test('the package check: a whole package passes, and each missing, empty, wrong-
   const tiny = entries((e) => e.map((x) => (x.path === `${DIR}${FILE}` ? { ...x, path: `${DIR}tiny-a.gguf`, size: 600000 } : x)))
   assert.deepEqual(a.packageProblems('pkg.deb', tiny, { file: 'tiny-a.gguf', bytes: 600000, size: 10_680_036 }), [])
   assert.equal(problems(tiny).length, 2, 'with the real pin, the tiny build fails twice: no model, and the tiny one')
-  assert.equal(problems([], { size: 0 }).length, 6, 'an empty package: no model, no LICENSE, no NOTICE, no llama.cpp texts, too small')
+  assert.equal(problems([], { size: 0 }).length, 7, 'an empty package: no model, no LICENSE, no NOTICE, no llama.cpp texts, no crates\' notices, too small')
+  assert.deepEqual(a.NOTICES, { path: 'licenses/RUST-CRATES.txt', bytes: statSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')).size }, 'the resource tauri.conf.json names, at the committed file\'s size')
 })
 
 test('the model overlay puts llama.cpp\'s texts at one path in every Linux package, from third_party/llama.cpp/', () => {
@@ -328,6 +335,27 @@ test('the banned names, strings, imports and libraries: what each pattern takes 
   }
   assert.deepEqual(a.bannedStrings(Buffer.from('\0llama_decode\0ggml\0')), [])
   assert.deepEqual(a.bannedStrings(Buffer.from('\0x\0cpp-httplib/0.20\0HF_TOKEN\0')), ['cpp-httplib/', 'HF_TOKEN'])
+  // The program is built to hold the crates' notices whole, and they name the licence file of one of those very
+  // parts. A whole copy is set aside before the scan; everything else is still read.
+  const notices = Buffer.from('NOTICES\nllama.cpp/vendor/cpp-httplib/LICENSE of llama-cpp-sys-2\nits text\n')
+  const code = (...parts: (string | Buffer)[]) => Buffer.concat(parts.map((p) => (typeof p === 'string' ? Buffer.from(p) : p)))
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices, '\0llama_decode\0')), ['cpp-httplib/'], 'without being told of the notices, their words count')
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices, '\0llama_decode\0'), notices), [])
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices, '\0x\0', notices, '\0'), notices), [], 'both slices of a universal binary hold a copy')
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices, '\0cpp-httplib/0.20\0'), notices), ['cpp-httplib/'], 'the same words outside the notices are the code\'s')
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0cpp-httplib/0.20\0', notices), notices), ['cpp-httplib/'])
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices.subarray(0, -1), '\0'), notices), ['cpp-httplib/'], 'a copy that is not whole is not set aside')
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0', notices.subarray(1), '\0'), notices), ['cpp-httplib/'])
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0HF_', notices, 'TOKEN\0'), notices), [], 'and nothing reads across the place a copy was cut from')
+  assert.deepEqual(a.bannedStrings(code('\x7fELF\0HF_TOKEN\0'), Buffer.alloc(0)), ['HF_TOKEN'], 'no notices to set aside: everything is read')
+  assert.deepEqual([...a.withoutCopies(code('ab', notices, 'cd', notices), notices)], [...code('ab\0cd\0')])
+  const plain = code('nothing of the notices here')
+  assert.equal(a.withoutCopies(plain, notices), plain, 'nothing to cut: the same bytes')
+  // The committed notices are what a real program holds, and with them set aside nothing of theirs is left to find.
+  // (They hold one banned string today, in the name of that licence file, which is why they are set aside.)
+  assert.deepEqual(a.bannedStrings(a.noticesBytes(), a.noticesBytes()), [])
+  assert.equal(a.noticesBytes().length, a.NOTICES.bytes)
+  assert.deepEqual(a.bannedStrings(a.noticesBytes()).filter((s: string) => s !== 'cpp-httplib/'), [], 'nothing else of the notices is on the list; a new one would be a reason to look')
   for (const n of ['socket', 'connect', 'getaddrinfo', 'gethostbyname2_r', 'accept4', 'curl_easy_perform', 'SSL_read']) assert.match(n, a.NETWORK_IMPORTS, n)
   for (const n of ['socketpair', 'connectx', 'read', 'dlopen', 'execvp']) assert.doesNotMatch(n, a.NETWORK_IMPORTS, n)
   for (const n of ['fork', 'execlp', 'execvp', 'posix_spawnp', 'system', 'popen']) assert.match(n, a.PROCESS_IMPORTS, n)
@@ -380,6 +408,7 @@ test('the three commands end to end: each passes a good .deb and fails, naming t
     copyFileSync('/usr/bin/true', join(tree, 'usr', 'bin', 'crimson-noir-app'))
     put(`${DIR}x.gguf`, Buffer.alloc(1000, 1)); put(`${DIR}LICENSE`, 'licence'); put(`${DIR}NOTICE`, 'notice')
     for (const f of a.LINUX_FILES) put(f, 'llama.cpp')
+    put(CRATES, readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')))
     const out = join(dir, 'out'); mkdirSync(out)
     const deb = join(out, 't.deb')
     ok('dpkg-deb', '--build', '--root-owner-group', tree, deb)
@@ -470,6 +499,24 @@ test('the three commands end to end: each passes a good .deb and fails, naming t
     const strings = run('symbols', '--binary', planted, '--map', map('.text.llama_decode', 'k.o'))
     assert.equal(strings.status, 1)
     assert.match(strings.stderr, /holds the string "cpp-httplib\/"/)
+    // A program with the committed notices compiled in, as every app is: their words are not the code's, so it
+    // passes; the same program with the code's own string beside them does not, and neither does one whose copy of
+    // the notices is cut short.
+    const noticed = join(dir, 'noticed')
+    writeFileSync(noticed, Buffer.concat([readFileSync('/usr/bin/true'), Buffer.from('\0'), a.noticesBytes(), Buffer.from('\0')]))
+    const carried = run('symbols', '--binary', noticed, '--map', map('.text.llama_decode', 'k.o'))
+    assert.equal(carried.status, 0, carried.stderr)
+    assert.match(carried.stdout, /noticed: 0 of \d+ banned strings/)
+    const both = join(dir, 'both')
+    writeFileSync(both, Buffer.concat([readFileSync(noticed), Buffer.from('cpp-httplib/0.20\0')]))
+    const beside = run('symbols', '--binary', both, '--map', map('.text.llama_decode', 'k.o'))
+    assert.equal(beside.status, 1)
+    assert.match(beside.stderr, /both holds the string "cpp-httplib\/"/)
+    const short = join(dir, 'short')
+    writeFileSync(short, Buffer.concat([readFileSync('/usr/bin/true'), Buffer.from('\0'), a.noticesBytes().subarray(0, -1)]))
+    const cut = run('symbols', '--binary', short, '--map', map('.text.llama_decode', 'k.o'))
+    assert.equal(cut.status, 1)
+    assert.match(cut.stderr, /short holds the string "cpp-httplib\/"/)
     const tiny = run('packages', '--dir', out, '--kinds', 'deb', '--file', 'x.gguf', '--bytes', '1000', '--binary', planted)
     assert.equal(tiny.status, 1)
     assert.match(tiny.stderr, /planted holds the name tiny-a\.gguf/)

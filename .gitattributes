@@ -1,0 +1,8 @@
+# Copyright (c) 2026 Julian Cassius Subban
+# SPDX-License-Identifier: MIT
+# Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
+#
+# The notices of the Rust crates the apps are built with are compared byte for byte with what each build holds
+# (tools/license/notices.mjs carried) and with what the registry gives (--check), on Linux, macOS and Windows
+# runners alike. So git never converts this file's line ends at checkout: it is the committed bytes everywhere.
+src-tauri/notices/RUST-CRATES.txt -text

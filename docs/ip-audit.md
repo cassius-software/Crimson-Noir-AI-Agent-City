@@ -517,15 +517,45 @@ rewrites the list after a lockfile changes, and its diff is the review of what t
    choice (most offer both; four of these name a second permissive licence that applies as well); 18 are
    Unicode-3.0 (the ICU crates); four are Zlib, three BSD-3-Clause, two ISC, one CC0-1.0, one Apache-2.0 with the
    LLVM exception; five are MPL-2.0 (§3). Share-alike or non-commercial: none.
-4. **A gap the gate does not close yet: the app packages carry no notices for their Rust crates.** Each app links
-   between 205 and 250 registry crates (`cargo tree --locked --target <target> -e normal --prefix none`, counted
-   per target on 22 November 2026, procedural macros included). MIT, BSD, ISC, Zlib and Apache-2.0 all ask that
-   their copyright notice and licence text travel with copies, and MPL-2.0 asks that recipients be told where the
-   source of its files is. The packages carry the notices for the model, llama.cpp and the page's bundled
-   JavaScript, and nothing for the crates. The boot images are not affected (two crates, covered by `NOTICE.txt`).
-   Most Rust applications ship this way and it is rarely pursued, but it is a duty in the licences' own words, so
-   the next change generates one third-party notices file from the same `cargo metadata` and puts it in every app
-   package, with the five MPL crates' source locations.
+4. **A gap the first run found, closed by the change after it: the app packages carried no notices for their Rust
+   crates.** Each app links between 205 and 250 registry crates (`cargo tree --locked --target <target> -e normal
+   --prefix none`, counted per target on 22 November 2026, procedural macros included). MIT, BSD, ISC, Zlib and
+   Apache-2.0 all ask that their copyright notice and licence text travel with copies, and MPL-2.0 asks that
+   recipients be told where the source of its files is. The packages carried the notices for the model, llama.cpp
+   and the page's bundled JavaScript, and nothing for the crates. The boot images are not affected (two crates,
+   covered by `NOTICE.txt`). Most Rust applications ship this way and it is rarely pursued, but it is a duty in the
+   licences' own words. Now `tools/license/notices.mjs` writes `src-tauri/notices/RUST-CRATES.txt` from the same
+   `cargo metadata`, the crates' own packages and the Rust toolchain: all 426 crates of the apps' lockfile (every
+   platform's, so each app's file names more crates than that app links, never fewer), the 220 distinct licence,
+   copyright and notice texts they ship, the source location of each MPL-2.0 crate, for the 41 crates whose
+   packages have no licence text of their own their authors and the text of the licence taken, and the Rust
+   project's own statement of the standard library's copyrights for the rustc the apps are built with (1.97.0). The
+   app's program holds the file whole and every package ships it as `licenses/RUST-CRATES.txt`; CI fails when the
+   file is not what the registry and the toolchain give or when a build does not hold it.
+
+   **Licence files inside a package.** Fourteen licence files sit below the top folder of five packages and cover
+   something the package carries, not the crate. Each is accounted for by a rule in `tools/license/policy.json`
+   (`notices.nested`), and a file without a rule stops the tool. Reproduced (six): llama.cpp's licence and those of
+   four libraries it carries (`llama-cpp-sys-2`), and the Unicode data licence of the tables `regex-syntax`
+   compiles into every app. One of those four, cpp-httplib, is reproduced although the Linux and macOS audits show
+   its code is not in those apps (no kept symbol of it in the linker's map, none of its strings in the program):
+   the text costs nothing, and that audit covers those two platforms alone. Named and not reproduced (eight), because no app is built with what they cover:
+   - `hidapi` carries the HIDAPI library in C, which its authors offer under any one of three licences, one of them
+     the GPL version 3. The crate compiles that C source on Windows only without its `windows-native` feature. The
+     apps take the crate for Windows alone and with that feature, where it is Rust over the system's own HID
+     interface, so no app holds any of that C code and the choice among the three licences never arises.
+   - `libdbus-sys` carries the D-Bus library's source for its `vendored` feature, which is off. The Linux app
+     loads the D-Bus library the system provides (already among the questions for counsel below).
+   - `tracing-core` carries a copy of a once cell that it compiles only without `std`; the apps take it with `std`.
+
+   Each of those three statements is a condition the tool reads from cargo's answer on every run (the feature that
+   is on, the feature that is off, the one platform the crate is taken for). When a dependency change makes one
+   untrue, `crate-licences` fails and names the rule.
+
+   What it does not settle: whether a notice inside the program and a file in the package is enough in every
+   store's eyes (the phones' stores have their own rules for showing licences); whether the standard library's
+   statement for all of its platforms is the right form for each app; and the reading of each licence, which is
+   counsel's.
 5. **The cover picture.** `docs/cover.jpg` carries Content Credentials (a C2PA manifest) signed by Google's media
    services, so it was made or last edited with one of Google's generative image tools. Julian supplied it and it
    was committed on 16 October 2026. Which tool and which plan made it is not recorded, so its terms for commercial

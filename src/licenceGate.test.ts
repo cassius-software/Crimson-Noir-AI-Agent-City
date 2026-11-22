@@ -348,7 +348,7 @@ test('the tree walk leaves out what other programs write, and nothing else', () 
 
 test('the registry half runs in CI where cargo is, as a named check, before the Rust tests', () => {
   const checks = read('tools/selfheal/checks.sh')
-  assert.match(checks, /^ {4}crate-licences\) node tools\/license\/gate\.mjs crates --check ;;$/m)
+  assert.match(checks, /^ {4}crate-licences\) node tools\/license\/gate\.mjs crates --check && node tools\/license\/notices\.mjs --check ;;$/m)
   // Not in ALL: the self-healing agent's sandbox has no network to ask the registry with.
   assert.doesNotMatch(checks.match(/^ALL="([^"]*)"$/m)![1], /crate-licences/)
   const ci = read('.github/workflows/ci.yml')

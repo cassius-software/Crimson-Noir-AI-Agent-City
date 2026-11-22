@@ -49,6 +49,7 @@ function entries(change: (e: Entry[]) => Entry[] = (e) => e): Entry[] {
     { path: `${a.MODEL_DIR}LICENSE`, size: 11343, dir: false },
     { path: `${a.MODEL_DIR}NOTICE`, size: 2200, dir: false },
     ...a.MAC_FILES.map((p: string) => ({ path: p, size: 1078, dir: false })),
+    { path: a.NOTICES.path, size: a.NOTICES.bytes, dir: false },
   ]
   return change(base)
 }
@@ -77,6 +78,20 @@ test('the package: a whole .app passes, and each missing, empty, wrong-sized or 
   assert.match(appProblems(entries((e) => e.filter((x) => x.path !== `${a.MODEL_DIR}LICENSE`))).join('\n'), /no Contents\/Resources\/models\/LICENSE beside the model/)
   assert.match(appProblems(entries((e) => e.map((x) => (x.path === `${a.MODEL_DIR}NOTICE` ? { ...x, size: 0 } : x)))).join('\n'), /Contents\/Resources\/models\/NOTICE is empty/)
   assert.match(appProblems(entries((e) => e.filter((x) => !x.path.endsWith('llama.cpp/NOTICE')))).join('\n'), /no Contents\/Resources\/licenses\/llama\.cpp\/NOTICE \(llama\.cpp, compiled into the app, travels with its licence\)/)
+  assert.equal(a.NOTICES.path, 'Contents/Resources/licenses/RUST-CRATES.txt', 'beside llama.cpp\'s texts, in Tauri\'s resource folder')
+  assert.match(appProblems(entries((e) => e.filter((x) => x.path !== a.NOTICES.path))).join('\n'), /no Contents\/Resources\/licenses\/RUST-CRATES\.txt \(the Rust crates the app is built with travel with their notices\)/)
+  assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size: 12 } : x)))).join('\n'), /RUST-CRATES\.txt is 12 bytes; the committed notices are \d+/)
+  // One byte short or one byte over is not the committed file either.
+  for (const size of [a.NOTICES.bytes - 1, a.NOTICES.bytes + 1]) {
+    assert.deepEqual(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size } : x)))).filter((p: string) => p.includes('RUST-CRATES')).length, 1, String(size))
+    assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size } : x)))).join('\n'), new RegExp(`RUST-CRATES\\.txt is ${size} bytes; the committed notices are ${a.NOTICES.bytes}`))
+  }
+  assert.equal(appProblems(entries((e) => e)).filter((p: string) => p.includes('RUST-CRATES')).length, 0)
+  // The binary holds those notices whole, and they name the licence file of a part the strings scan looks for, so
+  // the scan sets them aside as the Linux one does (linuxAudit.test.ts pins what that takes and what it leaves; the
+  // macOS job's own audit of the app it built is the proof on a real binary).
+  assert.match(readFileSync(join(ROOT, 'tools', 'build', 'macAudit.mjs'), 'utf8'), /^ {2}const strings = bannedStrings\(readFileSync\(bin\), noticesBytes\(\)\)$/m)
+  assert.match(readFileSync(join(ROOT, 'tools', 'build', 'linuxAudit.mjs'), 'utf8'), /^ {4}const strings = bannedStrings\(readFileSync\(elf\), notices\)$/m)
   const stray = appProblems(entries((e) => [...e, { path: 'Contents/Resources/models/tiny-a.gguf', size: 9000, dir: false }]))
   assert.match(stray.join('\n'), /holds the tiny test model \(Contents\/Resources\/models\/tiny-a\.gguf\)/)
   // The end-to-end test's own build carries the tiny model on purpose.
@@ -370,6 +385,7 @@ test('the commands end to end: each passes a good universal app and fails, namin
       writeFileSync(join(root, a.MODEL_DIR, FILE), MODEL)
       for (const f of ['LICENSE', 'NOTICE']) writeFileSync(join(root, a.MODEL_DIR, f), `the model's ${f}\n`)
       for (const f of a.MAC_FILES as string[]) writeFileSync(join(root, f), `llama.cpp's ${f}\n`)
+      writeFileSync(join(root, a.NOTICES.path), readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt')))
       change(root)
       return join(dir, name)
     }

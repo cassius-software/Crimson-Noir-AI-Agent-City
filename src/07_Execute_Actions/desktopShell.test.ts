@@ -238,7 +238,7 @@ test('the shell lends the page the carried model over one fixed file: two comman
   const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   assert.match(lib, /^mod model;$/m)
   assert.match(lib, /^mod model_file;$/m)
-  assert.match(lib, /generate_handler!\[[^\]]*\bmodel::app_model, model::app_model_read\]/)
+  assert.match(lib, /generate_handler!\[[^\]]*\bmodel::app_model, model::app_model_read\b[^\]]*\]/)
   const cargo = readFileSync(new URL('../../src-tauri/Cargo.toml', import.meta.url), 'utf8')
   assert.match(cargo, /\n\[dependencies\](?:(?!\n\[)[\s\S])*\nbase64 = "0\.22"\n/, 'for every platform the app builds on (the reads are the same everywhere)')
   const lock = readFileSync(new URL('../../src-tauri/Cargo.lock', import.meta.url), 'utf8')
@@ -249,7 +249,7 @@ test('the shell lends the page the carried model over one fixed file: two comman
 test('the shell lends the runner\'s three commands in the design\'s order, under the names shellRunner sends, compiled only with the native-runner feature on Linux and macOS', async () => {
   const lib = readFileSync(new URL('../../src-tauri/src/lib.rs', import.meta.url), 'utf8')
   assert.match(lib, /^mod runner;$/m)
-  assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read\]/)
+  assert.match(lib, /generate_handler!\[hid::hid_list, hid::hid_open, hid::hid_write, hid::hid_feature, hid::hid_close, gpu::gpu_memory, runner::native_model, runner::native_generate, runner::native_stop, model::app_model, model::app_model_read, notices::third_party_notices\]/)
   assert.match(lib, /\.manage\(runner::Runner::default\(\)\)/, 'managed on the Builder, filled in setup')
   assert.match(lib, /\.setup\(\|app\| \{[\s\S]*?runner::start\(app\.handle\(\)\);[\s\S]*?\}\)/)
   assert.match(lib, /\.on_page_load\(\|webview, payload\| \{\n {12}if matches!\(payload\.event\(\), PageLoadEvent::Started\) \{\n {16}runner::page_loading\(webview\.app_handle\(\)\);/, 'a page that starts loading stops every answer')
