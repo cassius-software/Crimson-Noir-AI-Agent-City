@@ -6,8 +6,8 @@
  * before the city is theirs (turn the head and walk; tell Sloane a goal; get into a parked car; step inside a
  * workplace; choose a look in the wardrobe or a shop, or read a home's deed; open the console), what counts as having
  * done each one (a reading of the page, or an event the page reports), and what Sloane says at each: the thing to do in
- * the visitor's own device's words, one plain line of what it is (for an eight-year-old), and five whys that go one
- * deeper each time, every one of them true of the city as it runs today. The walk is held only until the visitor
+ * the visitor's own device's words, what it is in words a five-year-old follows, and the five W's (who, what, when,
+ * where and why), each answered as plainly, every one of them true of the city as it runs today. The walk is held only until the visitor
  * reaches the console: the moment it opens on the last stage the city is theirs and the pass is kept. A visitor who
  * stalls is never left alone: after a few seconds with nothing done the walk lends a hand (`assisting`: the card shows
  * the keys and offers its one-tap button, the page lights the control to use), and later Sloane says the how again.
@@ -136,10 +136,10 @@ export interface StageCard {
   readonly title: string
   /** The one thing to do, in the device's words. */
   readonly ask: string
-  /** What this is, for an eight-year-old. */
-  readonly eli8: string
-  /** The five whys, one deeper each. */
-  readonly whys: readonly string[]
+  /** What this is, explained as to a five-year-old. */
+  readonly eli5: string
+  /** The five W's (who, what, when, where, why), each answered in a five-year-old's words. */
+  readonly ws: readonly FiveW[]
   /** The accessible path's button: what Sloane does for a visitor who cannot do the action themselves. */
   readonly show: string
 }
@@ -266,7 +266,7 @@ export function askFor(s: Stage, o: FirstWalkOptions): { text: string; keep: rea
       return { text: `Welcome in${name}. Let’s start with your eyes and your feet: ${l.text} and the whole view turns with you; then ${w.text}.`, keep: [l.keep] }
     }
     case 'voice':
-      return { text: `Now talk to me${name}. ${tap(o)} my name on the chip and tell me a goal in your own words, like “make it night”. I ask why a few times, then I do what can be done now.`, keep: ['chip'] }
+      return { text: `Now talk to me${name}. ${tap(o)} my name on the chip and tell me a goal in your own words, like “make it night”. I may ask a few questions to be sure what you mean, then I do what can be done now.`, keep: ['chip'] }
     case 'fleet':
       return { text: `See the cars? Find one that is parked, stand right by its door until a prompt appears, and ${pressHow(o, o.words.interact)} to get in. Drive a little; the car will not let you hurt anyone.`, keep: [o.words.interact] }
     case 'work':
@@ -313,73 +313,87 @@ export function hintFor(s: Stage, o: FirstWalkOptions): { text: string; keep: re
 }
 
 /**
- * What a stage is, for an eight-year-old. One or two plain sentences, all true of the city as it runs; the look stage
- * names the shops and the homes only on a map that has them (`city.stores`, `city.homes`).
+ * What a stage is, explained as to a five-year-old: two or three short sentences in small words, all true of the city
+ * as it runs; the look stage names the shops and the homes only on a map that has them (`city.stores`, `city.homes`).
  */
-export function eli8Of(s: Stage, city?: FirstWalkOptions['city']): string {
+export function eli5Of(s: Stage, city?: FirstWalkOptions['city']): string {
   switch (s) {
-    case 'move': return 'You are a person in this city, not a camera floating about. Your head turns, your feet carry you, and the picture follows you the way a film does.'
-    case 'voice': return 'I am the city’s concierge. Tell me what you want in plain words and I ask you why, a few times, until we both know what you really mean; then I set what I can (the time, the quality, the sound) and write the rest down for you.'
-    case 'fleet': return 'The streets have a fleet: cars of eight kinds that drive, park and let you take the wheel, and craft that fly between rooftop pads above the avenues. Every one of them keeps the same laws as the people.'
-    case 'work': return 'Inside, the people of the city work: they type, inspect and talk at their stations, and what an agent does there is real agent work, prompts and answers, not a cartoon of it. A robot, real or simulated, can take a body in this city too, over the joint bridge.'
-    case 'style': return `You choose how you look: your clothes and their colours, your hair, your skin, your face and your build. Everyone on the street is dressed from the same wardrobe you are, the city’s own business-casual one.${city?.stores === true ? ' The shops on the street sell lines from it too, and trying them on costs nothing.' : ''}${city?.homes === true ? ' A home can be yours as well: the homes on the street are for sale, and the smallest costs nothing to claim.' : ''}`
-    case 'console': return 'The console is the city’s command line. Type a word, press Enter, and the city answers: the clock, the people, the cars, the kernel underneath. A lot of what you do with your hands you can also do with words there, and some things only words can do.'
+    case 'move': return 'This is you, in the city. Turn your head to look around, and walk to go somewhere. The picture goes where you go.'
+    case 'voice': return 'I’m Sloane, the city’s helper. Tell me what you want in your own words, and I’ll do what I can.'
+    case 'fleet': return 'The city has cars. Find a parked one, get in and drive. Your car will never hurt anyone.'
+    case 'work': return 'The people of the city have jobs. Walk through an open door and watch them at work.'
+    case 'style': return `You choose how you look: your clothes, your hair, your skin, your face and your shape.${city?.stores === true ? ' Shops on the street sell clothes too, and trying them on is free.' : ''}${city?.homes === true ? ' You can even have a home: the homes on the street are for sale, and the smallest one is free.' : ''}`
+    case 'console': return 'The console is where you type to the city. Type a word, press Enter, and the city answers.'
   }
 }
 
-/** The five whys of a stage, one deeper each. Plain words; nothing here that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`). */
-export function whysOf(s: Stage, city?: FirstWalkOptions['city']): readonly string[] {
+/** The five W's, in the order the card asks them. */
+export const FIVE_WS = Object.freeze(['Who', 'What', 'When', 'Where', 'Why'] as const)
+export type W = (typeof FIVE_WS)[number]
+/** One of the five W's of a stage: the question word and its answer. */
+export interface FiveW { readonly w: W; readonly answer: string }
+
+/**
+ * The five W's of a stage (who, what, when, where, why), each answered in a five-year-old's words, and nothing in them
+ * that the city does not do (the shops only where `city.stores`, the homes only where `city.homes`).
+ */
+export function fiveWsOf(s: Stage, city?: FirstWalkOptions['city']): readonly FiveW[] {
   const shops = city?.stores === true
   const homes = city?.homes === true
+  return Object.freeze(answersOf(s, shops, homes).map((answer, i) => Object.freeze({ w: FIVE_WS[i]!, answer })))
+}
+
+/** The answers to who, what, when, where and why, in that order. */
+function answersOf(s: Stage, shops: boolean, homes: boolean): readonly string[] {
   switch (s) {
-    case 'move': return Object.freeze([
-      'Why does the picture smear a little when you turn fast? Because the camera is a film camera: it shows twenty-four pictures a second and each one is open for half of its moment (a 180-degree shutter), so motion blurs the way it does at the cinema.',
-      'Why twenty-four and not more? Because that is the rate films have used for a hundred years; your eye reads it as a story rather than a screen. Your hands are not slowed by it: the controls and the physics run at the display’s own rate.',
-      'Why do wet streets shine the way they do? Because every surface answers light by how rough it is, with the same maths film studios use (it is called GGX), and your graphics chip works it out for every pixel.',
-      'Why can a whole city be on screen at once? Because the people far away are drawn simpler than the ones near you, and swap as you walk; the HUD even counts the near and the far ones.',
-      'Why start with walking? Because everything else in this city is somewhere, and you will have to get there.',
-    ])
-    case 'voice': return Object.freeze([
-      'Why do I ask why five times? Because the first wish is rarely the real one: “make it night” may mean “show me the lights”, and five whys get us there in a minute.',
-      'Why can you also talk out loud? Because the city can listen through your microphone, but only when you ask it to (the console’s recruit listen), and the words stay on this device.',
-      'Why are there words at the foot of the screen when something makes a sound? Because every sound in the city has a caption, so you can play with the sound off, or without hearing, and miss nothing.',
-      'Why does my voice sometimes come out of the speakers? Because with sound on I say my lines with the browser’s own voice, at your own head, so you can look away from the screen and still hear me.',
-      'Why does this matter? Because the city is yours to direct, and directing starts with being understood.',
-    ])
-    case 'fleet': return Object.freeze([
-      'Why do the cars never run anyone over? Because every car’s wish to move is checked against the First Law before the wheels turn: a person in the way, and the car stops. Yours is the one exception, and it still harms nobody: while you sit at the wheel it passes through people, and nobody is pushed or moved.',
-      'Why do they stop at the lights? Because every junction runs a real signal cycle and the cars read it; so can you, on the console, with stats.',
-      'Why do parked cars stay parked? Because a parked car is in a mode the realm keeps until someone at its door asks for it; nobody drives off in one on their own.',
-      'Why does the readout count “interventions”? Because every time a law overruled a driver it is counted, per law, so you can watch the city keep its promise.',
-      'Why does the fleet matter for agents? Because an agent that can be trusted with a car can be trusted with a robot arm later, and the proof is the same: the law sits under the wheel, not in the driver’s good manners.',
-    ])
-    case 'work': return Object.freeze([
-      'Why are there workplaces at all? Because agents need somewhere to do a job, and a job needs a bench, a table or a bed to stand by; the rooms give every task a place.',
-      'Why sixteen kinds? Because sixteen trades cover most of what an agent is asked for: build, store, compute, route, watch, cook, make, model, move, grow, test, respond, settle, heal, power and command.',
-      'Why can the HUD count who is at work? Because every station knows whether someone stands at it, and that number is a reading like any other, the same one the console shows.',
-      'Why mention robots in here? Because a robot’s joints can drive a body in this city and a body here can lead a robot’s joints, over the joint bridge; the city is where the simulated and the real meet.',
-      'Why does it matter to you? Because what you ask the city to do ends up at a station like these, done by someone, and you can walk in and watch.',
-    ])
-    case 'style': return Object.freeze([
-      'Why business casual? Because the city is a place of work: everyone in it, you included, is dressed as for an office, a lab or a studio, in a suit, smart casual, a pantsuit or a skirt suit, with a jacket, shirt sleeves or a coat.',
-      'Why does everyone on the street look different? Because each person’s look is drawn from that same wardrobe by a hash of their own number: a different draw for every one of them, across all ten skin tones of the Monk scale, with freckles on some and vitiligo on a few, and nobody has to pick.',
-      `Why can nothing outside the wardrobe be worn? Because every choice is a number pointing into the crowd’s own catalogue, so no saved look, no typed command${shops ? ', no shared code and no shop' : ' and no shared code'} can put anyone in anything else.`,
-      `Why does the wardrobe card draw you rather than show a mirror? Because out on the street you see through your own eyes; the card draws you from the very rings your graphics chip builds your body from, and your shadow and everyone else see the rest, freckles and vitiligo included.${shops ? ' In a shop, while its card is open, the camera steps out and circles you like a mirror (not in a headset or a shared room).' : ''}`,
-      `Why does your look have a short code? Because a look is a set of numbers: the code, with a check built in, carries them to another device or a friend; and beside You, the card has a tab for each of your own agents, with a voice and a look from the same wardrobe.${homes ? ' A home is a number too: its deed is one line of the shops’ catalogue, kept by the one shopkeeper, so every card agrees on what is yours.' : ''}`,
-    ])
-    case 'console': return Object.freeze([
-      'Why a command line in a city? Because this city is a coding tool you live in: telling a machine exactly what you mean, in words, is the thing you will do most here.',
-      'Why does help list so many words? Because the console reads the city the way the HUD does, and further: the clock, the crowd, the traffic, the frame rate and the lanes your sub-agents run in are each one word away.',
-      'Why can nothing you type turn the laws off? Because underneath the city is a kernel called Ring-0 that holds four laws in rank order; every car, every agent and every command passes through them, and the console has no word that sets them aside.',
-      'Why does the city open here? Because from now on the console is where you meet the city as it is, and the city should meet you there too.',
-      'Why is there more to find in here? Because the console has its own typed language, Crimson Noir Script, that runs in a machine with walls: a fixed amount of memory, a fixed number of steps, and only the doors the kernel opens; type noir and a line to try it.',
-    ])
+    case 'move': return [
+      'You. You are a person in this city, standing on the street like everyone else, not a camera floating in the sky.',
+      'Looking and walking. Turn your head and the whole picture turns with you; walk, and you move through the city.',
+      'Right now, and any time after. There is no rush: if nothing happens for a few seconds, I show you which control to use.',
+      'Anywhere on the streets and pavements, and in through any open door.',
+      'Because everything else in the city is somewhere, and you have to get there first.',
+    ]
+    case 'voice': return [
+      'Me, Sloane, the city’s concierge. That is a grown-up word for a helper who looks after visitors like you.',
+      'A goal, in your own words, like “make it night”. I may ask you a few questions to be sure what you mean, then I change what I can, like the time of day, the picture or the sound, and write the rest down for you.',
+      'Whenever you want me. I am on my chip during this walk, and after it too.',
+      'On my chip: the small card with my name on it. Open it and tell me there.',
+      'Because the city is yours to direct, and that starts with me understanding what you want.',
+    ]
+    case 'fleet': return [
+      'The people of the city, and you. Cars of eight kinds drive, park and wait for a driver, and flying craft hop between pads on the rooftops.',
+      'A car you can drive. Before any car moves, it checks the city’s First Law: if a person is in the way, it stops. Yours keeps people safe too: while you drive, it passes right through them, and nobody is pushed.',
+      'When a car is parked. A parked car stays where it is until someone stands at its door and gets in; nobody drives off in one on their own.',
+      'Along the kerbs, where cars park. Stand right by a door until a prompt appears at the bottom of the screen, then do what it says.',
+      'Because it shows the city keeps its promise: the law sits under every wheel, so nobody gets hurt, and a readout counts every time a law steps in.',
+    ]
+    case 'work': return [
+      'The people of the city, at work. Some of them are agents: computer helpers that do real work, reading and answering, not pretending.',
+      'Jobs. They type, check things and talk at their stations, by a bench, a table or a bed, and the HUD counts who is at work.',
+      'Whenever you ask the city for something: the job ends up at a station like these, and you can walk in and watch it being done.',
+      'In sixteen kinds of workplace with open doors on the street, from a robotics lab, a warehouse and a kitchen to a greenhouse, a control tower and a server vault.',
+      'Because every job needs a place to be done. A robot, real or make-believe, can drive a body here too, over the joint bridge: this is where the make-believe and the real meet.',
+    ]
+    case 'style': return [
+      'You, and everyone else. Everyone on the street is dressed from the same wardrobe as you, and each person gets their own look, across all ten skin tones, with freckles on some and vitiligo on a few. Your own agents get a tab each, with a voice and a look.',
+      'Your look: your clothes and their colours, your hair, skin, face and build. It all comes from the city’s own business-casual wardrobe: suits, smart casual, pantsuits and skirt suits, with a jacket, shirt sleeves or a coat.',
+      'Any time. Look, at the end of my chip, opens the wardrobe during this walk and after it. Your look has a short code, so you can take it to another device or give it to a friend.',
+      `On the wardrobe card, which draws you just as you look on the street.${shops ? ' In a shop, while its card is open, the camera steps out and circles you like a mirror (not in a headset or a shared room).' : ''}${homes ? ' Inside a home for sale, its doorstep card shows the deed: the paper that says who owns it.' : ''}`,
+      `Because the city is yours, so you should look like you. Only the city’s own wardrobe can be worn: no typed word${shops ? ', no shared code and no shop' : ' and no shared code'} can dress anyone in anything else.${homes ? ' A home works the same way: its deed is one line in the city’s catalogue, kept in one place, so every card agrees on what is yours.' : ''}`,
+    ]
+    case 'console': return [
+      'You and the city. You type the words, and the city answers: the clock, the people, the cars, and the kernel underneath it all.',
+      'A command line: a place to tell the computer exactly what you mean, in words. help lists every command, and the console has its own language too, Crimson Noir Script: type noir and a line to try it.',
+      'Now, to finish this walk: the moment the console opens, the whole city is yours. After that, open it whenever you like.',
+      'At the top of the screen. It drops down over the city when you open it, and goes away again when you close it.',
+      'Because this city is a coding tool you live in, and telling a computer exactly what you mean is what you will do most here. Nothing you type can switch the laws off: underneath, a kernel called Ring-0 holds four laws in rank order, and every car, agent and command goes through them.',
+    ]
   }
 }
 
 /** The card for a stage. */
 export function cardFor(s: Stage, o: FirstWalkOptions): StageCard {
-  return Object.freeze({ stage: s, index: STAGES.indexOf(s) + 1, count: STAGES.length, title: titleOf(s), ask: askFor(s, o).text, eli8: eli8Of(s, o.city), whys: whysOf(s, o.city), show: showOf(s) })
+  return Object.freeze({ stage: s, index: STAGES.indexOf(s) + 1, count: STAGES.length, title: titleOf(s), ask: askFor(s, o).text, eli5: eli5Of(s, o.city), ws: fiveWsOf(s, o.city), show: showOf(s) })
 }
 
 /** Sloane's line when the city opens. */

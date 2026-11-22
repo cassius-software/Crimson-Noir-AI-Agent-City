@@ -69,6 +69,39 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   pixel for pixel the x86-64 image's, and the x86-64 and aarch64 images through the same boot test after the change
   (the x86-64 application's bytes are the ones main builds). Not booted on RISC-V hardware, where the screen needs a
   firmware that offers the graphics output protocol; a riscv64 build of the page's desktop app is not part of this.
+- **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
+  commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
+  `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages
+  publishes no site over 1 GB), naming the five largest files, and when anything there cannot be measured its line
+  says the copy was not measured, with no size and no verdict, since a total short of a file is no total; `assets
+  <file or folder>...` fails any file of 2 GiB (2,147,483,648 bytes) or more, which GitHub refuses as a release asset.
+  `web.yml` runs `site dist-web` after the site's model and the speech pack are placed and before the Pages upload.
+  `assets` runs last before each upload of a file a release carries: in `build-matrix.yml` on each target's
+  `out/<target>/`, in `windows-app.yml` on its installer, `.msi` and bare `.exe` folders, in `build-release.yml` on
+  the baked media (its bake job now sets up Node, with GitHub's own `actions/setup-node`), and in `current.yml` on
+  every artifact it downloads, in its publish job and its dry run. In `build-release.yml`, `build-matrix.yml` and
+  `windows-app.yml` the tool is read from a sparse checkout of the workflow's own commit (`github.sha`, in
+  `.size-check/`), not from the commit the job bakes or builds: a dispatch for a tag that exists bakes that tag's
+  commit, and `current.yml` may have the other two build an older commit ci passed on, either of which may predate the
+  tool (every release tag so far does). A size is what `fs.stat` says the file holds (a sparse file at its full
+  length); a symbolic link is followed and counts at the size of what it names, and a link to nothing, to itself or
+  back into a folder that holds it fails by name (a link whose target is there but cannot be read gives the system's
+  reason, never "does not exist"). The limits are constants: the command line takes no flag and the tool reads no
+  environment variable, so no workflow can move a limit or skip a check. `tools/build/macAudit.mjs` now takes its
+  `ASSET_LIMIT` from the new tool, so 2 GiB has one source, and keeps its own check of the `.dmg` and the zip;
+  `MAX_BYTES`, the page's own budget in `tools/verify/page_dist.mjs`, is unchanged. `build-matrix.yml` also runs on a
+  pull request that changes the tool. Tests: `siteBudget.test.ts` (9) pins both numbers and macAudit's limit as the
+  same one; passes and fails each check by name at its edges, by size alone and through the command line over sparse
+  files (the copy at exactly 950,000,000 bytes passes and one byte more fails; a file one byte under 2 GiB passes and
+  one of exactly 2 GiB fails); measures links (and still checks when the tool is run through a link to it, rather than
+  exit 0 unseen); refuses a flag; and reads the five workflows: each of the six steps checks the files its job then
+  uploads (or, in the dry run, plans), with no condition (no `if:`, first key or not, no `continue-on-error`, no `||`
+  after the command, its run line pinned whole) and reads the tool from the workflow's own commit; and shows those
+  rules refuse each such skip, and a check read from the commit a job bakes or builds. A web copy built in the
+  container on 21 November 2026 (`npm run build:web`) measured 12,416,491 bytes, and 453,986,789 with sparse stand-ins
+  of the site model and the speech pack at their pinned sizes beside their real manifests and licence files. Not
+  verified: the steps on CI until CI runs them; GitHub's own limits can change.
+
 - **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
   `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
   names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
@@ -2433,6 +2466,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   conversation quality and speed, and any real phone or GPU.
 
 ### Changed
+
+- **The first walk explains each stage as to a five-year-old, with the five W's.** Each card's plain line is now
+  written for a five-year-old (it was for an eight-year-old), and its button answers **who, what, when, where and why**
+  one at a time, naming the next one (Who?, What?, When?, Where?, Why?), in place of five ever-deeper whys
+  (`src/09_Cognition/firstWalk.ts` `eli5Of`, `fiveWsOf`, `FIVE_WS`; `FirstWalk.tsx`). Every answer keeps to what the
+  city does: the shops and the homes are named only on a map that has them, the console's language is called Crimson
+  Noir Script in full, and the cinema-camera, GGX and microphone details are left out as too deep for the card.
+  Sloane's spoken line on the talk stage now says she may ask a few questions to be sure what you mean (her goal
+  questions are a few, not always five). `firstWalk.test.ts` pins the five W's in order, each answer screened and free of
+  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers. Sloane's goal
+  questions drop the "5-Whys" name where a player sees it: her copyable brief heads them **Questions asked** (it said
+  **Why**) and signs itself "the concierge's goal questions", and the README and MANUAL describe them as up to five short
+  questions (what, which time, where, how), which is what they always were (`intent.ts`; the class keeps its name,
+  `FiveWhys`). The quiet watch's lines are described as a question and then the how.
 
 - **Pedestrians no longer stare at you.** Until now everyone within about four and a half metres of you on foot turned
   their head and chest to your eye. Now a person looks at you only while you are talking to them: a recruit standing

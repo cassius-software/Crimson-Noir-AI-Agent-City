@@ -41,6 +41,9 @@
 # libraries (macOS's own alone: otool -L), the lowest macOS of each (otool -l), their symbols (each slice's linker map,
 # the binary's strings, nm -u -m) and the settings each slice was built with; nothing starts the built macOS app here.
 # Windows on Arm, the phones and the UEFI media build as before: no runner and no model.
+# Last before each upload, every job runs tools/verify/site_budget.mjs on out/<target>/: a file of 2 GiB or more,
+# which GitHub refuses as a release asset, fails the job. The tool comes from this workflow's own commit (a sparse
+# checkout of github.sha), since the commit built may predate it.
 # What breaks if it is removed? Every platform but Windows is a page of instructions again, and a release carries
 # only the Windows app and the OS media.
 
@@ -59,6 +62,7 @@ on:
       - third_party/llama.cpp/**
       - tools/browser/nativeE2e.mjs
       - tools/browser/tinyGguf.mjs
+      - tools/verify/site_budget.mjs
       - package.json
       - package-lock.json
       - crimson_noir_os/boot/**
@@ -323,6 +327,17 @@ jobs:
             --step "wait:TUTORIAL 6 PASSED" --step 'type:\n' --step "wait:TERMINAL READY" \
             --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
           python3 -I tools/boot_test.py "$media.iso" --arch "$arch" --timeout 300 --wait "SELFTEST PASS"
+      # The check comes from the workflow's own commit: the commit built (current.yml's ref, or a tag by hand) may
+      # predate tools/verify/site_budget.mjs.
+      - name: The size check from this workflow's own commit (the commit built may predate it)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .size-check
+          sparse-checkout: tools/verify
+          persist-credentials: false
+      - name: Every file the target made is under 2 GiB, the most GitHub takes for one release asset
+        run: node .size-check/tools/verify/site_budget.mjs assets "out/${{ matrix.target }}"
       - uses: actions/upload-artifact@v4
         with:
           name: matrix-${{ matrix.target }}

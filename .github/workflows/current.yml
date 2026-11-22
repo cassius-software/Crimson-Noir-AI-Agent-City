@@ -11,9 +11,11 @@
 #   software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani harnesses), which is what
 #   starts this workflow; then each job uploads only after its own checks, and each UEFI job only after baking its
 #   media a second time from a clean build, comparing the bytes and booting the image in QEMU (self-test, tutorial,
-#   terminal, power-off) and the ISO. A target whose job failed keeps the files of the last commit it built, as long as
-#   the release still holds those very bytes; the notes and current.json on the release say which commit each file
-#   comes from, and the run is red (the iOS build is best effort, as in build-matrix.yml, and never turns it red).
+#   terminal, power-off) and the ISO; every file it downloads is checked under GitHub's 2 GiB for one release asset
+#   (tools/verify/site_budget.mjs) before anything is published. A target whose job failed keeps the files of the last
+#   commit it built, as long as the release still holds those very bytes; the notes and current.json on the release
+#   say which commit each file comes from, and the run is red (the iOS build is best effort, as in build-matrix.yml,
+#   and never turns it red).
 # - It never steps back: it builds only a commit on main that ci passed on, and publishes it only while it is still on
 #   main and at least as new as what the release holds (asked again after the build); when GitHub cannot answer either
 #   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
@@ -195,6 +197,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: media
+      # A run whose builds all failed may download nothing: the folder is made, so the check finds no file and the next
+      # step runs as it did before there was a check.
+      - name: Every file to publish is under 2 GiB, the most GitHub takes for one release asset
+        run: |
+          mkdir -p media
+          node tools/verify/site_budget.mjs assets media
       - name: Publish to the current release (uploads, deletions, SHA256SUMS, current.json, the tag, the notes)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -242,6 +250,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: media
+      # A run whose builds all failed may download nothing: the folder is made, so the check finds no file and the next
+      # step runs as it did before there was a check.
+      - name: Every file to publish is under 2 GiB, the most GitHub takes for one release asset
+        run: |
+          mkdir -p media
+          node tools/verify/site_budget.mjs assets media
       - name: What a publish would do (nothing is written)
         env:
           GH_TOKEN: ${{ github.token }}
