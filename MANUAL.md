@@ -4827,6 +4827,22 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
   this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
   current build (below). Only GitHub's own actions run in it.
+- **Sizes GitHub takes.** GitHub refuses a release asset of 2 GiB or more, and GitHub Pages publishes no site over 1
+  GB, so every workflow that uploads checks first with `tools/verify/site_budget.mjs`, which prints one line per check
+  with the size and the limit and fails the run with the file or folder named: each job here on `out/<id>/`, last
+  before its upload; `windows-app.yml` on its installer, `.msi` and bare `.exe`; `build-release.yml` on the baked
+  media; `current.yml` on every file it downloads, before it publishes (The current build); and `web.yml` on the whole
+  web copy, the site's model and the speech pack included, which must be at most 950,000,000 bytes (On an iPhone). A
+  size is what the file system says the file holds; a symbolic link counts at the size of what it names, and one that
+  names nothing fails (one whose target is there but cannot be read gives the system's reason). A web copy with
+  anything in it that cannot be measured fails by name, and its line says it was not measured rather than giving a
+  short total. No flag or environment variable moves a limit. The tool always comes from the workflow's own commit:
+  where a job bakes or builds another commit (`build-release.yml` baking a tag that exists again, or the jobs here and
+  `windows-app.yml` building the commit `current.yml` passes them), it is read from a sparse checkout of the
+  workflow's commit in `.size-check/`, so a commit older than the tool is still checked. A web copy built in the
+  container on 21 November 2026 measured 12,416,491 bytes without its model and speech pack, and 453,986,789 with
+  stand-ins of both at their exact sizes. Not verified: the steps on CI until CI runs them; GitHub's own limits can
+  change.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
   and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,
@@ -4862,7 +4878,8 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
   baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
   the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
-  build matrix above.
+  build matrix above. Before the publish (and its dry run), every downloaded file is checked under GitHub's 2 GiB for
+  one release asset (The build matrix, Sizes GitHub takes).
 - **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
   commit it built, as long as the release still holds those very bytes, and the notes and `current.json` say which
   commit that was; the run is red so it is seen. The iOS build is best effort, as in the build matrix, and never turns
@@ -4975,13 +4992,15 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   publish also puts the site's model in `models/` beside the page (A model in this page, The site's model): fetched
   from Hugging Face at its pinned revision, kept in the workflow's cache by its pin, and checked against the pin's
   size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
-  After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
-  only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
-  Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the model's two files
-  from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin, the runtime's
-  module from the installed dependency and the vocabulary from the repository, each checked against the pin's size
-  and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and notices of both
-  beside them; a file that fails the check fails the publish.
+  Then the whole copy, the model and the speech pack included, is summed (`tools/verify/site_budget.mjs site
+  dist-web`): a copy over 950,000,000 bytes (a margin under the 1 GB GitHub Pages publishes for a site) fails the
+  publish the same way. After the deploy the workflow reads the served manifest and the model's size as the site
+  reports it, as a note only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about
+  250 full downloads). Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the
+  model's two files from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin,
+  the runtime's module from the installed dependency and the vocabulary from the repository, each checked against the
+  pin's size and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and
+  notices of both beside them; a file that fails the check fails the publish.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
