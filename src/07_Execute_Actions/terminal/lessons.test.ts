@@ -350,7 +350,8 @@ test('the words: ten lessons of three to five lines, five plain W\'s each, the l
   }
   const text = all.join('\n')
   assert.match(text, /Crimson Noir Script/)
-  assert.doesNotMatch(text, /NoirScript|(?<!Crimson )Noir Script|CrimsonScript|Crimson Script|CN Script/, 'the language by its whole name only')
+  // (The licence gate, tools/license/gate.mjs, holds every file to the one shortening policy.json lists; these are the others.)
+  assert.doesNotMatch(text, /NoirScript|(?<!Crimson )Noir Script|Crimson Script|CN Script/, 'the language by its whole name only')
   assert.doesNotMatch(text, /[!]|\b(attack|kill|weapon|target|shoot|gun|violence|injur\w*|damage)\b/i)
   // (compliance.test.ts scrubs the brand names it bans from every file; these are the ebook's other ones.)
   assert.doesNotMatch(text, /\b(clang|llvm|python|java|avx2|arm64)\b/i, 'no third-party names')
