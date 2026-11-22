@@ -41,6 +41,7 @@ import { FEATURES } from '../../09_Cognition/features.ts'
 import type { NoirTables } from './noirscript/index.ts'
 import type { QualityState, RecordingState, SipocSnapshot } from '../../05_Observe_Environment/telemetry.ts'
 import { PROGRAM } from '../../09_Cognition/firstWalk.ts'
+import { LESSONS } from './lessons.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
@@ -1289,8 +1290,9 @@ test('air gap: the terminal files reach nothing at runtime beyond React, the bra
   // repl.ts is the console's own machine: a runtime import, and the one terminal module that imports nothing itself.
   // react-dom is React's own renderer: Terminal.tsx takes flushSync from it, so a tap can open the console and focus it at once.
   // noirscript/index.ts is the console's second language: a runtime import of commands.ts, and a directory that imports nothing itself (its airgap.test.ts pins that).
-  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts']
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts']) {
+  // lessons.ts is the console's lessons (tutorial <n>): data and a small state machine, which takes only commands.ts's Line type.
+  const allowedRuntime = ['react', 'react-dom', '../../brand.ts', './bridge.ts', './commands.ts', './repl.ts', './noirscript/index.ts', './lessons.ts']
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', 'lessons.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\bimport\s*\(|\brequire\s*\(|__AC__|__SIM__/, `${file}: dynamic import or debug handle`)
     const imports = [...src.matchAll(/^\s*(import|export)\s+(type\s+)?(?:[^'";]*?\sfrom\s+)?'([^']+)'/gm)]
@@ -1766,13 +1768,13 @@ test('sim prints a one-screen summary from stats, the clock and the lock state',
 
 test('content rules: no combat vocabulary in anything the console prints', () => {
   const b = unlocked()
-  const printed = [...complete('').map((c) => c), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate', 'rooms']
+  const printed = [...complete('').map((c) => c), ...LESSONS.map((_, i) => `tutorial ${i + 1}`), 'help', 'help stats', 'help record', 'laws', 'kernel', 'stats', 'api', 'api vehicles', 'harness', 'record', 'record status', 'sim', 'operator lock', 'operator unlock', 'act', 'act list', 'act log', 'act gate', 'rooms']
     .flatMap((c) => texts(run(c, b, [])))
     .concat(motd(BRAND).map((l) => l.text))
     .join('\n')
   assert.doesNotMatch(printed, /\b(attack|kill|weapon|target|shoot|gun|violence|injur\w*|damage)\b/i)
   // No third-party names in the sources either (comments included).
-  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', '../operator.ts', '../harness.ts']) {
+  for (const file of ['bridge.ts', 'commands.ts', 'Terminal.tsx', 'repl.ts', 'lessons.ts', '../operator.ts', '../harness.ts']) {
     const src = readFileSync(new URL(`./${file}`, import.meta.url), 'utf8')
     assert.doesNotMatch(src, /\b(quake|matrix|gta|alpine|pathfinder|pf2e|paizo|busybox)\b/i, file)
   }
@@ -3427,15 +3429,21 @@ test('xr: the status line at once; vr, ar and off reach the bridge inside the ke
 test('tutorial reads the walk\'s stage and the exit program from the exam, or says the shell has none; noir hands the exam over, prints what its doors said, and opens no write', () => {
   const b = fake()
   const program = ["the exit program, from any stage, one 'noir' line at a time (the session keeps seal and swarm between lines):", ...PROGRAM.map((l) => `  noir ${l}`)]
-  // No exam (the console shell): one plain line and the program, nothing touched, and no `tutorial off`.
-  assert.deepEqual(texts(run('tutorial', b, [])), ['tutorial: no first walk in this shell (it runs in the city)', ...program])
+  // No exam (the console shell): one plain line, then the console lessons (lessons.test.ts pins them); the program on
+  // its own word; nothing touched, and no `tutorial off`.
+  const bare = texts(run('tutorial', b, []))
+  assert.equal(bare[0], 'tutorial: no first walk in this shell (it runs in the city)')
+  assert.equal(bare[1], `console lessons in Crimson Noir Script, 0 of ${LESSONS.length} finished:`)
+  assert.equal(bare.length, LESSONS.length + 3)
+  assert.deepEqual(kinds(run('tutorial', b, [])), [...Array(LESSONS.length + 2).fill('out'), 'sys'])
   assert.deepEqual(texts(run('tutorial status', b, [])), ['tutorial: no first walk in this shell (it runs in the city)'])
   assert.deepEqual(texts(run('tutorial program', b, [])), program)
-  assert.deepEqual(kinds(run('tutorial', b, [])), ['out', 'sys', 'out', 'out', 'out'])
+  assert.deepEqual(kinds(run('tutorial program', b, [])), ['sys', 'out', 'out', 'out'])
   assert.ok(isErr(run('tutorial off', b, [])))
   assert.ok(isErr(run('tutorial status now', b, [])))
+  assert.ok(isErr(run('tutorial 1 2', b, [])))
   assert.deepEqual(b.calls, [])
-  assert.deepEqual(complete('tutorial '), ['tutorial program', 'tutorial status'])
+  assert.deepEqual(complete('tutorial '), [...LESSONS.map((_, i) => `tutorial ${i + 1}`), 'tutorial hint', 'tutorial next', 'tutorial program', 'tutorial status', 'tutorial stop'])
   // The three words without an exam: they type-check and compile, and fail at run time with the shell's own message.
   assert.deepEqual(run('noir print(verify_ring0());', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
   assert.deepEqual(run('noir print(spawn_subagents(24, "sim2real_workplaces"), unlock_city(1u, 1));', b, []).lines, [{ kind: 'err', text: 'noir: no first walk in this shell: the exit program runs in the city' }])
@@ -3454,6 +3462,11 @@ test('tutorial reads the walk\'s stage and the exit program from the exam, or sa
     program: () => PROGRAM,
   }
   assert.deepEqual(texts(run('tutorial status', e, [])), ['tutorial: the first walk, stage 6 of 6 (console); it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)'])
+  // In the city, `tutorial` alone is the walk's stage and then the console lessons; `tutorial program` is the exam's.
+  assert.deepEqual(texts(run('tutorial', e, [])).slice(0, 2), ['tutorial: the first walk, stage 6 of 6 (console); it ends when you reach the console on the last stage, or with the exit program from any stage (tutorial program)', `console lessons in Crimson Noir Script, 0 of ${LESSONS.length} finished:`])
+  e.exam.program = () => ['print(1);']
+  assert.deepEqual(texts(run('tutorial program', e, [])), [program[0], '  noir print(1);'])
+  e.exam.program = () => PROGRAM
   const session = replSession()
   assert.deepEqual(run(`noir ${PROGRAM[0]}`, e, [], session).lines, [{ kind: 'sys', text: 'verify_ring0: seal 00c0ffee over 4 laws, 15 checks, contained, realm standing' }])
   assert.deepEqual(run(`noir ${PROGRAM[1]}`, e, [], session).lines, [{ kind: 'sys', text: 'spawn_subagents: 2 of 24 sub-agents at work for sim2real_workplaces' }])

@@ -490,6 +490,11 @@ export interface TerminalBridge {
   soa?: SoaBridge
   /** The first walk's exam for Crimson Noir Script's exit program; absent on a host without a city (the TTY shell). */
   exam?: ExamBridge
+  /**
+   * Where the console lessons' finished marks are kept (terminal/lessons.ts; App.tsx: the page's local storage under
+   * LESSONS_KEY, in the city and in the console alone); absent, they last as long as the console.
+   */
+  lessons?: { load(): string | null; save(value: string): void }
   ping: PingBridge
   operator: OperatorBridge
   record: RecordBridge
