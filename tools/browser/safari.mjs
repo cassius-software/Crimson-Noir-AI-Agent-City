@@ -23,7 +23,11 @@
  * card for exactly that, in words that send an iPhone to no other browser. Neither is ever let through as the other:
  * GitHub's Macs are virtual, WebKit hands a virtual Mac a GPU only under its own switch (WebKitAllowWebGPUOnVMs,
  * iphone.yml), and it never hands one to the iOS Simulator, so the Simulator proves the page loads, runs its script
- * and words its card for an iPhone, and Safari on the Mac proves the city draws in WebKit.
+ * and words its card for an iPhone, and Safari on the Mac is the one place here where the city can draw in WebKit.
+ * Where the browser gave an adapter the probe also draws (LADDER): one small experiment per kind of work the city's
+ * renderer asks of a GPU, each on a device of its own, which is a check of its own. --part splits the two, for a
+ * runner whose GPU one of them can take down for the other: `--part city` leaves the ladder out, so the city's start
+ * is the first real work the GPU is given, and `--part drawing` runs the probe with its ladder and opens no city.
  * The host adds one small script to the page it serves (RECORDER): it keeps what the page logged and every uncaught
  * error where the tool can read them, since Safari's driver gives no console. Nothing else of the page is touched.
  * --trace adds a second (TRACE): it notes the WebGPU calls of the page and of its workers, and a start that does not
@@ -33,18 +37,26 @@
  * a runner that stopped giving Safari a GPU would quietly turn the check from "the city draws" into "the card shows".
  * --fresh-safari (the Mac target) quits Safari before each page and starts it again, so a page starts in a browser
  * and a GPU process that nothing has touched, the probe included: for a runner, since it quits the Safari of the Mac.
+ * --virtual-gpu is for a Mac whose GPU is a virtual one, a hosted runner's. There the Mac's kernel can find that GPU
+ * hung, restart it and refuse the browser's GPU process everything after, and WebKit turns that into a lost device
+ * with no words. hangOf reads the kernel's own lines for it from the system log, and what such a hang took, the
+ * drawing or the city, is then reported as NOT JUDGED: never as passed, never as the page's failure, with when the
+ * hang came and during what. The page must still be left with words and a way on. It excuses nothing on a Mac that
+ * says it is no virtual machine (kern.hv_vmm_present), and nothing the kernel did not write down.
  * On a Mac, a run with a failed check ends with the system's own account (evidence): the crash reports WebKit's
  * processes left since the run began, and what the system logged about Safari's GPU process, each kind of line once
  * and in the order it first came (a failed Metal command buffer, an exit, a crash, memory pressure).
- * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one.
+ * It writes report.json and a screenshot per page to --out, prints one line per check, and exits 1 on any failed one;
+ * under GitHub Actions the checks are also the job's summary, and one not judged is a warning on the run.
  *   node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device "iPhone 17 Pro"] [--query "<query>"]...
  *                                 [--out DIR] [--boot-ms 600000] [--port 4444] [--needs-gpu] [--trace] [--fresh-safari]
+ *                                 [--virtual-gpu] [--part city|drawing]
  * It needs macOS with Safari's "Allow remote automation" on (`sudo safaridriver --enable` once), and for the iPhone
  * target Xcode with an iOS Simulator runtime. Nothing here reaches any address but this machine.
  * What breaks if it is removed? An iPhone is again something the page is only believed to run on.
  */
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { homedir } from 'node:os'
 import { extname, join, resolve, sep } from 'node:path'
@@ -187,8 +199,7 @@ const TRACER = `function (say, epoch) {
  * same tracer put in front of each worker the page starts from a Blob (the city's crowd runs its own GPU device in
  * one), whose notes come back over the worker's own postMessage, marked, and never reach the page's listeners. A
  * page whose worker cannot be given the tracer starts it as it would have: the trace never decides whether the city
- * runs. An address with safarihold=1 also keeps one 2D canvas drawn to, to learn what the browser's GPU process does
- * with and without a picture to hold.
+ * runs.
  */
 export const TRACE = `<script>(function () {
   var S = window.__SAFARI__ = window.__SAFARI__ || { errors: [], lines: [] }
@@ -214,20 +225,6 @@ export const TRACE = `<script>(function () {
   } }
   var tracer = ${TRACER}
   try { tracer(say(''), T0) } catch (e) { T.errors.push('the tracer did not start: ' + e) }
-  // A diagnosis, only where the address says safarihold=1: one 2D canvas kept drawn to, which is a picture the browser
-  // keeps in its GPU process. WebKit lets that process exit under memory pressure when it holds none (and no sound),
-  // whatever WebGPU devices live in it, on a Mac of fewer than four cores (a hosted runner has three).
-  try {
-    if (/[?&]safarihold=1(?:&|$)/.test(location.search)) {
-      var held = S.held = document.createElement('canvas')
-      held.width = 512; held.height = 512
-      var pen = held.getContext('2d')
-      var paint = function () { pen.fillStyle = 'rgb(' + (Date.now() % 255) + ',0,0)'; pen.fillRect(0, 0, 512, 512) }
-      paint()
-      setInterval(paint, 250)
-      T.key.push((Date.now() - T0) + ' a 2D canvas is held (safarihold=1)')
-    }
-  } catch (e) { T.errors.push('no canvas is held: ' + e) }
   try {
     var fromWorker = say('worker: ')
     var blobs = new Map()
@@ -351,8 +348,8 @@ export class Driver {
 /**
  * What runs inside the probe when the browser gave an adapter: one small drawing experiment per kind of work the
  * city's renderer asks of a GPU, each on a device of its own, so that a browser which drops the device on one of them
- * says which. Each waits for its work to be done, reads a pixel back where there is one, and reports what came:
- * `{ ok, pixel, lost, errors }`. WebKit reports a lost device with no words, so this is how the check learns whether
+ * says which. Each waits for its work to be done, reads a pixel back where there is one, and reports what came and
+ * when, by this machine's clock: `{ ok, pixel, lost, errors, began, ended }`. WebKit reports a lost device with no words, so this is how the check learns whether
  * a browser can draw at all (clear, draw), through a render bundle (bundle), three's own mipmap pass (mips, and
  * mipsDirect: the same passes with the draws made directly), an indirect indexed draw from a vertex buffer
  * (indirect), into a multisampled float target with depth (msaa), and onto a canvas (canvas); then the city's own
@@ -545,7 +542,7 @@ export const LADDER = `async (withTimeout) => {
   }
   const out = {}
   for (const name of Object.keys(STAGES)) {
-    const r = { ok: false, lost: null, errors: [] }
+    const r = { ok: false, lost: null, errors: [], began: Date.now(), ended: 0 }
     out[name] = r
     try {
       const how = HOW[name] || {}
@@ -567,16 +564,17 @@ export const LADDER = `async (withTimeout) => {
       r.ok = r.lost === null && r.errors.length === 0 && got !== null && got.right === true
       over = true
       if (r.lost === null) d.destroy()
-    } catch (e) { r.errors.push(String(e).slice(0, 300)) }
+    } catch (e) { r.errors.push(String(e).slice(0, 300)) } finally { r.ended = Date.now() }
   }
   return out
 }`
 
 /**
  * A page expression (async): what this browser offers, on the page and inside a worker. Every step is guarded, so one
- * missing API is one field, never the end of the probe.
+ * missing API is one field, never the end of the probe. With `drawing` the ladder runs in it, where the browser gave
+ * an adapter.
  */
-export const PROBE = `(async () => {
+const probeSource = (drawing) => `(async () => {
   const out = {}
   const step = async (name, fn) => { try { out[name] = await fn() } catch (e) { out[name] = { threw: String(e).slice(0, 400) } } }
   const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error(what + ' timed out after ' + ms + ' ms')), ms))])
@@ -641,8 +639,8 @@ export const PROBE = `(async () => {
       d.destroy()
       return r
     })
-    // What this browser's GPU can draw, one kind of work at a time (LADDER).
-    if (out.adapter && !out.adapter.threw) await step('render', () => (${LADDER})(withTimeout))
+    ${drawing ? `// What this browser's GPU can draw, one kind of work at a time (LADDER).
+    if (out.adapter && !out.adapter.threw) await step('render', () => (${LADDER})(withTimeout))` : '// Nothing more is drawn here: the ladder has a run of its own (--part drawing).'}
   }
   const WORKER = 'onmessage = async () => { const o = { gpu: typeof navigator.gpu, offscreen: typeof OffscreenCanvas, sharedArrayBuffer: typeof SharedArrayBuffer, wasm: typeof WebAssembly, cores: navigator.hardwareConcurrency ?? null }; try { if (navigator.gpu) { const a = await navigator.gpu.requestAdapter(); o.adapter = !!a; if (a) { const i = a.info; o.info = i ? { vendor: i.vendor, architecture: i.architecture, device: i.device, description: i.description } : null; const d = await a.requestDevice(); o.device = !!d; o.maxStorageBuffersPerShaderStage = d.limits.maxStorageBuffersPerShaderStage; d.destroy() } } } catch (e) { o.threw = String(e).slice(0, 400) } postMessage(o) }'
   const inWorker = (options) => withTimeout(new Promise((yes, no) => {
@@ -656,10 +654,20 @@ export const PROBE = `(async () => {
   return out
 })()`
 
+/** The probe with the drawing ladder in it. */
+export const PROBE = probeSource(true)
+
+/**
+ * The probe without the ladder (--part city): what the browser offers and one compute pass read back, and nothing
+ * else asked of its GPU, so the city's start is the first real work that GPU is given.
+ */
+export const PROBE_PLAIN = probeSource(false)
+
 /**
  * A page expression: where the city's start stands. `card` is the recovery card (its kind, its words, and the two
  * lines under Details: what was thrown, and the build, adapter and user agent), `running` the engine's own numbers
- * once ?debug has put __SIM__ on the page, `veil` the boot veil's words while it is up, `bootDone` whether the page's
+ * once ?debug has put __SIM__ on the page, `veil` the boot veil's words while it is up ('' while it shows only its
+ * mark, null once it is gone), `bootDone` whether the page's
  * script ran to its end (main.tsx), `pageErrors` and `lines` what the recorder kept. Guarded throughout: the page may
  * be between two documents.
  */
@@ -721,31 +729,39 @@ const SENDS_ELSEWHERE = /a current Chrome|Edge or Brave|Chrome or Edge|in Chrome
  * Pure. The checks one page of the city passes or fails, given what the probe found (expected) and how the page
  * ended (`page`: its outcome, and STATE at the end). Each is { ok, what, detail }.
  */
-export function judge(target, probe, page) {
+export function judge(target, probe, page, hang = null) {
   const want = expected(target, probe)
   const end = page?.end ?? {}
   const name = `?${page?.query ?? ''}`
   const checks = []
-  const check = (ok, what, detail = '') => { checks.push({ ok: Boolean(ok), what, detail: String(detail).slice(0, 1200) }) }
+  // A check that did not hold is failed, or, where `unjudged` says a hung GPU took it, not judged: never passed.
+  const check = (ok, what, detail = '', unjudged = false) => { checks.push({ ok: Boolean(ok), unjudged: !ok && Boolean(unjudged), what, detail: String(detail).slice(0, 1200) }) }
   const card = end.card ?? null
   const r = end.running ?? null
   const after = `after ${Math.round((page?.ms ?? 0) / 1000)} s`
   const got = page?.outcome === 'running' ? `the city runs, ${after}`
     : page?.outcome === 'card' ? `the ${card?.kind} card: ${card?.text ?? ''}${card?.detail ? ` [details: ${card.detail}]` : ''}`
       : `still starting ${after}: ${JSON.stringify({ veil: end.veil ?? null, body: end.body ?? null, threw: end.threw ?? null })}`
+  const runs = page?.outcome === 'running'
+  // A GPU the Mac's own kernel found hung took this start with it: the Mac's, not the page's, and not a pass either.
+  const hungHere = hang !== null && !runs
+  const lost = hungHere ? `not seen: ${hangWords(hang)}; the page: ${got}` : got
   if (want.outcome === 'running') {
-    check(page?.outcome === 'running', `${name}: the city runs (${want.why})`, page?.outcome === 'running'
+    check(runs, `${name}: the city runs (${want.why})`, runs
       ? `${Math.round((r?.fps ?? 0) * 10) / 10} fps, ${r?.pedestrians ?? '?'} people, ${r?.vehicles ?? '?'} cars, ${r?.device ?? '?'} input, GPU ${JSON.stringify(r?.gpu ?? null)}, quality ${JSON.stringify(r?.quality ?? null).slice(0, 300)}, ${after}`
-      : got)
-    if (page?.outcome === 'running') check((r?.errors ?? []).length === 0, `${name}: no engine error`, (r?.errors ?? []).join(' | '))
+      : lost, hungHere)
+    if (runs) check((r?.errors ?? []).length === 0, `${name}: no engine error`, (r?.errors ?? []).join(' | '))
+    // What the page does owe a visitor whose GPU went: words, and a way on. Its card and its veil both carry Restart.
+    if (hungHere) check(/\bRestart\b/.test(card?.text ?? end.veil ?? end.body ?? ''), `${name}: with its GPU gone, the page is left with words and a way on (Restart)`, got)
   } else {
     const right = page?.outcome === 'card' && (want.kind === null || card?.kind === want.kind)
-    check(right, `${name}: the ${want.kind ?? 'recovery'} card, since ${want.why}`, got)
+    check(right, `${name}: the ${want.kind ?? 'recovery'} card, since ${want.why}`, right ? got : lost, hungHere)
     if (right && target === 'iphone') {
       check(!SENDS_ELSEWHERE.test(card.text) && (want.kind === 'worker-gpu' || IPHONE_SAYS.test(card.text)), `${name}: the card sends an iPhone to no other browser, and says what brings WebGPU`, card.text)
     }
     if (right && target === 'mac' && want.kind === 'no-api') {
-      check(/Safari turns WebGPU on from macOS 26/.test(card.text) && !/turned off in Safari/.test(card.text), `${name}: a Mac with no WebGPU in Safari is told macOS 26 brings it`, card.text)
+      // The card's two wordings (bootFailure.ts): a Safari of 26 or newer on an older macOS, and an older Safari.
+      check(/Safari turns WebGPU on from macOS 26|the Safari that comes with macOS 26 does/.test(card.text) && !/turned off in Safari/.test(card.text), `${name}: a Mac with no WebGPU in Safari is told macOS 26 brings it`, card.text)
     }
   }
   check(end.bootDone === true, `${name}: the page’s script ran to its end`, `__bootDone ${end.bootDone}`)
@@ -818,7 +834,7 @@ export function logDigest(text, most = 80) {
   const of = /gpu|Metal|Paravirt|AGX|command buffer|memory ?pressure|lowMemory|jetsam|crash|exit|terminat|unresponsive|abort|fault|\blost\b|\bfail/i
   const seen = new Map()
   for (const line of text.split('\n')) {
-    const m = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\S*\s+(\S+)\s+(\S+?)\[(\d+):[0-9a-f]+\]\s+(.*)$/.exec(line)
+    const m = LOG_LINE.exec(line)
     if (!m || !of.test(m[5]) || m[3] === 'log') continue
     const key = `${m[3]}[${m[4]}] ${m[2]} ${m[5].replace(/0x[0-9a-f]+/gi, '0x..').slice(0, 420)}`
     const had = seen.get(key)
@@ -826,6 +842,114 @@ export function logDigest(text, most = 80) {
   }
   const lines = [...seen].map(([key, v]) => `${v.first.slice(11)} ${key}${v.count > 1 ? ` (${v.count} times, to ${v.last.slice(11)})` : ''}`)
   return lines.length > most ? [...lines.slice(0, most), `and ${lines.length - most} more kinds of line`] : lines
+}
+
+/** One line of `log show --style compact`: when, its type, the process, its number, the message. */
+const LOG_LINE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\S*\s+(\S+)\s+(\S+?)\[(\d+):[0-9a-f]+\]\s+(.*)$/
+
+/** Pure. A system log line's own time (this machine's, as the log prints it) as a clock reading in ms. */
+function clockOf(when) {
+  const m = /^(\d{4})-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)(?:\.(\d{1,3}))?/.exec(when)
+  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]), Number((m[7] ?? '0').padEnd(3, '0'))).getTime() : NaN
+}
+
+/** Pure. A clock reading as `log show --start` and `--end` take it: this machine's own time, to the second. */
+export function stamp(ms) {
+  const d = new Date(ms)
+  const two = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`
+}
+
+/**
+ * Pure. What a Mac's kernel wrote down of a GPU that hung, from `log show --style compact` lines: when it first
+ * signalled a restart of the GPU, how many it signalled, the GPU its hang report names (AppleParavirtGPU is a virtual
+ * Mac's), and the app it then stopped taking GPU work from. Null when the kernel wrote down none of it: a device lost
+ * on a GPU that did not hang is something else, and stays the page's to answer for.
+ */
+export function hangOf(text) {
+  let at = null
+  let restarts = 0
+  let gpu = null
+  let refused = null
+  for (const line of text.split('\n')) {
+    const m = LOG_LINE.exec(line)
+    if (!m || m[3] !== 'kernel') continue
+    const signalled = /\bGPURestartSignaled\b/.test(m[5])
+    const named = /\bGPU hang: (\w+)/.exec(m[5])
+    const deny = /Deny submissions\/ignore app\[([^\]]+)\]/.exec(m[5])
+    if (!signalled && !named && !deny) continue
+    if (at === null) at = m[1]
+    if (signalled) restarts++
+    if (named && gpu === null) gpu = named[1]
+    if (deny && refused === null) refused = deny[1]
+  }
+  return at === null ? null : { at, atMs: clockOf(at), restarts, gpu, refused }
+}
+
+/** Pure. A hang (hangOf) in words. */
+export function hangWords(hang) {
+  return `this Mac's kernel found its GPU${hang.gpu ? ` (${hang.gpu})` : ''} hung at ${String(hang.at).slice(11)}${hang.restarts ? ` and signalled ${hang.restarts} restart${hang.restarts === 1 ? '' : 's'} of it` : ''}${hang.refused ? `, then took no more GPU work from ${hang.refused}` : ''}`
+}
+
+/**
+ * Pure. Where a moment falls among named spans of time ({ name, from, to }, ms on one clock): during one, between
+ * two, before the first or after the last.
+ */
+export function placed(atMs, spans) {
+  const sorted = spans.filter((s) => Number.isFinite(s.from) && Number.isFinite(s.to) && s.to >= s.from).sort((a, b) => a.from - b.from)
+  const within = sorted.find((s) => atMs >= s.from && atMs <= s.to)
+  if (within) return `during ${within.name}`
+  const before = sorted.filter((s) => s.to < atMs).sort((a, b) => a.to - b.to).pop()
+  const after = sorted.find((s) => s.from > atMs)
+  if (before && after) return `between ${before.name} and ${after.name}`
+  if (after) return `before ${after.name}`
+  if (before) return `after ${before.name}`
+  return 'at no known moment of the run'
+}
+
+/**
+ * Pure. The drawing probe's stages (LADDER's result) in the order they were asked, whether every one of them held,
+ * and the lot in one line. A driver hands an object's keys back in an order of its own, so each stage's own clock
+ * (began) is what orders them.
+ */
+export function drawing(render) {
+  if (!render || typeof render !== 'object' || typeof render.threw === 'string') return { ok: false, stages: [], words: `the drawing probe did not run: ${render?.threw ?? 'no result'}` }
+  const stages = Object.entries(render).filter(([, r]) => r && typeof r === 'object').map(([name, r]) => ({ ...r, name })).sort((a, b) => (a.began ?? 0) - (b.began ?? 0))
+  const words = stages.map((r) => `${r.name} ${r.ok === true ? 'ok' : `NO (${[r.lost ? `device lost, ${r.lost}` : '', ...(r.errors ?? []), r.pixel && r.right !== true ? `pixel ${r.pixel}` : ''].filter(Boolean).join('; ') || 'no result'})`}`).join(', ')
+  return { ok: stages.length > 0 && stages.every((r) => r.ok === true), stages, words }
+}
+
+/**
+ * Pure. The run in one line, and as a job summary: how many checks held, failed and were not judged (each check's
+ * `state`: ok, failed, not judged), and, where a hung GPU took some, that what it took was not seen and is not claimed.
+ */
+export function verdictOf(target, checks, hang = null) {
+  const failed = checks.filter((c) => c.state === 'failed').length
+  const unjudged = checks.filter((c) => c.state === 'not judged').length
+  const held = checks.length - failed - unjudged
+  const line = failed > 0
+    ? `safari (${target}): ${failed} check${failed === 1 ? '' : 's'} failed${unjudged ? `, ${unjudged} not judged` : ''}`
+    : unjudged > 0
+      ? `safari (${target}): ${held} check${held === 1 ? '' : 's'} passed and ${unjudged} could NOT BE JUDGED: ${hang ? hangWords(hang) : 'its GPU hung'}. What that took was not seen here, and nothing is claimed of it.`
+      : `safari (${target}): every check passed`
+  const mark = (c) => (c.state === 'ok' ? 'passed' : c.state === 'failed' ? '**FAILED**' : '**not judged**')
+  const cell = (text) => String(text).replace(/\|/g, '\\|').replace(/\s+/g, ' ').slice(0, 300)
+  const summary = [`### Safari (${target})`, '', line, '', '| | check |', '|---|---|', ...checks.map((c) => `| ${mark(c)} | ${cell(c.what)} |`)].join('\n')
+  return { line, summary }
+}
+
+/**
+ * On a Mac: what the kernel wrote down since `since` of a GPU that hung (hangOf), or null. Two readings of the system
+ * log, each narrow, since a hung GPU fills the log with thousands of lines a minute: the restarts it signalled and
+ * the app it refused, then the few seconds around the first for the hang report that names the GPU.
+ */
+function kernelHang(since) {
+  if (process.platform !== 'darwin') return null
+  const show = (window, predicate) => run('log', ['show', ...window, '--style', 'compact', '--predicate', predicate], { ms: 180_000 }).out
+  const hang = hangOf(show(['--start', stamp(since)], 'process == "kernel" AND (eventMessage CONTAINS "GPURestartSignaled" OR eventMessage CONTAINS "Deny submissions/ignore app")'))
+  if (!hang) return null
+  const named = hangOf(show(['--start', stamp(hang.atMs - 2000), '--end', stamp(hang.atMs + 3000)], 'process == "kernel" AND eventMessage CONTAINS "GPU hang"'))
+  return { ...hang, gpu: named?.gpu ?? hang.gpu }
 }
 
 /** The Mac's own account of its memory: cores, RAM, and the kernel's memory pressure level (1 normal, 2 warning, 4 critical). */
@@ -838,10 +962,12 @@ function machine() {
 /**
  * On a Mac, after a start that failed: what the system kept of this run. The crash reports written since `since` (a
  * WebKit process that crashed leaves one within seconds, so a few are waited for), and what Safari's GPU process and
- * its keeper logged: WebKit reports a lost device with no words, and this is where the reason is written down.
- * Evidence only: nothing here changes a verdict.
+ * its keeper logged: WebKit reports a lost device with no words, and this is where the reason is written down. Where
+ * the kernel found the GPU hung (`hang`), the log is read up to a little after that: a hung GPU writes thousands of
+ * the same lines a minute after it, and they would crowd out the first ones. Evidence only: nothing here changes a
+ * verdict.
  */
-async function evidence(since, name) {
+async function evidence(since, name, hang = null) {
   if (process.platform !== 'darwin') return
   const folders = [join(homedir(), 'Library/Logs/DiagnosticReports'), '/Library/Logs/DiagnosticReports']
   const reports = () => folders.flatMap((folder) => {
@@ -855,10 +981,10 @@ async function evidence(since, name) {
     try { text = readFileSync(file, 'utf8') } catch (e) { text = String(e) }
     for (const line of crashDigest(text)) console.log(`${name}: crash report ${file.split(sep).pop()}: ${line}`)
   }
-  const minutes = Math.ceil((Date.now() - since) / 60_000) + 1
-  const log = run('log', ['show', '--last', `${minutes}m`, '--style', 'compact', '--predicate', 'process == "com.apple.WebKit.GPU" OR eventMessage CONTAINS "GPUProcess" OR eventMessage CONTAINS[c] "memory pressure" OR (process == "kernel" AND eventMessage CONTAINS[c] "gpu")'], { ms: 240_000 })
+  const until = hang ? Math.min(Date.now(), hang.atMs + 15_000) : Date.now()
+  const log = run('log', ['show', '--start', stamp(since), '--end', stamp(until + 1000), '--style', 'compact', '--predicate', 'process == "com.apple.WebKit.GPU" OR eventMessage CONTAINS "GPUProcess" OR eventMessage CONTAINS[c] "memory pressure" OR (process == "kernel" AND eventMessage CONTAINS[c] "gpu")'], { ms: 240_000 })
   const lines = logDigest(log.out)
-  console.log(`${name}: the system log about Safari's GPU process, ${minutes} min, each kind of line once, in the order it first came: ${lines.length} kind(s)${log.ok ? '' : ` (log show: ${log.err.trim().slice(0, 200)})`}`)
+  console.log(`${name}: the system log about Safari's GPU process, ${stamp(since).slice(11)} to ${stamp(until + 1000).slice(11)}, each kind of line once, in the order it first came: ${lines.length} kind(s)${log.ok ? '' : ` (log show: ${log.err.trim().slice(0, 200)})`}`)
   for (const line of lines) console.log(`${name}: log ${line}`)
   console.log(`${name}: this Mac now: ${machine()}`)
 }
@@ -869,7 +995,7 @@ async function main() {
   const all = (name) => argv.flatMap((a, i) => (a === `--${name}` && argv[i + 1] !== undefined ? [argv[i + 1]] : []))
   const flag = (name) => argv.includes(`--${name}`)
   if (flag('help')) {
-    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu] [--trace] [--fresh-safari]')
+    console.log('usage: node tools/browser/safari.mjs --web dist-web --target mac|iphone [--device NAME] [--query QUERY]... [--out DIR] [--boot-ms MS] [--port 4444] [--needs-gpu] [--trace] [--fresh-safari] [--virtual-gpu] [--part city|drawing]')
     return 0
   }
   const web = resolve(arg('web') ?? 'dist-web')
@@ -877,22 +1003,41 @@ async function main() {
   const out = resolve(arg('out') ?? 'safari-out')
   const bootMs = Number(arg('boot-ms') ?? 600_000)
   const port = Number(arg('port') ?? 4444)
-  const queries = all('query').length ? all('query') : [VISITOR]
+  // --part: the city alone (the probe without its drawing ladder), the drawing alone (no city opened), or both.
+  const part = arg('part') ?? 'both'
+  const queries = part === 'drawing' ? [] : all('query').length ? all('query') : [VISITOR]
   if (!['mac', 'iphone'].includes(target)) { console.error(`safari: no target named ${target} (mac or iphone)`); return 2 }
+  if (!['both', 'city', 'drawing'].includes(part)) { console.error(`safari: no part named ${part} (city or drawing; both without --part)`); return 2 }
   if (!existsSync(join(web, 'index.html'))) { console.error(`safari: no index.html in ${web} (npm run build:web makes dist-web/)`); return 2 }
   mkdirSync(out, { recursive: true })
   const began = Date.now()
   if (process.platform === 'darwin') console.log(`${target}: this Mac: ${machine()}`)
 
-  const report = { target, web, queries, checks: [], pages: [] }
+  const report = { target, part, web, queries, checks: [], pages: [], hang: null }
   let failed = 0
-  const check = (ok, what, detail = '') => {
-    report.checks.push({ ok, what, detail })
-    if (!ok) failed++
-    console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${detail ? ` (${detail})` : ''}`)
+  let unjudged = 0
+  // A check holds, fails, or, where a hung GPU took it (`notJudged`), is not judged: reported, and never a pass.
+  const check = (ok, what, detail = '', notJudged = false) => {
+    const state = ok ? 'ok' : notJudged ? 'not judged' : 'failed'
+    report.checks.push({ ok, state, what, detail })
+    if (state === 'failed') failed++
+    if (state === 'not judged') unjudged++
+    console.log(`${state === 'ok' ? 'ok  ' : state === 'failed' ? 'FAIL' : 'NOT JUDGED'} ${what}${detail ? ` (${detail})` : ''}`)
     return ok
   }
   const save = () => writeFileSync(join(out, 'report.json'), `${JSON.stringify(report, null, 2)}\n`)
+  // --virtual-gpu, and only on a Mac that says it is a virtual machine: a GPU its kernel found hung is the Mac's. The
+  // kernel is asked again each time something did not hold, until it has a hang to tell; a hung GPU stays refused.
+  const virtual = process.platform === 'darwin' && run('sysctl', ['-n', 'kern.hv_vmm_present'], { ms: 10_000 }).out.trim() === '1'
+  const spans = []
+  const hung = () => {
+    if (!flag('virtual-gpu') || !virtual) return null
+    if (report.hang === null) {
+      report.hang = kernelHang(began)
+      if (report.hang) console.log(`${target}: ${hangWords(report.hang)}: ${placed(report.hang.atMs, spans)}`)
+    }
+    return report.hang
+  }
 
   const capabilities = { browserName: 'safari' }
   if (target === 'iphone') {
@@ -970,7 +1115,7 @@ async function main() {
     // What the browser offers.
     await driver.go(`${host.origin}/__probe`)
     let probe = null
-    try { probe = await driver.eval(PROBE) } catch (e) { probe = { threw: e.message } }
+    try { probe = await driver.eval(part === 'city' ? PROBE_PLAIN : PROBE) } catch (e) { probe = { threw: e.message } }
     report.probe = probe
     console.log(`${target}: probe ${JSON.stringify(probe)}`)
     check(probe?.secure === true, `${target}: the page is a secure context`, `isSecureContext ${probe?.secure}`)
@@ -979,9 +1124,16 @@ async function main() {
     const want = expected(target, probe)
     report.expected = want
     console.log(`${target}: WebGPU on the page: ${probe?.gpu === 'object' ? 'yes' : 'no'}; adapter: ${adapter ? (adapter.threw ?? JSON.stringify(adapter.info)) : 'none'}; compute pass: ${adapter?.computed === true ? 'read back right' : 'not run'}; in a worker: ${JSON.stringify(probe?.worker ?? null).slice(0, 300)}`)
-    if (probe?.render) console.log(`${target}: what this GPU draws: ${probe.render.threw ?? Object.entries(probe.render).map(([name, r]) => `${name} ${r.ok ? 'ok' : `NO (${[r.lost ? `device lost, ${r.lost}` : '', ...(r.errors ?? []), r.pixel && r.right !== true ? `pixel ${r.pixel}` : ''].filter(Boolean).join('; ') || 'no result'})`}`).join(', ')}`)
     console.log(`${target}: so the page owes ${want.outcome === 'running' ? 'a running city' : `the ${want.kind ?? 'recovery'} card`}: ${want.why}`)
-    if (flag('needs-gpu')) check(want.outcome === 'running', `${target}: this browser has a GPU for WebGPU, as this runner is expected to give it`, want.why)
+    // What the browser's GPU draws, stage by stage, each with its own clock: a hang is placed among them.
+    const drawn = probe?.render ? drawing(probe.render) : null
+    for (const stage of drawn?.stages ?? []) spans.push({ name: `the drawing probe's ${stage.name}`, from: stage.began, to: stage.ended })
+    if (flag('needs-gpu')) check(want.outcome === 'running', `${target}: this browser has a GPU for WebGPU, as this runner is expected to give it`, want.why, want.outcome !== 'running' && hung() !== null)
+    if (drawn) {
+      console.log(`${target}: what this GPU draws: ${drawn.words}`)
+      const took = !drawn.ok && hung() !== null
+      check(drawn.ok, `${target}: Safari draws each kind of work the city's renderer asks of a GPU (${drawn.stages.length} kinds, each on a device of its own)`, took ? `not seen to the end: ${hangWords(report.hang)}, ${placed(report.hang.atMs, spans)}; ${drawn.words}` : drawn.ok ? drawn.stages.map((stage) => stage.name).join(', ') : drawn.words, took)
+    }
 
     // The city, once per query.
     for (const query of queries) {
@@ -990,12 +1142,15 @@ async function main() {
       report.pages.push(page)
       if (freshEach && !(await fresh(name))) { page.outcome = 'no browser'; continue }
       const t0 = Date.now()
+      // A GPU already known to be hung stays hung: the page is still opened, for what it tells its visitor, and a
+      // start that cannot come is waited for a minute and a half, not the whole time a slow start is given.
+      const wait = report.hang ? Math.min(bootMs, 90_000) : bootMs
       await driver.go(`${host.origin}/?${query}`)
       let last = ''
       let state = null
       let crowdFrom = null
       let outcome = 'timeout'
-      while (Date.now() - t0 < bootMs) {
+      while (Date.now() - t0 < wait) {
         try { state = await driver.eval(STATE) } catch (e) { state = { threw: e.message.slice(0, 300) } }
         // A new line only when the start moved on: the card, the veil's words, the engine there or not, the page's own words.
         const stage = JSON.stringify({ card: state?.card?.kind ?? null, veil: state?.veil ?? null, running: Boolean(state?.running), drawing: (state?.running?.fps ?? 0) > 0, body: state?.body ?? null, threw: state?.threw ?? null })
@@ -1003,7 +1158,9 @@ async function main() {
         if (state?.card) { outcome = 'card'; break }
         if (state?.running && typeof state.running.crowdFrames === 'number') {
           if (crowdFrom === null && state.running.fps > 0) crowdFrom = state.running.crowdFrames
-          else if (crowdFrom !== null && isRunning(state, crowdFrom + 2) && !state.veil) { outcome = 'running'; break }
+          // The veil is in the page until it has faded, and for its first seconds it has a mark and no words: only a
+          // veil that is gone (null) lets the city count as running, never one that is merely silent ('').
+          else if (crowdFrom !== null && isRunning(state, crowdFrom + 2) && state.veil === null) { outcome = 'running'; break }
         }
         await sleep(3000)
       }
@@ -1023,9 +1180,10 @@ async function main() {
         for (const line of state.gpu.calls) console.log(`${name}: WebGPU last call ${line}`)
       }
       if (outcome !== 'running' && process.platform === 'darwin') console.log(`${name}: this Mac at the end of the page: ${machine()}`)
-      for (const c of judge(target, probe, page)) check(c.ok, `${name} ${c.what}`, c.detail)
+      spans.push({ name: `the city's start at ?${query}`, from: t0, to: t0 + page.ms })
+      for (const c of judge(target, probe, page, outcome === 'running' ? null : hung())) check(c.ok, `${name} ${c.what}`, c.detail, c.unjudged)
     }
-    if (failed > 0) await evidence(began, target)
+    if (failed > 0 || unjudged > 0) await evidence(began, target, report.hang)
   } catch (e) {
     check(false, `${target}: the run`, String(e?.stack ?? e).slice(0, 800))
   } finally {
@@ -1035,7 +1193,11 @@ async function main() {
     host.server.closeAllConnections?.()
     save()
   }
-  console.log(failed === 0 ? `safari (${target}): every check passed` : `safari (${target}): ${failed} check${failed === 1 ? '' : 's'} failed`)
+  const verdict = verdictOf(target, report.checks, report.hang)
+  console.log(verdict.line)
+  // Under GitHub Actions: a check not judged is a warning on the run, and the checks are the job's summary.
+  if (process.env.GITHUB_ACTIONS === 'true' && unjudged > 0) console.log(`::warning title=Not judged in Safari::${verdict.line.replace(/\r?\n/g, ' ')}`)
+  if (process.env.GITHUB_STEP_SUMMARY) { try { appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${verdict.summary}\n`) } catch { /* the summary is a courtesy */ } }
   return failed === 0 ? 0 : 1
 }
 

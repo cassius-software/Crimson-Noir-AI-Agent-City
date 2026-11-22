@@ -21,7 +21,8 @@ import { test } from 'node:test'
 
 // tools/ is plain JavaScript with no types; a computed specifier keeps the page's typecheck off it.
 const SAFARI: string = '../tools/browser/safari.mjs'
-interface Verdict { ok: boolean; what: string; detail: string }
+interface Verdict { ok: boolean; unjudged: boolean; what: string; detail: string }
+interface Hang { at: string; atMs: number; restarts: number; gpu: string | null; refused: string | null }
 const safari = (await import(SAFARI)) as {
   VISITOR: string
   fileFor(root: string, pathname: string): string | null
@@ -29,8 +30,9 @@ const safari = (await import(SAFARI)) as {
   isRunning(state: unknown, crowdFrom?: number): boolean
   pickIphone(listing: unknown, named?: string): { name: string; udid: string; ios: string } | null
   expected(target: string, probe: unknown): { outcome: 'running' | 'card'; kind: string | null; why: string }
-  judge(target: string, probe: unknown, page: unknown): Verdict[]
+  judge(target: string, probe: unknown, page: unknown, hang?: Hang | null): Verdict[]
   PROBE: string
+  PROBE_PLAIN: string
   STATE: string
   RECORDER: string
   TRACE: string
@@ -38,6 +40,12 @@ const safari = (await import(SAFARI)) as {
   withRecorder(html: string, trace?: boolean): string
   crashDigest(text: string, frames?: number): string[]
   logDigest(text: string, most?: number): string[]
+  hangOf(text: string): Hang | null
+  hangWords(hang: Hang): string
+  placed(atMs: number, spans: { name: string; from: number; to: number }[]): string
+  stamp(ms: number): string
+  drawing(render: unknown): { ok: boolean; stages: { name: string; ok: boolean; began: number; ended: number }[]; words: string }
+  verdictOf(target: string, checks: { state: string; what: string }[], hang?: Hang | null): { line: string; summary: string }
 }
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8')
@@ -164,6 +172,9 @@ test('judge: with no GPU the card must be the one for exactly that, and an iPhon
   // A Mac with no WebGPU at all (Safari on macOS 15): told what brings it, never that it is "turned off".
   const mac = card('no-api', 'Safari has no WebGPU on this Mac Safari turns WebGPU on from macOS 26; on an older macOS, Safari 26 and newer still come without it. Crimson Noir: Agent City needs WebGPU: on a Mac, Safari on macOS 26 or newer, or a current Chrome, Edge or Brave.')
   assert.deepEqual(failures(safari.judge('mac', probe({ gpu: false }), mac)), [])
+  // The same card as an older Safari words it (Safari 17 or 18 on macOS 14 or 15): it too says macOS 26 brings WebGPU.
+  const older = card('no-api', 'This Mac needs macOS 26 for Safari Safari 18 doesn’t turn WebGPU on; the Safari that comes with macOS 26 does. Update macOS in System Settings > General > Software Update, or open the page in a current Chrome, Edge or Brave.')
+  assert.deepEqual(failures(safari.judge('mac', probe({ gpu: false }), older)), [])
   assert.equal(failures(safari.judge('mac', probe({ gpu: false }), card('no-api', 'WebGPU is turned off in Safari Safari 26 has WebGPU on unless something turned it off.'))).length >= 1, true)
   // The page's script must have run to the end either way: the watchdog's card is never the right one.
   const dead = card('no-adapter', right.end.card.text)
@@ -287,29 +298,6 @@ test('the tracer: a worker started from a Blob runs the tracer first, and its no
   assert.ok(gpu.errors.some((e) => /^\d+ a worker failed: out of memory$/.test(e)), gpu.errors.join(' | '))
 })
 
-test('the tracer: an address with safarihold=1 keeps one 2D canvas drawn to, and no other address does', () => {
-  const body = /^<script>([\s\S]*)<\/script>$/.exec(safari.TRACE)![1]!
-  const run = (search: string) => {
-    const timers: number[] = []
-    const fills: string[] = []
-    const canvas = { width: 0, height: 0, getContext: (kind: string) => ({ kind, fillStyle: '', fillRect: (...a: number[]) => { fills.push(a.join(',')) } }) }
-    const window: Record<string, unknown> = { Worker: class {} }
-    new Function('window', 'globalThis', 'self', 'URL', 'Blob', 'Map', 'setInterval', 'location', 'document', body)(window, window, window, { createObjectURL: () => 'blob:x' }, Blob, Map, (_f: () => void, ms: number) => { timers.push(ms); return 0 }, { search }, { createElement: () => canvas })
-    return { timers, fills, canvas, safari: window.__SAFARI__ as { held?: unknown; gpu: { key: string[] } } }
-  }
-  const held = run('?debug&onboarding=0&audio=0&safarihold=1')
-  assert.deepEqual(held.timers, [20, 250])
-  assert.deepEqual(held.fills, ['0,0,512,512'])
-  assert.equal(held.safari.held, held.canvas)
-  assert.deepEqual([held.canvas.width, held.canvas.height], [512, 512])
-  assert.ok(held.safari.gpu.key.some((c) => /a 2D canvas is held/.test(c)))
-  for (const search of ['?debug&onboarding=0&audio=0', '?safarihold=10', '?safarihold=0', '']) {
-    const plain = run(search)
-    assert.deepEqual(plain.timers, [20], search)
-    assert.equal(plain.safari.held, undefined, search)
-  }
-})
-
 test('crashDigest and logDigest: a crash report is told in a few lines; the log gives each kind of line about the GPU process once, the first one first', () => {
   const head = { app_name: 'com.apple.WebKit.GPU', app_version: '21625.1.2', bug_type: '309', timestamp: '2026-11-21 23:40:01.00 +0000' }
   const report = {
@@ -356,16 +344,127 @@ test('crashDigest and logDigest: a crash report is told in a few lines; the log 
   assert.deepEqual(safari.logDigest(Array.from({ length: 9 }, (_, i) => `2026-11-21 23:28:0${i}.000 E  kernel[0:1] gpu fault number ${i}`).join('\n'), 3), ['23:28:00.000 kernel[0] E gpu fault number 0', '23:28:01.000 kernel[0] E gpu fault number 1', '23:28:02.000 kernel[0] E gpu fault number 2', 'and 6 more kinds of line'])
 })
 
+/** The Mac's kernel on a virtual GPU that hung, as `log show --style compact` prints it (the run of 2026-11-21). */
+const KERNEL = [
+  '2026-11-21 23:39:31.446 E  com.apple.WebKit.GPU[4787:6f2c] [com.apple.Metal:Metal Compiler Warning] Warning: <private>',
+  '2026-11-21 23:39:43.767 F  kernel[0:1a2b] (IOGPUFamily) void IOGPUScheduler::signalHardwareError(eRestartRequest, int32_t): GPURestartSignaled stampIdx=12 type=1 prevType=0 numStamps=32',
+  '2026-11-21 23:39:43.767 F  kernel[0:1a2b] (IOGPUFamily) GPU hang: AppleParavirtGPU HardwareDiagnosisReport (BEGIN)',
+  '2026-11-21 23:39:43.768 F  kernel[0:1a2b] (IOGPUFamily) void IOGPUCommandQueue::retireCommandBuffer(IOGPUEventFence *): Deny submissions/ignore app[com.apple.WebKit] with 2 GPURestarts in 552 submissions.',
+  '2026-11-21 23:39:43.773 F  kernel[0:1a2b] (IOGPUFamily) void IOGPUScheduler::signalHardwareError(eRestartRequest, int32_t): GPURestartSignaled stampIdx=1 type=1 prevType=0 numStamps=32',
+  '2026-11-21 23:39:43.775 F  kernel[0:1a2b] (IOGPUFamily) GPU hang: AppleParavirtGPU HardwareDiagnosisReport (BEGIN)',
+].join('\n')
+
+test('hangOf: the kernel\'s own word that a GPU hung, when, which GPU, and whom it then refused; no such word is no hang', () => {
+  const hang = safari.hangOf(KERNEL)
+  assert.ok(hang)
+  assert.equal(hang.at, '2026-11-21 23:39:43.767')
+  assert.equal(hang.atMs, new Date(2026, 10, 21, 23, 39, 43, 767).getTime())
+  assert.equal(hang.restarts, 2)
+  assert.equal(hang.gpu, 'AppleParavirtGPU')
+  assert.equal(hang.refused, 'com.apple.WebKit')
+  assert.equal(safari.hangWords(hang), 'this Mac\'s kernel found its GPU (AppleParavirtGPU) hung at 23:39:43.767 and signalled 2 restarts of it, then took no more GPU work from com.apple.WebKit')
+  // The restarts alone are a hang, with no GPU named; the first line of them is when.
+  const bare = safari.hangOf(KERNEL.split('\n').filter((l) => /GPURestartSignaled/.test(l)).join('\n'))
+  assert.deepEqual([bare?.restarts, bare?.gpu, bare?.refused], [2, null, null])
+  // Not a hang: an empty log, the GPU process's own complaints, a lost device nobody in the kernel wrote of, and
+  // the same words from any process but the kernel.
+  assert.equal(safari.hangOf(''), null)
+  assert.equal(safari.hangOf(KERNEL.split('\n')[0]!), null)
+  assert.equal(safari.hangOf('2026-11-21 23:39:43.768 E  com.apple.WebKit.GPU[4787:6f2c] (Metal) Execution of the command buffer was aborted due to an error during execution. Caused GPU Hang Error (00000003:kIOGPUCommandBufferCallbackErrorHang)'), null)
+  assert.equal(safari.hangOf(KERNEL.replace(/kernel\[0:1a2b\]/g, 'Safari[4592:1a2b]')), null)
+  // What `log show --start` and `--end` take: this machine's own time, to the second.
+  assert.equal(safari.stamp(new Date(2026, 10, 21, 23, 9, 3, 999).getTime()), '2026-11-21 23:09:03')
+})
+
+test('placed: a moment is put among the run\'s own spans: during one, between two, before or after them all', () => {
+  const spans = [{ name: 'idle', from: 100, to: 200 }, { name: 'besideWorker', from: 205, to: 300 }, { name: 'the city', from: 900, to: 1500 }]
+  assert.equal(safari.placed(100, spans), 'during idle')
+  assert.equal(safari.placed(250, [...spans].reverse()), 'during besideWorker')
+  assert.equal(safari.placed(202, spans), 'between idle and besideWorker')
+  assert.equal(safari.placed(600, spans), 'between besideWorker and the city')
+  assert.equal(safari.placed(50, spans), 'before idle')
+  assert.equal(safari.placed(1600, spans), 'after the city')
+  assert.equal(safari.placed(5, []), 'at no known moment of the run')
+  assert.equal(safari.placed(5, [{ name: 'never ended', from: 1, to: 0 }, { name: 'no clock', from: Number.NaN, to: 9 }]), 'at no known moment of the run')
+})
+
+test('drawing: the stages in the order they were asked, whatever order the driver handed them back in; one that did not hold is named with why', () => {
+  const stage = (began: number, more: object = {}) => ({ ok: true, lost: null, errors: [], began, ended: began + 9, right: true, ...more })
+  const all = safari.drawing({ msaa: stage(30), clear: stage(10), draw: stage(20) })
+  assert.equal(all.ok, true)
+  assert.deepEqual(all.stages.map((r) => r.name), ['clear', 'draw', 'msaa'])
+  assert.equal(all.words, 'clear ok, draw ok, msaa ok')
+  const some = safari.drawing({ unread: stage(30, { ok: false, lost: 'unknown' }), clear: stage(10), msaa: stage(20, { ok: false, errors: ['OperationError: map async was not successful'], lost: 'unknown' }), wrong: stage(40, { ok: false, pixel: [1, 2, 3, 4], right: false }) })
+  assert.equal(some.ok, false)
+  assert.equal(some.words, 'clear ok, msaa NO (device lost, unknown; OperationError: map async was not successful), unread NO (device lost, unknown), wrong NO (pixel 1,2,3,4)')
+  // No stage at all is no proof of anything, and a probe that threw says so.
+  assert.equal(safari.drawing({}).ok, false)
+  assert.deepEqual(safari.drawing({ threw: 'Error: no ladder' }), { ok: false, stages: [], words: 'the drawing probe did not run: Error: no ladder' })
+  assert.equal(safari.drawing(null).ok, false)
+})
+
+test('judge: a start a hung GPU took is not judged, never passed, and the page must still be left with words and a way on', () => {
+  const hang = safari.hangOf(KERNEL)!
+  const reset = card('gpu-reset', 'The graphics device was reset The GPU was reset: a driver reset, or a crash in the browser’s GPU process. Restart: the city comes back from the same seed. Restart Open the console Details')
+  const v = safari.judge('mac', probe(), reset, hang)
+  const city = v.find((c) => /the city runs/.test(c.what))!
+  assert.deepEqual([city.ok, city.unjudged], [false, true])
+  assert.match(city.detail, /^not seen: this Mac's kernel found its GPU \(AppleParavirtGPU\) hung at 23:39:43\.767 .*; the page: the gpu-reset card: /)
+  assert.deepEqual(failures(v), [city.what], 'nothing else is in doubt: the card has words and Restart, the script ran, no page error')
+  assert.ok(v.some((c) => c.ok && /with its GPU gone, the page is left with words and a way on \(Restart\)/.test(c.what)))
+  // Without the kernel's word the same start is the page's failure, as it always was.
+  const strict = safari.judge('mac', probe(), reset)
+  assert.deepEqual(strict.filter((c) => !c.ok).map((c) => [/the city runs/.test(c.what), c.unjudged]), [[true, false]])
+  assert.ok(!strict.some((c) => /with its GPU gone/.test(c.what)))
+  // Still starting when the time ran out: the veil's words carry Restart; a page left blank fails that check outright.
+  const waiting = { outcome: 'timeout', query: safari.VISITOR, ms: 90000, end: { card: null, running: null, veil: 'Still starting: starting the physics… a slow GPU can take a few minutes. Restart Open the console', bootDone: true, pageErrors: [] } }
+  assert.deepEqual(safari.judge('mac', probe(), waiting, hang).filter((c) => !c.ok).map((c) => c.unjudged), [true])
+  const blank = { outcome: 'timeout', query: safari.VISITOR, ms: 90000, end: { card: null, running: null, veil: null, body: '', bootDone: true, pageErrors: [] } }
+  const left = safari.judge('mac', probe(), blank, hang).filter((c) => !c.ok)
+  assert.deepEqual(left.map((c) => c.unjudged), [true, false])
+  assert.match(left[1]!.what, /with its GPU gone, the page is left with words and a way on/)
+  // A hang never turns a page error or a script that did not end into anything but a failure.
+  const broken = { ...reset, end: { ...reset.end, bootDone: false, pageErrors: ['TypeError: x'] } }
+  assert.deepEqual(safari.judge('mac', probe(), broken, hang).filter((c) => !c.ok && !c.unjudged).length, 2)
+  // And a city that runs is judged as running, hang or no hang.
+  assert.deepEqual(failures(safari.judge('mac', probe(), running(), hang)), [])
+  assert.deepEqual(failures(safari.judge('mac', probe(), running(['crowd: step failed']), hang)).length, 1)
+  // Where the probe itself found no working GPU, a card is owed; a hang excuses only its absence.
+  assert.deepEqual(safari.judge('mac', probe({ computed: false }), waiting, hang).filter((c) => !c.ok).map((c) => c.unjudged), [true])
+  assert.deepEqual(failures(safari.judge('mac', probe({ computed: false }), reset, hang)), [])
+})
+
+test('verdictOf: checks not judged are counted apart and said aloud, a failure stays a failure, and the summary lists every check', () => {
+  const hang = safari.hangOf(KERNEL)!
+  const checks = [{ state: 'ok', what: 'mac: a Safari session' }, { state: 'not judged', what: 'mac-1 ?debug: the city runs | here' }, { state: 'ok', what: 'mac-1 ?debug: no uncaught error on the page' }]
+  const v = safari.verdictOf('mac', checks, hang)
+  assert.equal(v.line, 'safari (mac): 2 checks passed and 1 could NOT BE JUDGED: this Mac\'s kernel found its GPU (AppleParavirtGPU) hung at 23:39:43.767 and signalled 2 restarts of it, then took no more GPU work from com.apple.WebKit. What that took was not seen here, and nothing is claimed of it.')
+  assert.deepEqual(v.summary.split('\n'), ['### Safari (mac)', '', v.line, '', '| | check |', '|---|---|', '| passed | mac: a Safari session |', '| **not judged** | mac-1 ?debug: the city runs \\| here |', '| passed | mac-1 ?debug: no uncaught error on the page |'])
+  assert.equal(safari.verdictOf('mac', [...checks, { state: 'failed', what: 'x' }], hang).line, 'safari (mac): 1 check failed, 1 not judged')
+  assert.equal(safari.verdictOf('iphone', [{ state: 'ok', what: 'a' }]).line, 'safari (iphone): every check passed')
+  assert.equal(safari.verdictOf('mac', [{ state: 'failed', what: 'a' }, { state: 'failed', what: 'b' }]).line, 'safari (mac): 2 checks failed')
+})
+
 test('the probe: its drawing ladder parses, runs inside the probe, and tries each kind of work the renderer asks for', () => {
   assert.doesNotThrow(() => new Function(`return ${safari.LADDER}`), 'the ladder is a function expression')
   assert.doesNotThrow(() => new Function(`return ${safari.PROBE}`), 'the probe is an expression with the ladder in it')
   assert.ok(safari.PROBE.includes(safari.LADDER), 'the probe runs the ladder')
+  // --part city: the same probe with no ladder in it, so the city's start is the first real work the GPU is given;
+  // --part drawing: the ladder, and no city opened.
+  assert.doesNotThrow(() => new Function(`return ${safari.PROBE_PLAIN}`))
+  assert.ok(!safari.PROBE_PLAIN.includes('const STAGES') && !safari.PROBE_PLAIN.includes("step('render'"), 'the plain probe draws nothing')
+  assert.equal(safari.PROBE.replace(/\n {4}\/\/ What this browser's GPU can draw[\s\S]*?\(withTimeout\)\)\n/, '\n    // Nothing more is drawn here: the ladder has a run of its own (--part drawing).\n'), safari.PROBE_PLAIN, 'and is the probe in every other line')
+  assert.match(TOOL, /driver\.eval\(part === 'city' \? PROBE_PLAIN : PROBE\)/)
+  assert.match(TOOL, /const queries = part === 'drawing' \? \[\] : all\('query'\)\.length \? all\('query'\) : \[VISITOR\]/)
   const stages = /const STAGES = \{([\s\S]*?)\n {2}\}\n/.exec(safari.LADDER)
   assert.ok(stages, 'the stages')
   assert.deepEqual([...stages[1]!.matchAll(/^ {4}(\w+): /gm)].map((m) => m[1]), ['clear', 'draw', 'bundle', 'mips', 'mipsDirect', 'npot', 'fourMips', 'power', 'features', 'cityStart', 'idle', 'besideWorker', 'indirect', 'msaa', 'canvas', 'unread', 'garbage'])
   // Each stage has a device of its own: a browser that drops the device on one kind of work still answers for the rest.
   assert.match(safari.LADDER, /for \(const name of Object\.keys\(STAGES\)\) \{[\s\S]*?requestAdapter\(how\.adapter\)[\s\S]*?requestDevice\(\{ label: how\.label \|\| 'probe: ' \+ name, /)
   assert.match(safari.LADDER, /r\.ok = r\.lost === null && r\.errors\.length === 0 && got !== null && got\.right === true/)
+  // Each stage keeps its own clock, and ends it whatever happened in it: a hang is placed among them by it.
+  assert.match(safari.LADDER, /const r = \{ ok: false, lost: null, errors: \[\], began: Date\.now\(\), ended: 0 \}/)
+  assert.match(safari.LADDER, /\} catch \(e\) \{ r\.errors\.push\(String\(e\)\.slice\(0, 300\)\) \} finally \{ r\.ended = Date\.now\(\) \}/)
 })
 
 test('the tool: Safari through safaridriver on this machine only, the two targets, and a verdict that can fail', () => {
@@ -377,6 +476,20 @@ test('the tool: Safari through safaridriver on this machine only, the two target
   assert.match(safari.PROBE, /requestAdapter\(\)/)
   assert.match(safari.STATE, /\[data-failure\]/)
   assert.equal(safari.VISITOR, 'debug&onboarding=0&audio=0')
+  // What a hung GPU took goes unjudged only under --virtual-gpu, only on a Mac that says it is a virtual machine, and
+  // only on the kernel's own lines; a failed check still ends the run with 1, and nothing is left of the diagnosis
+  // that kept a canvas drawn to.
+  assert.match(TOOL, /const virtual = process\.platform === 'darwin' && run\('sysctl', \['-n', 'kern\.hv_vmm_present'\], \{ ms: 10_000 \}\)\.out\.trim\(\) === '1'/)
+  assert.match(TOOL, /if \(!flag\('virtual-gpu'\) \|\| !virtual\) return null/)
+  assert.match(TOOL, /'process == "kernel" AND \(eventMessage CONTAINS "GPURestartSignaled" OR eventMessage CONTAINS "Deny submissions\/ignore app"\)'/)
+  assert.match(TOOL, /for \(const c of judge\(target, probe, page, outcome === 'running' \? null : hung\(\)\)\) check\(c\.ok, `\$\{name\} \$\{c\.what\}`, c\.detail, c\.unjudged\)/)
+  assert.match(TOOL, /return failed === 0 \? 0 : 1\n\}/)
+  // A city counts as running only once the veil is out of the page: while it covers the city with its mark alone its
+  // words are the empty string, which is not gone.
+  assert.match(TOOL, /isRunning\(state, crowdFrom \+ 2\) && state\.veil === null\) \{ outcome = 'running'; break \}/)
+  assert.match(safari.STATE, /veil: veil \? text\(veil\)\.slice\(0, 400\) : null/)
+  assert.doesNotMatch(TOOL, /!state\.veil\b/)
+  assert.doesNotMatch(TOOL, /safarihold/)
 })
 
 test('iphone.yml: Safari on both Macs and in the Simulator, GitHub\'s own actions only, read-only, and no way to pass unseen', () => {
@@ -388,12 +501,18 @@ test('iphone.yml: Safari on both Macs and in the Simulator, GitHub\'s own action
   const mac = FLOW.slice(FLOW.indexOf('\n  mac:\n'), FLOW.indexOf('\n  iphone:\n'))
   const phone = FLOW.slice(FLOW.indexOf('\n  iphone:\n'))
   assert.ok(mac.length > 0 && phone.length > 0, 'the mac job and the iphone job')
-  assert.match(mac, /runner: \[macos-26, macos-15\]/)
+  // macOS 26 twice, each on a Mac of its own (the city, and the drawing ladder), and macOS 15 for the city's card.
+  assert.match(mac, /matrix:\n {8}include:\n {10}- \{ runner: macos-26, part: city \}\n {10}- \{ runner: macos-26, part: drawing \}\n {10}- \{ runner: macos-15, part: city \}\n/)
+  assert.match(mac, /name: safari\$\{\{ matrix\.part == 'drawing' && ' draws' \|\| '' \}\} \(\$\{\{ matrix\.runner \}\}\)/)
+  assert.match(mac, /name: safari-mac-\$\{\{ matrix\.runner \}\}-\$\{\{ matrix\.part \}\}-\$\{\{ github\.run_id \}\}/, 'two runs on one runner keep their reports apart')
   assert.match(mac, /fail-fast: false/)
   assert.match(mac, /defaults write -g WebKitAllowWebGPUOnVMs -bool YES/, 'WebKit\'s own switch for a virtual Mac, before Safari starts')
   assert.ok(mac.indexOf('WebKitAllowWebGPUOnVMs -bool YES') < mac.indexOf('safari.mjs --web dist-web --target mac'), 'the switch is set before Safari starts')
   assert.match(mac, /node tools\/browser\/safari\.mjs --web dist-web --target mac .*\$\{\{ matrix\.runner == 'macos-26' && '--needs-gpu' \|\| '' \}\}/, 'on macOS 26 a Safari without a GPU fails the check')
   assert.match(mac, /safari\.mjs --web dist-web --target mac --trace /, 'a start WebKit ends says which WebGPU calls came before')
+  assert.match(mac, /safari\.mjs --web dist-web --target mac --trace --fresh-safari --virtual-gpu --part \$\{\{ matrix\.part \}\} /, 'each page in a Safari nothing has touched; a hang of the runner\'s virtual GPU is said, not passed')
+  assert.doesNotMatch(phone, /--virtual-gpu/, 'the Simulator is given no GPU to hang: nothing there is ever left unjudged')
+  assert.doesNotMatch(FLOW, /safarihold/)
   assert.match(phone, /runs-on: macos-26\n/)
   assert.match(phone, /node tools\/browser\/safari\.mjs --web dist-web --target iphone /)
   for (const job of [mac, phone]) {

@@ -6,7 +6,9 @@
 # browser job fakes an iPhone inside Chrome, which proves the page's layout and words for an iPhone and nothing about
 # WebKit itself. Here the page owes each Safari what that Safari can do: on macOS 26, where WebKit has a GPU, the city
 # must draw with its crowd advancing; in the iOS Simulator and on macOS 15, where WebKit has none, the page must load,
-# run its script and show the card for exactly that. Only GitHub's own actions run here.
+# run its script and show the card for exactly that. One thing is outside the page's power: a hosted Mac's GPU is a
+# virtual one, and when the Mac's own kernel writes down that it hung, what the hang took is reported as NOT JUDGED,
+# a warning on the run, never a pass and never the page's failure. Only GitHub's own actions run here.
 # What breaks if it is removed? An iPhone is again something the page is only believed to run on.
 
 name: iphone
@@ -30,16 +32,26 @@ defaults:
     shell: bash
 
 jobs:
-  # Safari on the Mac is the check that the city draws in WebKit: the same engine, WGSL compiler and Metal path an
-  # iPhone runs, on this Mac's GPU. macOS 26 gives it a GPU under WebKit's switch for virtual Macs, so there a Safari
-  # without one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes the card that says so. --trace
-  # keeps the WebGPU calls of a start, so a start WebKit ends says what it was asked just before.
+  # Safari on the Mac is where the city can draw in WebKit: the same engine, WGSL compiler and Metal path an iPhone
+  # runs, on this Mac's GPU. macOS 26 gives it a GPU under WebKit's switch for virtual Macs, so there a Safari without
+  # one fails (--needs-gpu); macOS 15's Safari has no WebGPU at all, and owes the card that says so. --trace keeps the
+  # WebGPU calls of a start, so a start WebKit ends says what it was asked just before; --fresh-safari gives each page
+  # a Safari nothing has touched. --virtual-gpu: this Mac's GPU is a virtual one (AppleParavirtGPU), which the kernel
+  # has been seen to find hung and then refuse Safari's GPU process, in the tool's own small drawing and at the city's
+  # start alike. Only then, and only on the kernel's own written word, is what the hang took marked NOT JUDGED.
+  # Two runs on macOS 26, each on a Mac of its own: the city (--part city: the city's start is the first real work
+  # Safari's GPU is given), and the drawing (--part drawing: one small piece of the renderer's work at a time, each
+  # on a device of its own). Apart, because on this virtual GPU either has been seen to end with the GPU hung, and a
+  # hung GPU stays hung for whatever is asked of it next.
   mac:
-    name: safari (${{ matrix.runner }})
+    name: safari${{ matrix.part == 'drawing' && ' draws' || '' }} (${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-26, macos-15]
+        include:
+          - { runner: macos-26, part: city }
+          - { runner: macos-26, part: drawing }
+          - { runner: macos-15, part: city }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     steps:
@@ -73,12 +85,12 @@ jobs:
         run: sudo safaridriver --enable
       - name: The web copy in Safari on this Mac
         run: |
-          node tools/browser/safari.mjs --web dist-web --target mac --trace --fresh-safari --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
-            --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0' --query 'debug&onboarding=0&audio=0&safarihold=1'
+          node tools/browser/safari.mjs --web dist-web --target mac --trace --fresh-safari --virtual-gpu --part ${{ matrix.part }} --boot-ms 420000 --out "$RUNNER_TEMP/safari/mac" ${{ matrix.runner == 'macos-26' && '--needs-gpu' || '' }} \
+            --query 'debug&onboarding=0&audio=0' --query 'debug&onboarding=0&crowd=512&cars=8&scale=0.5&cinema=0&audio=0'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: safari-mac-${{ matrix.runner }}-${{ github.run_id }}
+          name: safari-mac-${{ matrix.runner }}-${{ matrix.part }}-${{ github.run_id }}
           path: ${{ runner.temp }}/safari/
           if-no-files-found: ignore
           retention-days: 30

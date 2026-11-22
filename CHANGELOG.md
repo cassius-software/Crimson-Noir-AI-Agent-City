@@ -15,6 +15,29 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **The web copy is opened in a real Safari on every change** (`.github/workflows/iphone.yml`,
+  `tools/browser/safari.mjs`). ci's browser job fakes an iPhone inside Chrome, which shows the page's layout and
+  words for an iPhone and nothing about WebKit. The new workflow serves the built web copy on the runner and drives
+  Safari itself through safaridriver, in four jobs: Safari in the iOS Simulator, Safari on macOS 15, and two on
+  macOS 26, each on a Mac of its own: the city, and a drawing probe (seventeen small pieces of the renderer's work,
+  each on a GPU device of its own, read back where there is a pixel to read). A probe first finds what the browser
+  offers, and that decides what the page owes it: a browser with a working GPU owes a running city; one with no
+  adapter, or no WebGPU, owes the card for exactly that, and on an iPhone a card that names no other browser.
+  **What CI has shown** (the runs of 2026-11-21): Safari 26.5 in the iOS Simulator, which WebKit gives no adapter,
+  loads the page, runs its script to the end with no error and gets the no-adapter card in an iPhone's words; Safari
+  27.2 on macOS 15, which has no WebGPU, gets the card that says macOS 26 brings it; Safari 27.2 on macOS 26 gives the
+  page and a worker a GPU device, reads a compute pass back right, and in one run drew all fifteen kinds of work the
+  probe then had. **What CI has not shown is the city running in Safari.** A hosted Mac's GPU is a virtual one
+  (WebKit gives a virtual Mac WebGPU only under its own switch, `WebKitAllowWebGPUOnVMs`), and on every start there
+  the page's device was lost about 2.6 s in, with no words from WebKit. The Mac's kernel log says why: `GPU hang:
+  AppleParavirtGPU`, restarts of the GPU, then `Deny submissions/ignore app[com.apple.WebKit]`; the same hang once
+  came during the probe's own small drawing. So where the kernel writes that hang down (`--virtual-gpu`, `hangOf`),
+  the check reports what it took as NOT JUDGED, a warning on the run, never a pass and never the page's failure,
+  says when the hang came and during what, and still requires the page to be left with words and Restart; on a Mac
+  that is no virtual machine nothing is excused. `--trace` keeps the WebGPU calls of a start, the page's and its
+  workers', and a run with a failed or unjudged check prints the crash reports and the system log's account of
+  Safari's GPU process. Pinned by `safariCheck.test.ts`. Not verified on a real iPhone, iPad or Mac.
+
 - **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
   `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
   names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
@@ -2763,6 +2786,33 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   envelope, which nothing draws.
 
 ### Fixed
+
+- **No recovery card sends an iPhone or iPad to Chrome.** A visitor on an iPhone without WebGPU got a card whose last
+  line opened with "a current Chrome, Edge or Brave", and another browser there was told to open Safari. Every browser
+  on an iPhone is Safari's engine, and WebKit turns WebGPU on for all of them from iOS 26, so both lines sent the reader
+  somewhere that changes nothing. `bootFailure.ts` now words that line for the device in hand (`webgpuLine`): an
+  iPhone or iPad is told that iOS 26 or iPadOS 26 brings WebGPU and that another browser does not add it; a Mac is
+  told Safari on macOS 26 or newer, or a current Chrome, Edge or Brave (Safari's own number is not enough: Safari 27
+  on macOS 15 has no WebGPU); everything else keeps the old line, with Safari named by its system. Chrome, Firefox,
+  Edge and an app's built-in browser on an iPhone hear of the iOS update first and of Safari second
+  (`iosBefore26` reads the system token, which is frozen at 18_6 and later from iOS 26 on), and the page's own
+  watchdog in `index.html` says the same, an iPad that asks for the desktop site included: it says it is a Mac
+  (Safari's default on an iPad), and is known by its touch points, as `platformOf` knows it. Shown in CI by
+  `iphone.yml`: Safari in the iOS Simulator (which is given no GPU) gets the card for that, and the check fails on
+  any card there that names another browser; Safari 27.2 on macOS 15 gets the card that says macOS 26 brings WebGPU.
+  Not verified on a real iPhone.
+- **A build step that downloads is run again before it fails its target.** Maven Central answered 429 to one Android
+  build on 2026-11-21, which failed that target for the commit. `tools/build/matrix.mjs` now marks the steps that
+  download as they run (`rustup target add`, and the Android and iOS builds, where Gradle and Xcode fetch their
+  packages) and runs such a step again a minute later, once (rustup twice), before the target fails; a build that is
+  really broken fails each time and still fails. Pinned in `buildMatrix.test.ts`. Not yet seen to rescue a build:
+  no package host has refused one since.
+- **The current downloads say what an iPhone should use.** The release notes said of the `.ipa` only that it "must be
+  re-signed", and its row read like an iPhone build. They now carry a line of their own: on an iPhone or iPad, open
+  the web copy in Safari (iOS 26 or newer); the `.ipa` is unsigned, no iPhone installs it as it is, and it is a build
+  for a developer to sign with an Apple developer account. They also say that the city has not been seen running in
+  Safari yet: nobody has tried a real iPhone, and the Macs that check every change have virtual graphics that cannot
+  draw it. The table's row is named "unsigned: for a developer to sign, not to install".
 
 - **Lakefront Metro's ferry pier never opens with a guideway column inside it.** At the new waterfront start of
   Lakefront Metropolis two columns of the elevated loop stood inside the pier's railings (columns every 8 m on the

@@ -4911,8 +4911,13 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
 
 ## On an iPhone (the web app)
 
-The latest iPhone plays the whole city in Safari, on its own GPU: Safari 26 (iOS 26) turns WebGPU on by default, and
-the page picks the phone's tier itself (Autoscaling). Safari gives WebGPU only to a secure page, one served over
+An iPhone or iPad is meant to play the whole city in Safari, on its own GPU, from iOS 26 and iPadOS 26 on: they are
+the first to turn WebGPU on by default, and the page picks the phone's tier itself (Autoscaling). **Nobody has run it
+on a real iPhone yet**, so how it looks and how fast it runs there is not known; what is checked on every change, in
+Safari itself, is under Browser support and what is verified (In Safari). An iPhone on an older iOS gets a card that
+says it needs iOS 26, and Chrome, Firefox and Edge there are Safari's engine: they get WebGPU from the same update and
+add nothing before it. The `.ipa` the build matrix makes is no way in: it is unsigned, and no iPhone installs an
+unsigned app (Build matrix, `ios-ipa`). Safari gives WebGPU only to a secure page, one served over
 https: the Files app only previews `dist/index.html`, and the page served over plain http on the home network
 (`http://192.168.1.20:4173`) gets no WebGPU and shows no city. `npm run build:web` writes `dist-web/`, the same page made installable
 by `tools/web/pwa.mjs`:
@@ -5640,6 +5645,29 @@ the production page finds no physics object in the page and has every crafted me
   `ask vram 16`, the refusal of 5000, and `ask vram auto`.
 - **Not verified:** a real GPU, a real Ollama (growing a context included), the NixOS probe on hardware, and the
   Windows app's DXGI reading on a real Windows machine (built by CI, not run).
+
+**In Safari (unreleased).** What is proved, and where:
+- **In Node, on every CI run:** `safariCheck.test.ts` pins the check itself (`tools/browser/safari.mjs`): what a
+  browser's probe makes the page owe it, the judgement of a page's end (a card for a browser with no GPU must be the
+  one for exactly that, and on an iPhone must name no other browser), the static host, the tracer of WebGPU calls on
+  the page and in a worker, the reading of a Mac's crash reports and system log, and the workflow's own lines.
+  `bootWatchdog.test.ts` and `bootFailure.test.ts` pin the cards' words for an iPhone, an iPad (one that says it is a
+  Mac included) and a Mac.
+- **In Safari, on every change (`iphone.yml`):** the built web copy, served on the runner, driven through
+  safaridriver. Safari 26.5 in the iOS Simulator (the iPhone's own WebKit build, user agent, screen and touch) loads
+  the page, runs its script to the end with no error and, given no GPU adapter there, gets the no-adapter card in an
+  iPhone's words, with no other browser named. Safari 27.2 on macOS 15, which has no WebGPU, gets the card that says
+  macOS 26 brings it. Safari 27.2 on macOS 26 gives the page and a worker a GPU device and reads a compute pass back
+  right; a drawing probe then asks for seventeen small pieces of the renderer's work, each on a device of its own.
+- **Not judged on GitHub's Macs: the city running in Safari.** Their GPU is a virtual one. On every start there the
+  page's device was lost about 2.6 s in, and the Mac's kernel log names the cause: the virtual GPU hung, was
+  restarted, and the kernel then took no more GPU work from Safari. The check reads that from the kernel's own lines
+  and reports the city as NOT JUDGED, a warning on the run: not passed, and not the page's failure. With the GPU gone
+  the page must still show its card or its still-starting line, with Restart, and that is checked.
+- **Not verified:** a real iPhone, iPad or Mac. On a Mac with macOS 26, `sudo safaridriver --enable` once, then
+  `npm run build:web` and `node tools/browser/safari.mjs --web dist-web --target mac --needs-gpu` is the same check
+  with nothing excused: there the city must run. On an iPhone, the live web copy in Safari on iOS 26 is the test, and
+  a card's Details line (the build, the adapter, the browser) is what to send back if it shows one.
 
 For 1.4.0-beta.1 (Agent City v1.0 Stable Beta), in this environment: a Linux container with Node 22, and a
 headless Chromium whose only WebGPU adapter is software.
