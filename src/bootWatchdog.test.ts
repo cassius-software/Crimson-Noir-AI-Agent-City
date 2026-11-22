@@ -259,6 +259,27 @@ test('what the city will need, where the browser plainly lacks it; nothing of th
   const pad = new Page()
   pad.ua = 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0.7390.96 Mobile/15E148 Safari/604.1'
   assert.match(words(pad), /which an iPad has from iPadOS 26 on/)
+  // An iPad asked for the desktop site (Safari's default on an iPad) says it is a Mac; its touch points tell it apart
+  // from one, and without WebGPU it is told what an iPad is told, and sent to no other browser. Its Version token
+  // decides nothing: Chrome there sends a fixed old one, so with WebGPU it is told nothing more, whatever the token.
+  // A Mac, which has no touch points, keeps the general line.
+  const DESKTOP = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)'
+  for (const tail of ['Version/17.6 Safari/605.1.15', 'CriOS/141.0.7390.96 Version/11.1.1 Safari/605.1.15', 'CriOS/141.0.7390.96 Safari/605.1.15']) {
+    const padAsMac = new Page()
+    padAsMac.ua = `${DESKTOP} ${tail}`
+    padAsMac.nav = { maxTouchPoints: 5 }
+    const said = words(padAsMac)
+    assert.match(said, /needs WebGPU, which an iPad has from iPadOS 26 on \(Settings > General > Software Update\); another browser does not add it\./, tail)
+    assert.doesNotMatch(said, /a current Chrome|Edge|Brave|macOS/, 'an iPad has no other engine to switch to')
+    const withGpu = new Page()
+    withGpu.ua = padAsMac.ua
+    withGpu.nav = { maxTouchPoints: 5, gpu: {} }
+    assert.doesNotMatch(words(withGpu), /also needs/, `an iPad with WebGPU is told nothing more, whatever its Version token: ${tail}`)
+  }
+  const mac = new Page()
+  mac.ua = `${DESKTOP} Version/18.6 Safari/605.1.15`
+  mac.nav = { maxTouchPoints: 0 }
+  assert.match(words(mac), /needs WebGPU: a current Chrome, Edge or Brave, or Safari on macOS 26 or newer\./, 'a Mac is a Mac')
   const phoneApp = new Page()
   phoneApp.ua = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
   phoneApp.window.__TAURI_INTERNALS__ = {}
