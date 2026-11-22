@@ -5,7 +5,7 @@
  * Why does this file exist? It is Sloane's quiet way of showing a brand-new visitor the city without ever calling it a
  * lesson: for the first five minutes after they walk in, Sloane watches what they do (look around, walk, go to The
  * Spire, talk to someone, press M, turn the clock) and, when they have done nothing for half a minute, says one thing
- * in the chat, in the shape of the Five Whys: first why they might want something ("Ever wonder what's behind you?"),
+ * in the chat, as a question and its answer: first why they might want something ("Ever wonder what's behind you?"),
  * then how. One line at a time, a long pause between lines, never the same line twice, nothing for what they have
  * already found out for themselves, and nothing at all once they are busy. Every line is a plain sentence a
  * five-year-old would follow; the words "tutorial", "lesson" and "step" never appear. This is pure data and timing with

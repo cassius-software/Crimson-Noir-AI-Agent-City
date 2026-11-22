@@ -326,14 +326,19 @@ head of the pole, over the asphalt, the sidewalk, the people, the cars and the f
 lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on Low, 128 on Medium, 192 on High, 256
 on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
 Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
-lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
-and beyond their reach its ground is lit by paint too, from a picture rather than from the grid: the window seen from
+lit by its light or by its pool, never both. The same lamps light Lakefront Metro, whose lamps stand along every street
+of its map, so the lit ones are the nearest to you wherever you walk (chosen from the lamps in 40 m cells,
+`cityLights.ts` `LampIndex`, the same lamps a sort of all 23,000 would choose). Its ground beyond their reach is lit by
+paint too inside its street window, from a picture rather than from the grid: the window seen from
 above, a texel a metre, baked once at boot from what stands there (`01_Initialize_World/region/paintedLight.ts`) and
 read by the lawn, the pavement, the asphalt and the road markings with one texture sample. It holds the pool under
 every lamp's head (the spread of a point of light at the head's height: half at 4.5 m, an eighth at 10 m, gone at
 16 m, so a crossing between eight lamps is lit and the middle of a block is not black), the light every glazed ground
 floor spills on the ground before it (shopfronts, and the glass round every room, shop and home, out to 10 m), and the
-lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. Every indoor workplace
+lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. In Lakefront Metro a
+lamp's light, real or painted, goes with its pole: past the prop reach (Autoscaling) the pole folds into the street and
+its light and pool fade with it, round each split-screen viewport's own head, so no light lies under a lamp that is not
+drawn. Every indoor workplace
 (the city's sixteen glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
 luminaire panel over each, on by day and by night. The
 lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
@@ -691,9 +696,15 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   window's sidewalks (crowd.wgsl takes the window's corner and, per street segment, whether a sidewalk runs along it and
   whether cars use it, so nobody walks a dropped street or waits at a crosswalk over a pedestrian street), while the
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
-  the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
+  the zero-jam rule of `tracks.ts` kept). The lamps, trees and signal poles stand along every street of the whole map
+  (some 46,000 on Lakefront Metro: `region/streets.ts` `windowFurniture` over `mapStreetGrid`), cut into 160 m tiles
+  (`region/propTiles.ts`), and the page draws the tiles within the tier's prop reach of you (Autoscaling: 160 m on Lite
+  to 520 m on Peak), each prop growing up out of the street over the reach's last 40 m (`propTiles.ts` `PROP_FOLD`) so
+  no pole pops into view; when the tier changes, the reach glides to the new one at 40 m a second (`world.ts`
+  `REACH_GLIDE`), so a tier's extra band grows up out of the street or folds back into it rather than appearing at
+  once; in split screen each viewport draws the tiles round its own head. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  streets are still quiet: no people, cars or lamps there yet, though the places stand there (next).
+  streets are still quiet: no people or cars there yet, though the places and the street furniture stand there (next).
   **Its places are the whole map's** (`region/placement.ts`): the sixteen indoor workplaces, five shops and seven homes
   are shared out over all five regions, every region given a shop, at least one home and at least two workplaces of
   the kinds that suit it (Lakefront Metropolis the executive console deck, the clearing floor, the server vault and
@@ -710,11 +721,12 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   metropolis's visitor stands a few blocks from The Spire, under 300 m on every tested seed). `?place=<slug>` chooses the
   region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
   ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
-  people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
+  people, the cars and the painted light still live only in the street window round the start, so a place
   outside it stands on an empty street and has nobody at work in it, and nobody from the crowd can be walked out to
   it; after dark a shop or home there is unlit inside (the painted light covers the window and its margin only, and
-  paints no floor on a lot its edge runs through), while a workplace's own ceiling lights still come on wherever the
-  tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
+  paints no floor on a lot its edge runs through), and the street there is lit only by the real lamp light round you
+  (none on Lite, where the lamp heads glow over ground with no painted pools), while a workplace's own ceiling lights still come on
+  wherever the tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
   workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
   The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
@@ -788,7 +800,7 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
   - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
     Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
-  - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
+  - traffic signals, street lamps and trees (the surveyed region has none; Lakefront Metro has them along every street of its map);
   - terrain (the region is flat: no ravines, no bluffs);
   - elevated roads and bridges (the expressway runs at street level, and you can wade the rivers);
   - varied landmarks;
@@ -1251,7 +1263,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
 - **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
   crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
-  Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
+  Sloane asks up to five short questions with quick replies (what, which time, where, how: "What time of day would
+  suit you?", "Anywhere in particular?", "On foot, or by car?"), then shows a brief: the steps it can apply
   now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
   Crimson Noir Script lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
@@ -1318,7 +1331,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   model as for any other.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
-  for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
+  for thirty seconds, Sloane says one line in the card, a question and then the how ("Ever wonder what's
   behind you? Hold the mouse button down and drag…"), then settles back into the chip. Opening the wardrobe counts
   as having found it. One line at a time, at least
   forty-five seconds apart, in a fixed order (looking around, walking to The Spire, talking to someone, the M key,
@@ -1353,7 +1366,7 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   get into a car; at the wheel a new line is spoken (and told to a screen reader beside the strip) and the strip's
   dot pulses until you tap it. Open, it shows
   Sloane's line cut to as many lines as the band holds (two to six) over the stage's button, and **More** unfolds the
-  whole line, what the stage is and the whys (Less folds them back). A finger dragged across the short card's words
+  whole line, what the stage is and the five W's (Less folds them back). A finger dragged across the short card's words
   turns the view, as the first stage asks. Folding is not closing: the strip has no close either, and the walk still
   ends only at the console. Open, it stands under Sloane's chip and above the captions and a
   shop's chip; where that band is short of 7 rem it ends above the buttons, over those chips; and where even that is
@@ -1364,10 +1377,12 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
   lines) and comes back when you get out. It names the stage (1 of
   6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
-  controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
-  time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed
-  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
+  controls and the Menu), tells you what it is in words a five-year-old follows, and answers the **five W's** one at
+  a time: its button names the next one (**Who?**, then **What?**, **When?**, **Where?** and **Why?**), and each
+  answer is just as plain and true of the city as it runs (you, a person on the street and not a floating camera;
+  Sloane, the city's concierge; the First Law under every wheel and a parked car that waits for a driver; the sixteen
+  workplaces; the closed business-casual wardrobe; the console at the top of the screen, its own language and the four
+  laws of the Ring-0 kernel).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
   quality governor), with a bar from Lite to Peak; and Sloane as the brain readout has her: *Thinking on this device*
@@ -3997,7 +4012,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
   by hand). They scale render resolution, shadows (their map, their reach and their softness: Sun shadows), post-processing, the lit street lamps (the
-  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
+  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), how far Lakefront Metro's
+  lamps, trees and signal poles are drawn (160 m on Lite, 220, 260, 320, 400 and 480 m from Minimal to Ultra, 520 m on
+  Peak; the city's are always drawn), and the crowd's LOD
   distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
   visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean
@@ -4514,7 +4531,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 03_Spawn_Agents | `crowd.wgsl` (with `crowdWay.wgsl`, the room and lot routing, or `crowdWayLite.wgsl`, the light kernel's straight lines), `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
-| 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
+| 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the goal-question intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `consoleBridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `pageMind.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `siteModel.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine) and its one maker for the city and the console alone (`pageMind.ts`), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), the one model the web copy serves beside the page (its pin, its manifest and its download, checked as it streams), and the one adapter over wllama |
@@ -4830,6 +4847,22 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
   this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
   current build (below). Only GitHub's own actions run in it.
+- **Sizes GitHub takes.** GitHub refuses a release asset of 2 GiB or more, and GitHub Pages publishes no site over 1
+  GB, so every workflow that uploads checks first with `tools/verify/site_budget.mjs`, which prints one line per check
+  with the size and the limit and fails the run with the file or folder named: each job here on `out/<id>/`, last
+  before its upload; `windows-app.yml` on its installer, `.msi` and bare `.exe`; `build-release.yml` on the baked
+  media; `current.yml` on every file it downloads, before it publishes (The current build); and `web.yml` on the whole
+  web copy, the site's model and the speech pack included, which must be at most 950,000,000 bytes (On an iPhone). A
+  size is what the file system says the file holds; a symbolic link counts at the size of what it names, and one that
+  names nothing fails (one whose target is there but cannot be read gives the system's reason). A web copy with
+  anything in it that cannot be measured fails by name, and its line says it was not measured rather than giving a
+  short total. No flag or environment variable moves a limit. The tool always comes from the workflow's own commit:
+  where a job bakes or builds another commit (`build-release.yml` baking a tag that exists again, or the jobs here and
+  `windows-app.yml` building the commit `current.yml` passes them), it is read from a sparse checkout of the
+  workflow's commit in `.size-check/`, so a commit older than the tool is still checked. A web copy built in the
+  container on 21 November 2026 measured 12,416,491 bytes without its model and speech pack, and 453,986,789 with
+  stand-ins of both at their exact sizes. Not verified: the steps on CI until CI runs them; GitHub's own limits can
+  change.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
   and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,
@@ -4865,7 +4898,8 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
   baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
   the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
-  build matrix above.
+  build matrix above. Before the publish (and its dry run), every downloaded file is checked under GitHub's 2 GiB for
+  one release asset (The build matrix, Sizes GitHub takes).
 - **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
   commit it built, as long as the release still holds those very bytes, and the notes and `current.json` say which
   commit that was; the run is red so it is seen. The iOS build is best effort, as in the build matrix, and never turns
@@ -4983,13 +5017,15 @@ from its icon, with the touch controls (Controls). Two ways to serve it:
   publish also puts the site's model in `models/` beside the page (A model in this page, The site's model): fetched
   from Hugging Face at its pinned revision, kept in the workflow's cache by its pin, and checked against the pin's
   size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
-  After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
-  only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
-  Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the model's two files
-  from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin, the runtime's
-  module from the installed dependency and the vocabulary from the repository, each checked against the pin's size
-  and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and notices of both
-  beside them; a file that fails the check fails the publish.
+  Then the whole copy, the model and the speech pack included, is summed (`tools/verify/site_budget.mjs site
+  dist-web`): a copy over 950,000,000 bytes (a margin under the 1 GB GitHub Pages publishes for a site) fails the
+  publish the same way. After the deploy the workflow reads the served manifest and the model's size as the site
+  reports it, as a note only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about
+  250 full downloads). Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the
+  model's two files from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin,
+  the runtime's module from the installed dependency and the vocabulary from the repository, each checked against the
+  pin's size and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and
+  notices of both beside them; a file that fails the check fails the publish.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
