@@ -27,7 +27,7 @@ import { kernelLostFailure, kernelNoneFailure, KernelNoneError, KernelResetError
 import {
   appName, AUTO_RELOAD_GAP_MS, autoReload, BOOT_STAGE, BUILD_META, classify, detailsLine, deviceHints, explainHalt, firstScreen, FRAME_FAULT, GPU_CRASH_WINDOW_MS, GPU_LOSSES_KEY, GPU_PAUSE_MS, gpuPaused, GRAPHICS_RESET,
   appWebView, haltClass, installedApp, KERNEL_RESTART_GAP_MS, KERNEL_RESTART_KEY, kernelAddress, kernelFreeAddress, kernelRestartAddress, kindOf, noteGpuLoss, openInChrome, pageBuild, parseGpuLosses, parseKernelRestart, platformOf,
-  recentGpuLosses, WEBGPU_LINE, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure, CONSOLE_TALKS_LINE, consoleTalks, keptLeavesApp,
+  recentGpuLosses, WEBGPU_LINE, webgpuLine, iosBefore26, withGpuLoss, GPU_LOSS_SAME_MS, type Env, type Failure, CONSOLE_TALKS_LINE, consoleTalks, keptLeavesApp,
 } from './bootFailure.ts'
 import { createMindRouter, PROVIDERS } from '../09_Cognition/router.ts'
 
@@ -45,6 +45,8 @@ const UA = {
   firefoxWindows: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:144.0) Gecko/20100101 Firefox/144.0',
   ipadDesktop: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15',
   macSafari18: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  // The user agent of the real Safari 27.2 on GitHub's macOS 15 and macOS 26 runners alike (iphone.yml): it names no macOS.
+  macSafari27: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.2 Safari/605.1.15',
   // The apps' web views: WebKitGTK on Linux, WKWebView on macOS and iPhone (no Version/ or Safari/ token), and the
   // Android System WebView ('; wv)').
   iosWebView: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
@@ -88,19 +90,84 @@ test('no WebGPU: each device gets its own way out', () => {
   const home = classify(err('no-api'), env(UA.homeScreen, HOME_SCREEN))
   assert.match(home.headline, /This iPhone needs iOS 26/)
   assert.match(text(home), /open the app again/)
-  assert.match(text(classify(err('no-api'), env(UA.crios, IPHONE))), /Open the page in Safari/)
-  assert.equal(classify(err('no-api'), env(UA.instagram, IPHONE)).headline, 'Open this page in Safari')
+  // Chrome on an iPhone and an app's built-in browser are Safari's engine and have WebGPU from iOS 26 too: without it
+  // the update comes first (Safari on an older iOS has none either), and Safari second, where the iOS may be new enough.
+  const crios = classify(err('no-api'), env(UA.crios, IPHONE))
+  assert.equal(crios.headline, 'No WebGPU in this browser on this iPhone')
+  assert.deepEqual(crios.steps, [
+    'On an iPhone, WebGPU comes with iOS 26, in Safari and in every other browser: they all use Safari’s engine.',
+    'Update in Settings > General > Software Update (iOS 26 runs on iPhone 11, iPhone SE (2nd generation) and newer), then open the page again.',
+    'Already on iOS 26? Open the page in Safari (the share button, then Open in Safari, or copy the link), and check that Lockdown Mode is off in Settings > Privacy & Security.',
+  ])
+  const inApp = classify(err('no-api'), env(UA.instagram, IPHONE))
+  assert.equal(inApp.headline, 'No WebGPU in this browser on this iPhone')
+  assert.match(text(inApp), /Already on iOS 26\? This is an app’s built-in browser, which can leave WebGPU off: use the app’s menu \(often ••• or the share button\) and choose Open in Safari/)
+  // A system token below 18_6 says the iOS is older outright: no Safari to send it to.
+  const old17 = classify(err('no-api'), env(UA.crios.replace('18_6', '17_5'), IPHONE))
+  assert.equal(old17.headline, 'This iPhone needs iOS 26')
+  assert.equal(old17.steps.length, 2)
+  assert.doesNotMatch(text(old17), /Open the page in Safari|Already on/)
+  assert.deepEqual([iosBefore26(UA.ios18), iosBefore26(UA.ios26), iosBefore26(UA.crios.replace('18_6', '18_5')), iosBefore26(UA.crios.replace('18_6', '16_7')), iosBefore26(UA.ipadDesktop), iosBefore26(UA.androidChrome), iosBefore26(UA.macSafari18)],
+    [true, false, true, true, false, false, false], 'only a token below 18_6 on an iPhone or iPad says older; 18_6 and later are frozen and say nothing')
+  assert.equal(iosBefore26('Mozilla/5.0 (iPad; CPU OS 17_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1'), true, 'an iPad writes "CPU OS"')
   assert.equal(classify(err('no-api'), env(UA.androidWebView)).headline, 'Open this page in Chrome')
   assert.match(text(classify(err('no-api'), env(UA.androidWebView))), /Open in Chrome/)
   assert.match(text(classify(err('no-api'), env(UA.androidChrome))), /Update Chrome.*Android 12/s)
   assert.match(text(classify(err('no-api'), env(UA.firefoxLinux))), /about:config, set dom\.webgpu\.enabled to true/)
   assert.match(text(classify(err('no-api'), env(UA.firefoxWindows))), /Update Firefox/)
-  assert.match(text(classify(err('no-api'), env(UA.macSafari18))), /This Mac needs Safari 26/)
+  // A Mac's Safari gets WebGPU from macOS 26, not from Safari's own number (a real Safari 27 on macOS 15 has none).
+  const mac18 = classify(err('no-api'), env(UA.macSafari18))
+  assert.equal(mac18.headline, 'This Mac needs macOS 26 for Safari')
+  assert.match(text(mac18), /Safari 18 doesn’t turn WebGPU on; the Safari that comes with macOS 26 does/)
+  const mac27 = classify(err('no-api'), env(UA.macSafari27))
+  assert.equal(mac27.headline, 'Safari has no WebGPU on this Mac', 'a Safari new enough may still sit on an older macOS: not "turned off"')
+  assert.match(text(mac27), /on an older macOS, Safari 26 and newer still come without it/)
+  assert.match(text(mac27), /Already on macOS 26\? Check Safari > Settings > Advanced > Feature Flags > WebGPU/)
   assert.match(classify(err('no-api'), env(UA.ipadDesktop, { touchPoints: 5 })).headline, /WebGPU is turned off in Safari/)
   const tauri = classify(err('no-api'), env(UA.edgeWindows, TAURI))
   assert.match(text(tauri), /WebView2/)
   assert.doesNotMatch(text(tauri), /Chrome|Open the page in|Open this page in/, 'the Windows app has no other browser to go to')
-  for (const f of [ios18, ios26, home, tauri]) assert.equal(f.webgpuLine, WEBGPU_LINE)
+  assert.equal(tauri.webgpuLine, WEBGPU_LINE)
+  for (const f of [ios18, ios26, home]) assert.equal(f.webgpuLine, webgpuLine(platformOf(UA.ios26, 5)))
+})
+
+test('the WebGPU line is the device\'s own: an iPhone or iPad is never sent to Chrome, a Mac is told macOS 26', () => {
+  const phone = webgpuLine(platformOf(UA.ios26, 5))
+  assert.equal(phone, `${BRAND.name} needs WebGPU, which an iPhone has from iOS 26 on. Chrome and the other browsers on an iPhone are built on Safari’s engine, so another browser does not add it. The crowd simulation runs as WGSL compute and has no WebGL path.`)
+  assert.match(webgpuLine(platformOf(UA.ipadDesktop, 5)), /which an iPad has from iPadOS 26 on\. Chrome and the other browsers on an iPad/)
+  // Every card an iPhone can be shown, in Safari, in Chrome there, in an app's built-in browser, from the Home Screen
+  // and in the iPhone app: no line and no step names a browser that would change nothing.
+  const kinds = ['no-api', 'no-adapter', 'compat-only', 'device', 'worker-gpu', 'wasm', 'shader', 'compiler', 'gpu-reset', 'kernel-lost', 'kernel-none', 'gpu-paused', 'stalled'] as const
+  const phones: [string, Env][] = [
+    ['Safari on iOS 18', env(UA.ios18, IPHONE)], ['Safari on iOS 26', env(UA.ios26, IPHONE)], ['Chrome on an iPhone', env(UA.crios, IPHONE)],
+    ['an app’s built-in browser', env(UA.instagram, IPHONE)], ['the Home Screen app', env(UA.homeScreen, HOME_SCREEN)],
+    ['the iPhone app', env(UA.iosWebView, { ...IPHONE, native: true })], ['an iPad as a desktop', env(UA.ipadDesktop, IPHONE)],
+  ]
+  for (const [name, e] of phones) {
+    for (const kind of kinds) {
+      const f = classify(Object.assign(new Error('x'), { code: kind }), e)
+      const all = `${text(f)}\n${f.webgpuLine ?? ''}`
+      assert.doesNotMatch(all.replace(/Chrome and the other browsers on an iP(?:hone|ad) are built on Safari’s engine/, ''), /Chrome|\bEdge\b|Brave|Firefox|WebView2|Play Store/, `${name}, ${kind}: ${all}`)
+      assert.equal(f.openIn ?? null, null, `${name}, ${kind}: no Open in Chrome button`)
+    }
+    for (const m of ['Crowd compute pipeline validation failed: x', 'the first frame failed WebGPU validation: x', 'anything else']) {
+      assert.doesNotMatch(text(classify(new Error(m), e)), /Chrome|\bEdge\b|Brave/, `${name}: ${m}`)
+    }
+  }
+  // WebKit reports every refused pipeline as a validation error, so this is the card an iPhone gets when its WebGPU
+  // rejects a shader: the system's update, then the details line, and no other browser.
+  const refused = classify(new Error('Crowd compute pipeline validation failed: x'), env(UA.ios26, IPHONE))
+  assert.equal(refused.kind, 'shader')
+  assert.match(text(refused), /Update the iPhone’s system software in Settings > General > Software Update \(Safari’s WebGPU comes with it\), then open the page again\./)
+  assert.match(text(refused), /send the details line below with a bug report/)
+  assert.match(text(classify(new Error('Crowd compute pipeline validation failed: x'), env(UA.macSafari27))), /Update macOS \(Safari’s WebGPU comes with it\), or open the page in a current Chrome or Edge/)
+  assert.match(text(classify(new Error('Crowd compute pipeline validation failed: x'), env(UA.edgeWindows))), /Update the browser; a current Chrome or Edge runs the city\./)
+  // The Mac's line, in Safari and in the Mac app; everything else keeps the general one.
+  const mac = webgpuLine(platformOf(UA.macSafari27))
+  assert.equal(mac, `${BRAND.name} needs WebGPU: on a Mac, Safari on macOS 26 or newer, or a current Chrome, Edge or Brave. The crowd simulation runs as WGSL compute and has no WebGL path.`)
+  assert.equal(classify(err('no-adapter'), env(UA.macSafari27)).webgpuLine, mac)
+  for (const ua of [UA.chromeLinux, UA.edgeWindows, UA.androidChrome, UA.firefoxWindows]) assert.equal(webgpuLine(platformOf(ua)), WEBGPU_LINE)
+  assert.match(WEBGPU_LINE, /a current Chrome, Edge or Brave on desktop or Android, or Safari on iOS 26, iPadOS 26, macOS 26 or newer\./)
 })
 
 test('no adapter: Linux names the flags, Vulkan and chrome://gpu (and NixOS\'s driver); the rest their own fix', () => {

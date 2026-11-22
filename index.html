@@ -136,6 +136,9 @@
         // iOS 26 on an iPhone or iPad (Safari's Version token), WebGPU. Nothing under ?boot=tty: the console needs none.
         function needs() {
           var ua = navigator.userAgent, ios = /\b(iPhone|iPad|iPod)\b/.exec(ua), v = /\bVersion\/(\d+)/.exec(ua), gpu = 'gpu' in navigator
+          // An iPad asked for the desktop site, which Safari there does by default, says it is a Mac: its touch points tell.
+          // Its Version token is not trusted for the iPadOS (Chrome there sends a fixed old one): only a missing WebGPU counts.
+          var pad = !ios && /Macintosh/.test(ua) && navigator.maxTouchPoints > 1
           if (/[?&]boot=tty(?:&|$)/.test(w.location.search)) return []
           if (w.isSecureContext === false) return ['The city also needs a secure address: open the page over https://.']
           // A home-screen app on an iPhone carries no Version/ token, so an old iOS shows there only as a missing WebGPU.
@@ -143,7 +146,10 @@
             return [ios[1] === 'iPad' ? 'The city also needs iPadOS 26 on this iPad.' : 'The city also needs iOS 26 on this iPhone (iPhone 11, iPhone SE (2nd generation) and newer).']
           }
           if (!gpu) {
-            return [w.__TAURI_INTERNALS__ ? 'The city also needs WebGPU: update WebView2 (Windows Update) and the graphics driver.' : 'The city also needs WebGPU: a current Chrome, Edge or Brave, or Safari 26.']
+            // Every browser on an iPhone or iPad is Safari's engine: there the system's update is the only one that adds WebGPU.
+            var dev = ios ? ios[1].replace('iPod', 'iPhone') : pad ? 'iPad' : ''
+            if (dev) return ['The city also needs WebGPU, which an ' + dev + ' has from ' + (dev === 'iPad' ? 'iPadOS' : 'iOS') + ' 26 on (Settings > General > Software Update); another browser does not add it.']
+            return [w.__TAURI_INTERNALS__ ? 'The city also needs WebGPU: update WebView2 (Windows Update) and the graphics driver.' : 'The city also needs WebGPU: a current Chrome, Edge or Brave, or Safari on macOS 26 or newer.']
           }
           return []
         }

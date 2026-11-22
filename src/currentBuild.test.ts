@@ -378,6 +378,14 @@ test('a first publish makes the tag at the commit, then the release as a pre-rel
     assert.match(rel.notes, new RegExp(`\\*\\*Commit\\*\\* \\[\`${c1.slice(0, 7)}\`\\]\\(https://github\\.com/${REPO}/commit/${c1}\\) on main, published 2026-11-13 02:14 UTC by \\[this run\\]\\(https://run\\)\\.`))
     for (const id of IDS) assert.match(rel.notes, new RegExp(`^\\| ${c.LABELS[id].replace(/[()]/g, '\\$&')} \\| \\[`, 'm'), id)
     assert.match(rel.notes, /\[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\)/)
+    // An iPhone is sent to the web copy, and told plainly that the .ipa installs on no iPhone as it is: a friend
+    // was once handed that file as the iPhone build.
+    assert.match(rel.notes, /^- \*\*On an iPhone or iPad, open the \[web copy\]\(https:\/\/cassius-software\.github\.io\/Crimson-Noir-AI-Agent-City\/\) in Safari; the `\.ipa` is not for installing\.\*\* The web copy needs iOS 26 or iPadOS 26 or newer/m)
+    assert.match(rel.notes, /No iPhone installs the `\.ipa` as it is: Apple's devices take only signed apps/)
+    assert.match(rel.notes, /\*\*The city has not been seen running in Safari yet:\*\* nobody has tried it on a real iPhone or iPad, and the Macs that check every change in Safari have virtual graphics that cannot draw it, so what an iPhone shows is still to be learned from one\./)
+    assert.doesNotMatch(rel.notes, /runs on an iPhone|plays the (?:whole )?city/i, 'nothing here says an iPhone runs it')
+    assert.match(rel.notes, /^\| iOS \(arm64, unsigned: for a developer to sign, not to install\) \| /m)
+    assert.doesNotMatch(rel.notes, /the iPhone can play the web copy instead/)
     assert.match(rel.notes, /The apps' file names carry the version in `package\.json` at the commit they were built from \(`1\.0\.0-stable-beta` at this one\)/)
     assert.match(rel.notes, /the zipped macOS `\.app`, the UEFI files and images, and the notices beside them carry none/)
     assert.match(rel.notes, /`SHA256SUMS` lists every file here but itself and `current\.json`/)
@@ -443,7 +451,7 @@ test('a target that never built is listed with no files; the iOS build missing i
     const r1 = c.publish({ media: artifacts(join(t.dir, 'm1'), first), stage: join(t.dir, 's1'), sha: c1, repo: REPO, log: quiet }, gh.gh)
     assert.deepEqual(r1.plan.missing, ['ios-ipa'])
     assert.deepEqual(r1.plan.failed, [], 'best effort')
-    assert.match(gh.s.release?.notes ?? '', /^\| iOS \(arm64, unsigned\) \| no files yet \| its build failed at .* \(best effort\) \|$/m)
+    assert.match(gh.s.release?.notes ?? '', /^\| iOS \(arm64, unsigned: for a developer to sign, not to install\) \| no files yet \| its build failed at .* \(best effort\) \|$/m)
     assert.ok(!gh.s.release?.assets.has('LICENSE'), 'without --source, no notices are added')
     // Someone deletes the macOS file by hand; macOS then fails at c2: nothing of it is listed or summed.
     gh.s.release?.assets.delete('Crimson.Noir.Agent.City_1.0.0-stable-beta_universal.dmg')
@@ -602,6 +610,88 @@ test('it stops, writing nothing, when it cannot read the release\'s current.json
     assert.equal(r.plan.state.targets['uefi-x64'], undefined)
     assert.ok(!gh.s.release?.assets.has('crimson_noir_os.img'), 'a file whose bytes nobody recorded is not offered')
     assert.doesNotMatch(gh.s.release?.assets.get('SHA256SUMS')?.body.toString('utf8') ?? '', /crimson_noir_os\.img/)
+  } finally { t.done() }
+})
+
+test('a first read that loses its connection is asked again, three tries in all: main\'s tip, ci\'s list of runs and the release, whose one dial timeout failed a dry run on 2026-11-22; an answer of GitHub\'s is not asked for twice', () => {
+  const t = scratch()
+  try {
+    const [c1, c2] = [commitOf(1), commitOf(2)]
+    const gh = fakeGitHub([commitOf(0), c1, c2])
+    c.publish({ media: artifacts(join(t.dir, 'm1'), allBuilt('a')), stage: join(t.dir, 's1'), sha: c2, repo: REPO, log: quiet }, gh.gh)
+    // The words gh gave that day, with an address that is nobody's (RFC 5737).
+    const DIAL = `Get "https://api.github.com/repos/${REPO}/releases/tags/current": dial tcp 192.0.2.1:443: i/o timeout`
+    let mark = 0
+    const asked = (end: string) => gh.s.calls.slice(mark).filter((a) => a[a.length - 1].endsWith(end)).length
+    /** The next `n` calls whose path ends with `end` get `err` and no answer; `wait: 0` below keeps a test from sleeping. */
+    const lose = (end: string, n: number, err = DIAL) => {
+      let left = n
+      mark = gh.s.calls.length
+      gh.s.fail = (argv) => (argv[argv.length - 1].endsWith(end) && left-- > 0 ? { ok: false, out: '', err } : null)
+    }
+    const RELEASE = 'releases/tags/current', TIP = 'git/ref/heads/main', LIST = 'ci.yml/runs?branch=main&status=success&per_page=50'
+
+    // The dry run of that day: its first read of the release times out once, and it still plans, writing nothing.
+    const writes = gh.s.writes.length
+    lose(RELEASE, 1)
+    const dry = c.publish({ media: artifacts(join(t.dir, 'm2'), allBuilt('b')), stage: join(t.dir, 's2'), sha: c2, repo: REPO, dryRun: true, log: quiet, wait: 0 }, gh.gh)
+    assert.equal(dry.status, 'planned')
+    assert.equal(asked(RELEASE), 2, 'asked again once')
+    assert.equal(gh.s.writes.length, writes, 'a dry run writes nothing')
+
+    // Two in a row: the third try answers. Three: the read throws with gh's words, having asked three times.
+    lose(RELEASE, 2)
+    assert.equal(c.getRelease(gh.gh, REPO, { wait: 0 }).tag, 'current')
+    assert.equal(asked(RELEASE), 3)
+    lose(RELEASE, 3)
+    assert.throws(() => c.getRelease(gh.gh, REPO, { wait: 0 }), /gh api releases\/tags\/current: .*dial tcp 192\.0\.2\.1:443: i\/o timeout/)
+    assert.equal(asked(RELEASE), 3, 'three tries, no more')
+    // A 5xx is no answer either; a 4xx is GitHub's answer, thrown at the first.
+    lose(RELEASE, 1, 'gh: Bad Gateway (HTTP 502)')
+    assert.equal(c.getRelease(gh.gh, REPO, { wait: 0 }).tag, 'current')
+    assert.equal(asked(RELEASE), 2)
+    lose(RELEASE, 3, 'gh: Resource not accessible by integration (HTTP 403)')
+    assert.throws(() => c.getRelease(gh.gh, REPO, { wait: 0 }), /gh api releases\/tags\/current: gh: Resource not accessible by integration \(HTTP 403\)/)
+    assert.equal(asked(RELEASE), 1, 'an answer is not asked for again')
+    gh.s.fail = null
+
+    // main's tip and ci's list of runs, the reads pick, web-pick and web-confirm start with.
+    lose(TIP, 2)
+    assert.equal(c.mainTip(gh.gh, REPO, { wait: 0 }), c2)
+    assert.equal(asked(TIP), 3)
+    lose(TIP, 3)
+    assert.throws(() => c.mainTip(gh.gh, REPO, { wait: 0 }), /gh api repos\/.*\/git\/ref\/heads\/main: .*i\/o timeout/)
+    assert.equal(asked(TIP), 3)
+    lose(LIST, 1)
+    assert.equal(c.newestGreen(gh.gh, REPO, c2, { wait: 0 }).sha, c2)
+    assert.equal(asked(LIST), 2)
+    lose(LIST, 3, 'gh: Not Found (HTTP 404)')
+    assert.throws(() => c.newestGreen(gh.gh, REPO, c2, { wait: 0 }), /gh api repos\/.*per_page=50: gh: Not Found \(HTTP 404\)/)
+    assert.equal(asked(LIST), 1)
+
+    // Each of pick's reads may lose a connection once, and it still says the release holds the commit.
+    let lost = new Set<string>()
+    mark = gh.s.calls.length
+    gh.s.fail = (argv) => {
+      const path = argv[argv.length - 1]
+      const which = [TIP, LIST, RELEASE].find((end) => path.endsWith(end))
+      if (!which || lost.has(which)) return null
+      lost.add(which)
+      return { ok: false, out: '', err: DIAL }
+    }
+    assert.match(c.pick({ sha: c2, repo: REPO, wait: 0 }, gh.gh).skip, /already holds/)
+    assert.deepEqual([...lost].sort(), [LIST, RELEASE, TIP].sort())
+    for (const end of [TIP, LIST, RELEASE]) assert.equal(asked(end), 2, `${end}: asked again once`)
+    lost = new Set()
+    assert.equal(c.webPick({ repo: REPO, wait: 0 }, gh.gh).sha, c2)
+    lost = new Set()
+    assert.equal(c.webConfirm({ picked: c2, repo: REPO, wait: 0 }, gh.gh).deploy, true)
+    gh.s.fail = null
+
+    // No release at all is GitHub's 404 for both tags, each asked once.
+    const none = fakeGitHub([commitOf(0), c1])
+    assert.equal(c.getRelease(none.gh, REPO, { wait: 0 }), null)
+    assert.deepEqual(none.s.calls.map((a) => a[a.length - 1].split('/').pop()), ['current', 'current-next'])
   } finally { t.done() }
 })
 

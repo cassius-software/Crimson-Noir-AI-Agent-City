@@ -183,7 +183,8 @@ export function browserDwellEnv(doc: Document = document): DwellEnv {
       return () => doc.removeEventListener(type, h)
     },
     at: (x, y) => doc.elementFromPoint(x, y) as unknown as DwellTarget | null,
-    locked: () => doc.pointerLockElement !== null,
+    // A browser with no pointer lock at all (Safari on an iPhone) leaves the property undefined: that is not a lock.
+    locked: () => (doc.pointerLockElement ?? null) !== null,
     setTimeout: (fn, ms) => setTimeout(fn, ms),
     clearTimeout: (id) => clearTimeout(id as ReturnType<typeof setTimeout>),
   }

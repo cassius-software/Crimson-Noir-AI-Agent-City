@@ -138,7 +138,7 @@ docs/                   Architecture blueprint, Crimson Noir Script, joint bridg
 npm install
 npm run dev
 ```
-The page needs WebGPU: a current Chrome, Edge or Brave, or Safari 26. A browser without it gets a recovery card, not a WebGL fallback. On NixOS, `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds the page from source in Nix's sandbox and runs it, with Sloane's model beside it.
+The page needs WebGPU: a current Chrome, Edge or Brave, or Safari on iOS 26, iPadOS 26, macOS 26 or newer (every browser on an iPhone is Safari's engine, so there it is the iOS that counts). A browser without it gets a recovery card, not a WebGL fallback. On NixOS, `nix run github:cassius-software/Crimson-Noir-AI-Agent-City` builds the page from source in Nix's sandbox and runs it, with Sloane's model beside it.
 
 ### 2. Run the tests and the proofs
 ```bash
@@ -159,7 +159,7 @@ npm run build:matrix -- --targets all       # everything it can; the rest skippe
 # Bare-metal UEFI bootable image (Linux or macOS, with mtools, sgdisk and xorriso)
 sh crimson_noir_os/tools/build-image.sh
 ```
-Ten targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64, aarch64 and riscv64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all, and the `current` workflow builds all ten again from every commit on `main` that CI passes and keeps them on the [current build](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current) pre-release (`MANUAL.md`, *The current build*), as the live build follows `main`. Nothing is signed or notarized, the `.ipa` needs re-signing to install, and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
+Ten targets: Windows x64 and arm64 (NSIS `.exe`, `.msi`, bare `.exe`), Linux x64 and arm64 (`.deb`, `.rpm`, `.AppImage`), a macOS universal `.app` and `.dmg`, an Android `.apk`, an iOS `.ipa`, and UEFI x86-64, aarch64 and riscv64 boot applications with `.img`/`.iso` media. The `build-matrix` workflow builds them all, and the `current` workflow builds all ten again from every commit on `main` that CI passes and keeps them on the [current build](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current) pre-release (`MANUAL.md`, *The current build*), as the live build follows `main`. Nothing is signed or notarized, so no iPhone installs the `.ipa` as it is (it is a build for a developer to sign; an iPhone's way in is the web copy in Safari on iOS 26 or newer, which nobody has tried on a real iPhone yet), and only the Windows app has been run on a device; `MANUAL.md`, *The build matrix*, says what each file needs.
 
 ---
 

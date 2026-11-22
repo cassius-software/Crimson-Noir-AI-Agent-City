@@ -95,7 +95,7 @@ export const LABELS = Object.freeze({
   'linux-arm64': 'Linux arm64',
   'macos-universal': 'macOS (Apple silicon and Intel)',
   'android-apk': 'Android (arm64)',
-  'ios-ipa': 'iOS (arm64, unsigned)',
+  'ios-ipa': 'iOS (arm64, unsigned: for a developer to sign, not to install)',
   'uefi-x64': 'Crimson Noir OS, UEFI x86-64',
   'uefi-arm64': 'Crimson Noir OS, UEFI aarch64',
   'uefi-riscv64': 'Crimson Noir OS, UEFI riscv64',
@@ -307,8 +307,9 @@ export function notes(state, { repo, missing = [] }) {
     ...rows,
     '',
     `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 and riscv64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
-    '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device; the iPhone can play the web copy instead.',
-    "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); Gatekeeper refuses the macOS app at first (`xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up to macOS 14; not tried on a Mac); the `.apk` carries the Android debug key; the `.ipa` must be re-signed before a device takes it. The OS images run on a UEFI machine with Secure Boot off.",
+    '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device.',
+    `- **On an iPhone or iPad, open the [web copy](${web}) in Safari; the \`.ipa\` is not for installing.** The web copy needs iOS 26 or iPadOS 26 or newer, the first with WebGPU (an older one shows a card that says so; Chrome and Firefox there are Safari's engine and change nothing), and Share › Add to Home Screen keeps it as an app. No iPhone installs the \`.ipa\` as it is: Apple's devices take only signed apps, so it is a build for a developer to sign with an Apple developer account (TestFlight or the App Store through the paid programme, or a free Apple ID with a sideloading tool on a computer, seven days at a time). **The city has not been seen running in Safari yet:** nobody has tried it on a real iPhone or iPad, and the Macs that check every change in Safari have virtual graphics that cannot draw it, so what an iPhone shows is still to be learned from one.`,
+    "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); Gatekeeper refuses the macOS app at first (`xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up to macOS 14; not tried on a Mac); the `.apk` carries the Android debug key; the `.ipa` is unsigned, and an iPhone refuses it until a developer signs it (above). The OS images run on a UEFI machine with Secure Boot off.",
     `- **Versions.** The apps' file names carry the version in \`package.json\` at the commit they were built from (\`${state.version}\` at this one), the \`.rpm\` with its pre-release part as its release number; the zipped macOS \`.app\`, the UEFI files and images, and the notices beside them carry none. The commit above, and each file's row, tell one current build from the next.`,
     `- **Checking a download.** \`sha256sum --check --ignore-missing ${SUMS}\` in the folder you downloaded into; \`${SUMS}\` lists every file here but itself and \`${STATE}\`, which records which commit, run and time made each.`,
     `- **A link that stays current.** \`${url}/releases/download/${TAG}/<file>\` gives the newest file of that name (but for the few seconds after a workflow change while the tag is made again).`,
@@ -329,14 +330,19 @@ export function realGh(argv) {
 
 const notFound = (r) => !r.ok && /HTTP 404|Not Found/i.test(r.err)
 
-function api(gh, path, ...rest) {
-  const r = gh(['api', ...rest, path])
+/**
+ * A read that must have an answer: GitHub's text, or a throw with its words. A lost connection is tried again first
+ * (attempt), as the comparisons and the release's record already were: on 2026-11-22 one dial that timed out
+ * (`dial tcp ...:443: i/o timeout`) failed a run's dry-run job at its first read. An answer of GitHub's is not.
+ */
+function api(gh, path, wait = 5000) {
+  const r = attempt(gh, ['api', path], `gh api ${path}`, wait)
   if (!r.ok) throw new Error(`gh api ${path}: ${r.err.trim() || 'failed'}`)
   return r.out
 }
 
-export function mainTip(gh, repo) {
-  const sha = JSON.parse(api(gh, `repos/${repo}/git/ref/heads/main`)).object?.sha
+export function mainTip(gh, repo, { wait = 5000 } = {}) {
+  const sha = JSON.parse(api(gh, `repos/${repo}/git/ref/heads/main`, wait)).object?.sha
   if (!SHA.test(sha ?? '')) throw new Error(`main's tip is not a commit: ${sha}`)
   return sha
 }
@@ -374,7 +380,7 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
  * taken only while it is still on main's history.
  */
 export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
-  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`)).workflow_runs ?? []
+  const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`, wait)).workflow_runs ?? []
   const seen = new Set()
   for (const r of runs) {
     if (!(SHA.test(r.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)) continue
@@ -443,10 +449,11 @@ export function choose({ tested = '', nth = '', repo, wait = 5000 }, gh, tip = m
 /**
  * The `current` release (its id, the tag it stands on, its notes, its assets with name, size, digest and id), or null
  * when there is none. A release still on the stand-in tag (a run stopped halfway through remaking `current`) is found too.
+ * A lost connection is tried again (attempt); "there is none" is GitHub's own 404 alone.
  */
-export function getRelease(gh, repo) {
+export function getRelease(gh, repo, { wait = 5000 } = {}) {
   for (const tag of [TAG, NEXT]) {
-    const r = gh(['api', `repos/${repo}/releases/tags/${tag}`])
+    const r = attempt(gh, ['api', `repos/${repo}/releases/tags/${tag}`], `read the release on the tag ${tag}`, wait)
     if (notFound(r)) continue
     if (!r.ok) throw new Error(`gh api releases/tags/${tag}: ${r.err.trim()}`)
     const rel = JSON.parse(r.out)
@@ -644,7 +651,7 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
  */
 export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5000 }, gh) {
   if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
-  const tip = mainTip(gh, repo)
+  const tip = mainTip(gh, repo, { wait })
   if (!onMain(gh, repo, sha, tip, { wait })) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
   // The newest green commit, not only the one that started this run: one run waits at a time, and a run that took a
   // waiting one's place (a re-run, a run by hand before main's tip passed ci) must not leave the newest one unpublished.
@@ -662,7 +669,7 @@ export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5
   if (lagged) notes.push(`ci's list of runs does not show run ${tested} yet; GitHub's answer for that run says it passed on ${green.sha}, which is built`)
   if (green.sha !== sha) notes.push(`building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`)
   const note = notes.join('; ')
-  const release = getRelease(gh, repo)
+  const release = getRelease(gh, repo, { wait })
   const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== green.sha && compare(gh, repo, state.commit, green.sha, { wait }) === 'behind') {
     return stop(`the release already holds ${state.commit}, which is newer than ${green.sha}`, false)
@@ -684,7 +691,7 @@ export function pick({ sha, tested = '', nth = '', force = false, repo, wait = 5
  * that is red when the run that started this one was not confirmed as a pass (`unconfirmed`), as in pick.
  */
 export function webPick({ tested = '', nth = '', repo, wait = 5000 }, gh) {
-  const tip = mainTip(gh, repo)
+  const tip = mainTip(gh, repo, { wait })
   const { green, lagged, why } = choose({ tested, nth, repo, wait }, gh, tip)
   const doubt = why ? `the ci run that started this run is not taken as a pass on main (${why})` : ''
   if (!green) {
@@ -708,7 +715,7 @@ export function webPick({ tested = '', nth = '', repo, wait = 5000 }, gh) {
  */
 export function webConfirm({ picked, repo, wait = 5000 }, gh) {
   if (!SHA.test(picked ?? '')) return { deploy: false, why: `not a commit: ${picked}`, unsure: true }
-  const listed = newestGreen(gh, repo, mainTip(gh, repo), { wait })
+  const listed = newestGreen(gh, repo, mainTip(gh, repo, { wait }), { wait })
   if (!listed || listed.sha === picked) return { deploy: true }
   const order = compare(gh, repo, picked, listed.sha, { wait })
   if (order === 'behind' || order === 'identical') return { deploy: true }
@@ -726,7 +733,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
   const version = source && existsSync(join(source, 'package.json')) ? JSON.parse(readFileSync(join(source, 'package.json'), 'utf8')).version : 'unknown'
   if (dryRun) log(`dry run: nothing is written, and ${sha} is not checked against main`)
   else if (!onMain(gh, repo, sha, undefined, { wait })) throw new Error(`${sha} is not on main any more: nothing was published`)
-  const release = getRelease(gh, repo)
+  const release = getRelease(gh, repo, { wait })
   const state = release ? readState(gh, repo, release, { wait }) : { targets: {} }
   if (state.commit && state.commit !== sha) {
     const s = compare(gh, repo, state.commit, sha, { wait })
@@ -765,7 +772,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
     let r
     for (let i = 1; i <= 3; i++) {
       r = gh(['release', 'delete-asset', TAG, name, '--yes', ...R])
-      if (r.ok || !getRelease(gh, repo)?.assets.some((a) => a.name === name)) return
+      if (r.ok || !getRelease(gh, repo, { wait })?.assets.some((a) => a.name === name)) return
       if (i < 3) { console.error(`delete ${name} failed (${r.err.trim()}); trying again (${i}/2)`); pause(wait) }
     }
     throw new Error(`delete ${name}: ${r.err.trim() || 'failed'}`)
@@ -805,7 +812,7 @@ export function publish({ media, stage, source, move = false, sha, ci = '', run 
   let problems = []
   for (let i = 0; i < 3; i++) {
     if (i) pause(verifyWait)
-    const after = getRelease(gh, repo)
+    const after = getRelease(gh, repo, { wait })
     if (!after) { problems = [`the release ${TAG} is gone`]; continue }
     const now = new Map(after.assets.map((a) => [a.name, a]))
     problems = [

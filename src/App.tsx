@@ -2361,7 +2361,13 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
         // The phone took the GPU back while the city loaded in the background: restart once the player is back.
         if (!cancelled && err instanceof WebGPUUnavailableError && err.code === 'gpu-reset' && err.background) unwatch = reloadWhenVisible(true)
       },
-    )
+    ).catch((err: unknown) => {
+      // The engine stood, and the wiring above threw before the first frame was asked for (something this browser
+      // lacks, which no browser the checks run in does): without this the veil would stay up for good with nothing to
+      // press. The card names what threw.
+      console.error(err)
+      if (!cancelled) setError({ cause: err })
+    })
     return () => {
       cancelled = true
       cancelAnimationFrame(raf)
