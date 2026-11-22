@@ -2413,6 +2413,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The first walk explains each stage as to a five-year-old, with the five W's.** Each card's plain line is now
+  written for a five-year-old (it was for an eight-year-old), and its button answers **who, what, when, where and why**
+  one at a time, naming the next one (Who?, What?, When?, Where?, Why?), in place of five ever-deeper whys
+  (`src/09_Cognition/firstWalk.ts` `eli5Of`, `fiveWsOf`, `FIVE_WS`; `FirstWalk.tsx`). Every answer keeps to what the
+  city does: the shops and the homes are named only on a map that has them, the console's language is called Crimson
+  Noir Script in full, and the cinema-camera, GGX and microphone details are left out as too deep for the card.
+  Sloane's spoken line on the talk stage now says she may ask a few questions to be sure what you mean (her goal
+  questions are a few, not always five). `firstWalk.test.ts` pins the five W's in order, each answer screened and free of
+  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers. Sloane's goal
+  questions drop the "5-Whys" name where a player sees it: her copyable brief heads them **Questions asked** (it said
+  **Why**) and signs itself "the concierge's goal questions", and the README and MANUAL describe them as up to five short
+  questions (what, which time, where, how), which is what they always were (`intent.ts`; the class keeps its name,
+  `FiveWhys`). The quiet watch's lines are described as a question and then the how.
+
 - **Pedestrians no longer stare at you.** Until now everyone within about four and a half metres of you on foot turned
   their head and chest to your eye. Now a person looks at you only while you are talking to them: a recruit standing
   by at your side (the crowd kernel reports them interviewing and no rally sends them elsewhere), or the person a

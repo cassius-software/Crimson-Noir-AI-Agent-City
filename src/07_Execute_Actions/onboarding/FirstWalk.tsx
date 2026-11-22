@@ -4,8 +4,8 @@
 /**
  * Why does this file exist? It is the first walk's card (09_Cognition/firstWalk.ts, fed by useFirstWalk.ts): one
  * small panel in Sloane's own style (the onboarding's ink and titanium) that names the stage the visitor is on, says
- * the one thing to do in their device's words, tells them what it is in a line an eight-year-old follows, and unfolds
- * the five whys one at a time when they ask. It has no close button, no skip and no key that puts it away: the walk
+ * the one thing to do in their device's words, tells them what it is in words a five-year-old follows, and answers
+ * the five W's (who, what, when, where, why) one at a time when they ask. It has no close button, no skip and no key that puts it away: the walk
  * ends the moment the visitor reaches the console on its last stage, and the card says so in plain words. Its
  * accessible path is one button per stage that has Sloane do the action for a visitor who cannot (a switch, a screen
  * reader, a phone with no keyboard): walk and turn, plan a goal, take them to a car, take them inside, open the
@@ -26,7 +26,7 @@
  * and at a tap on the strip, and folds at the next touch outside it, after a few metres, or getting into a car (at
  * the wheel a new line is heard and the strip marks it; the card waits for a tap). Open, it shows Sloane's line cut
  * to the lines its band has room for over the stage's button, and More unfolds the rest (the whole line, what the
- * stage is, the whys). That short card takes touches on its buttons only: a finger dragged across its words turns the
+ * stage is, the five W's). That short card takes touches on its buttons only: a finger dragged across its words turns the
  * view, as the first stage asks, and folds it. Folding puts nothing away for good: the strip has no close either, and
  * the walk still ends only at the console.
  * What breaks if it is removed? The walk has no face: Sloane's lines are heard but never seen, and a visitor without
@@ -190,11 +190,11 @@ export function FirstWalkCard({ visible, card, beat, assisting = false, family =
    *  is back once the visitor is on foot; meanwhile Sloane still says each line (the stage the car finished hands over
    *  to the next one at the wheel, and its ask is heard there). */
   const shown = heard && !(between && driving)
-  /** How many of the whys are unfolded, and whether the folding card shows all of itself (both reset with the stage). */
-  const [whys, setWhys] = useState(0)
+  /** How many of the five W's are answered, and whether the folding card shows all of itself (both reset with the stage). */
+  const [ws, setWs] = useState(0)
   const [more, setMore] = useState(false)
   const [stage, setStage] = useState(card.stage)
-  if (stage !== card.stage) { setStage(card.stage); setWhys(0); setMore(false) }
+  if (stage !== card.stage) { setStage(card.stage); setWs(0); setMore(false) }
   /** Folded to the strip (it counts only where the card folds). A new line opens the card, except at the wheel, where
    *  it is heard and the strip marks it unread until a tap; getting into a car folds it. Adjusted while rendering, from
    *  the values seen last. */
@@ -366,7 +366,7 @@ export function FirstWalkCard({ visible, card, beat, assisting = false, family =
           <p ref={lineRef} className={`shrink-0 text-[15px] leading-5 text-noir-titanium-100 ${brief ? 'line-clamp-3' : ''}`} style={brief ? { WebkitLineClamp: fit.lines } : undefined} aria-live={foldable ? undefined : 'polite'} data-walk-line>
             <span className="text-noir-titanium-400">{CONCIERGE_NAME}: </span>{line}
           </p>
-          {!brief && <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli8}</p>}
+          {!brief && <p className="text-[13px] leading-[18px] text-noir-titanium-400">{card.eli5}</p>}
 
           {!brief && machine && card.index === 1 && (
             <dl className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1 rounded-noir-control border border-noir-titanium-800 bg-noir-ink-2 px-3 py-2 text-[12px] leading-4" aria-label="Your machine" data-walk-machine>
@@ -396,15 +396,15 @@ export function FirstWalkCard({ visible, card, beat, assisting = false, family =
             </div>
           )}
 
-          {!brief && whys > 0 && (
-            <ol className="flex flex-col gap-1.5 text-[13px] leading-[18px] text-noir-titanium-200" aria-label="The five whys" data-walk-whys={whys}>
-              {card.whys.slice(0, whys).map((w, i) => <li key={i} className="border-l-2 border-noir-titanium-800 pl-2.5">{w}</li>)}
+          {!brief && ws > 0 && (
+            <ol className="flex flex-col gap-1.5 text-[13px] leading-[18px] text-noir-titanium-200" aria-label="Who, what, when, where and why" data-walk-ws={ws}>
+              {card.ws.slice(0, ws).map((w) => <li key={w.w} className="border-l-2 border-noir-titanium-800 pl-2.5"><span className="font-semibold text-noir-titanium-100">{w.w}?</span> {w.answer}</li>)}
             </ol>
           )}
 
           <div className="flex shrink-0 flex-wrap items-center gap-2 [&>button]:pointer-events-auto">
-            {!brief && whys < card.whys.length && (
-              <button type="button" onClick={() => setWhys((n) => n + 1)} className="noir-button" data-walk-why>{whys === 0 ? 'Why?' : 'And why?'}</button>
+            {!brief && ws < card.ws.length && (
+              <button type="button" onClick={() => setWs((n) => n + 1)} className="noir-button" data-walk-w={card.ws[ws]!.w}>{card.ws[ws]!.w}?</button>
             )}
             <button type="button" onClick={onShow} className={`noir-button ${assisting ? 'is-active walk-assist' : ''}`} data-walk-show data-walk-assist={assisting || undefined}>{card.show}</button>
             {foldable && <button type="button" onClick={() => setMore((m) => !m)} aria-expanded={more} className="noir-button" data-walk-more>{more ? 'Less' : 'More'}</button>}
