@@ -30,8 +30,9 @@
  *     sections of llama.cpp's static libraries it kept, and objdump -t on those libraries (the llama-cpp-sys-2 rlib
  *     the map names, found in --deps) says which symbols each section holds: the run fails when a kept section holds
  *     a symbol of llama.cpp's common library's download, Hugging Face cache, Docker, HTTP or subprocess code, or of
- *     cpp-httplib, OpenSSL or curl. Then the binary itself: none of those parts' distinctive strings, no import of a
- *     network call (socket, connect, getaddrinfo...), and no OpenSSL, curl or OpenMP library among those it needs.
+ *     cpp-httplib, OpenSSL or curl. Then the binary itself: none of those parts' distinctive strings (read with the
+ *     crates' notices set aside: the binary holds them whole, and they name those parts' licence files), no import of
+ *     a network call (socket, connect, getaddrinfo...), and no OpenSSL, curl or OpenMP library among those it needs.
  *     The process calls it imports (fork, exec, posix_spawn) are printed, not refused: ggml's crash handler forks a
  *     debugger unless GGML_NO_BACKTRACE is set, which src-tauri/src/main.rs sets before anything else runs.
  * .github/workflows/build-matrix.yml runs all three in the Linux jobs after the build. Programs run with argument
@@ -328,10 +329,36 @@ export function keptBanned(archive, symbols, kept) {
   return symbols.filter((s) => BANNED_SYMBOLS.test(s.name) && kept.has(`${archive}(${s.member}):${s.section}`)).map((s) => `${s.member} ${s.section} ${s.name}`)
 }
 
-/** Pure. Which of BANNED_STRINGS a binary's bytes hold. */
-export function bannedStrings(bytes) {
-  return BANNED_STRINGS.filter((s) => bytes.includes(Buffer.from(s)))
+/**
+ * Pure. `bytes` with every whole copy of `text` cut out and one zero byte in its place, so nothing reads across the
+ * cut. A copy that is not whole stays where it is.
+ */
+export function withoutCopies(bytes, text) {
+  const needle = Buffer.isBuffer(text) ? text : Buffer.from(text)
+  if (needle.length === 0) return bytes
+  const parts = []
+  let from = 0
+  for (let at = bytes.indexOf(needle); at >= 0; at = bytes.indexOf(needle, from)) {
+    parts.push(bytes.subarray(from, at), Buffer.alloc(1))
+    from = at + needle.length
+  }
+  return from === 0 ? bytes : Buffer.concat([...parts, bytes.subarray(from)])
 }
+
+/**
+ * Pure. Which of BANNED_STRINGS a binary's bytes hold. `notices`, when given, is the text the program is built to
+ * hold whole (the crates' notices, src-tauri/src/notices.rs): each whole copy is set aside first. That text names
+ * the licence files of the very parts this looks for (llama.cpp/vendor/cpp-httplib/LICENSE) and is no code of
+ * theirs; ci holds it to the registry word for word, so nothing else can be put there. Anything outside a whole
+ * copy is still read, a damaged copy included.
+ */
+export function bannedStrings(bytes, notices = null) {
+  const read = notices ? withoutCopies(bytes, notices) : bytes
+  return BANNED_STRINGS.filter((s) => read.includes(Buffer.from(s)))
+}
+
+/** The committed notices, as the program built from this commit holds them (tools/license/notices.mjs writes them). */
+export const noticesBytes = () => readFileSync(join(ROOT, 'src-tauri', 'notices', 'RUST-CRATES.txt'))
 
 // ---- Running the tools --------------------------------------------------------------------------------------------
 
@@ -472,8 +499,9 @@ async function symbols(args) {
     if (found.length === 0) problems.push(`${basename(deb)} installs no ELF file`)
     elves.push(...found.map((p) => ({ path: p, name: p.slice(dir.length + 1) })))
   }
+  const notices = noticesBytes()
   for (const { path: elf, name } of elves) {
-    const strings = bannedStrings(readFileSync(elf))
+    const strings = bannedStrings(readFileSync(elf), notices)
     const und = parseDynamicSymbols(run('objdump', ['-T', elf])).filter((s) => s.section === '*UND*').map((s) => s.name.replace(/@.*$/, ''))
     const net = [...new Set(und.filter((n) => NETWORK_IMPORTS.test(n)))]
     const proc = [...new Set(und.filter((n) => PROCESS_IMPORTS.test(n)))].sort()

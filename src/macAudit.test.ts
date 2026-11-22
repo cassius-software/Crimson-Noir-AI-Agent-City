@@ -87,6 +87,11 @@ test('the package: a whole .app passes, and each missing, empty, wrong-sized or 
     assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size } : x)))).join('\n'), new RegExp(`RUST-CRATES\\.txt is ${size} bytes; the committed notices are ${a.NOTICES.bytes}`))
   }
   assert.equal(appProblems(entries((e) => e)).filter((p: string) => p.includes('RUST-CRATES')).length, 0)
+  // The binary holds those notices whole, and they name the licence file of a part the strings scan looks for, so
+  // the scan sets them aside as the Linux one does (linuxAudit.test.ts pins what that takes and what it leaves; the
+  // macOS job's own audit of the app it built is the proof on a real binary).
+  assert.match(readFileSync(join(ROOT, 'tools', 'build', 'macAudit.mjs'), 'utf8'), /^ {2}const strings = bannedStrings\(readFileSync\(bin\), noticesBytes\(\)\)$/m)
+  assert.match(readFileSync(join(ROOT, 'tools', 'build', 'linuxAudit.mjs'), 'utf8'), /^ {4}const strings = bannedStrings\(readFileSync\(elf\), notices\)$/m)
   const stray = appProblems(entries((e) => [...e, { path: 'Contents/Resources/models/tiny-a.gguf', size: 9000, dir: false }]))
   assert.match(stray.join('\n'), /holds the tiny test model \(Contents\/Resources\/models\/tiny-a\.gguf\)/)
   // The end-to-end test's own build carries the tiny model on purpose.

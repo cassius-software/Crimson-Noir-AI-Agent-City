@@ -33,7 +33,8 @@
  *     The binary is stripped, so Apple's linker writes a map per slice (src-tauri/build.rs, -map): the objects it
  *     linked and the symbols it kept, apart from those it dead-stripped. The run fails when a kept symbol from
  *     llama.cpp's archive is one of linuxAudit.mjs BANNED_SYMBOLS, when a map is missing or names no llama.cpp archive,
- *     or when the two maps do not cover both slices. Then the binary itself: none of BANNED_STRINGS in its bytes, and
+ *     or when the two maps do not cover both slices. Then the binary itself: none of BANNED_STRINGS in its bytes (the
+ *     crates' notices, which each slice holds whole and which name those parts' licence files, set aside), and
  *     no network call among either slice's imports (nm -u -m); process calls are printed, not refused (ggml's crash
  *     handler, switched off by GGML_NO_BACKTRACE in main.rs).
  *   slices --app <app> --target <src-tauri/target>
@@ -57,7 +58,7 @@ import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } f
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BANNED_STRINGS, BANNED_SYMBOLS, NETWORK_IMPORTS, PROCESS_IMPORTS, TINY, bannedStrings, compareVersions } from './linuxAudit.mjs'
+import { BANNED_STRINGS, BANNED_SYMBOLS, NETWORK_IMPORTS, PROCESS_IMPORTS, TINY, bannedStrings, compareVersions, noticesBytes } from './linuxAudit.mjs'
 import { ASSET_LIMIT } from '../verify/site_budget.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
@@ -483,7 +484,7 @@ async function symbolsCmd(args) {
     if (hits.length > 20) problems.push(`and ${hits.length - 20} more kept banned symbols in the ${map.arch} slice`)
   }
   for (const arch of ARCHS) if (!covered.has(arch)) problems.push(`no linker map for the ${arch} slice among ${maps.join(', ')}`)
-  const strings = bannedStrings(readFileSync(bin))
+  const strings = bannedStrings(readFileSync(bin), noticesBytes())
   console.log(`${basename(bin)}: ${strings.length} of ${BANNED_STRINGS.length} banned strings`)
   for (const s of strings) problems.push(`${basename(bin)} holds the string ${JSON.stringify(s)} of llama.cpp's download or HTTP code`)
   for (const arch of ARCHS) {

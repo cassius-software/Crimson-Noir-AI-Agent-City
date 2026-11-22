@@ -537,7 +537,9 @@ rewrites the list after a lockfile changes, and its diff is the review of what t
    something the package carries, not the crate. Each is accounted for by a rule in `tools/license/policy.json`
    (`notices.nested`), and a file without a rule stops the tool. Reproduced (six): llama.cpp's licence and those of
    four libraries it carries (`llama-cpp-sys-2`), and the Unicode data licence of the tables `regex-syntax`
-   compiles into every app. Named and not reproduced (eight), because no app is built with what they cover:
+   compiles into every app. One of those four, cpp-httplib, is reproduced although the Linux and macOS audits show
+   its code is not in those apps (no kept symbol of it in the linker's map, none of its strings in the program):
+   the text costs nothing, and that audit covers those two platforms alone. Named and not reproduced (eight), because no app is built with what they cover:
    - `hidapi` carries the HIDAPI library in C, which its authors offer under any one of three licences, one of them
      the GPL version 3. The crate compiles that C source on Windows only without its `windows-native` feature. The
      apps take the crate for Windows alone and with that feature, where it is Rust over the system's own HID

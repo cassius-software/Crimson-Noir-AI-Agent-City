@@ -41,7 +41,10 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   review of the first version found eleven faults, fixed before it was offered for merging. The ones that changed the
   file: licence files below a package's top folder were never read; a crate whose only notice file is a list of
   authors got neither a licence text nor a place among the crates without one; and the standard library's notices
-  were missing. CI on the first version showed each app build holding the notices whole: the Windows executables,
+  were missing. With the nested files named, the notices hold the name of cpp-httplib's licence file, a string the
+  Linux and macOS audits look for in the program as a sign of llama.cpp's HTTP code; the audits now set the
+  notices aside, whole copies only, before that scan, and still read everything else. CI on the first version
+  showed each app build holding the notices whole: the Windows executables,
   the Linux and macOS programs, the macOS app's resource, the `.apk`, both the program and the resource inside the
   `.ipa`, and the shell's own unit test. Run here before CI on this version: the generator against the registry
   and the toolchain (426 crates, rustc 1.97.0, 1,043,395 bytes) and `src/licenceNotices.test.ts` (17 tests). It is
