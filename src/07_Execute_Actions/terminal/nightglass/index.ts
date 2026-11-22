@@ -5,10 +5,10 @@
  * Why does this file exist? It is the public face of Nightglass: the one module an app, the console or an agent
  * imports to draw. It names what a caller may hold and nothing else: the way in (createInstance), the reference
  * renderer as a back end (softBackend), the error every refusal raises (Fault), the image formats and their texel
- * arithmetic, the Lens shader form with its builder, binary codec, checker, listing and block layout, and every type
- * of the interface in api.ts and lens.ts. The parts behind it (the core's object classes, the ordering checker, the
- * rasteriser, the texture unit, the output merger and the shader interpreter) stay inside the folder, so they can
- * change without breaking a caller.
+ * arithmetic, the Lens shader form with its builder, binary codec, checker, listing and block layout, its lowering to
+ * WGSL, and every type of the interface in api.ts and lens.ts. The parts behind it (the core's object classes, the
+ * ordering checker, the rasteriser, the texture unit, the output merger and the shader interpreter) stay inside the
+ * folder, so they can change without breaking a caller.
  * What breaks if it is removed? Every caller would import from the folder's inner files, reach for internals that
  * were never promised, and break whenever one of them moved; nothing would say which names are the interface.
  *
@@ -45,6 +45,10 @@ export type {
 export { decode, encode, looksLikeLens } from './binary.ts'
 export { verify } from './verify.ts'
 export { disassemble } from './disasm.ts'
+
+// The lowering of a Lens module to WGSL, for the GPU back end, and where it keeps the inline constants.
+export { WGSL_HIDDEN, positionSure, toWgsl } from './wgsl.ts'
+export type { WgslOptions, WgslOut } from './wgsl.ts'
 
 // Every type of the interface and of the shader form.
 export type * from './api.ts'

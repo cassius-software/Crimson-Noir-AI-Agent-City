@@ -18,7 +18,8 @@
  * - Every vertex lens input slot is fed by exactly one attribute, f32 formats feeding f32 inputs of the same width,
  *   u32 u32, i32 i32, and unorm8x4 an f32x4. Attributes no input reads are allowed; two on one slot are not.
  * - Every fragment lens input matches a vertex lens output of the same slot, type and flatness. The vertex lens
- *   passes at most `limits.interStage` values.
+ *   passes at most `limits.interStage` values, and one fewer when the fragment lens reads front-facing, which takes
+ *   one of them (as WebGPU counts it among a fragment stage's inputs), wherever in its body it reads it.
  * - A colour output with a write mask other than 0 needs a fragment lens output at its slot whose scalar kind is the
  *   format's (f32 for unorm and float, u32 for uint, i32 for sint) and whose width covers the format's channels.
  * - The colour outputs (every one, whatever its mask) take at most `limits.colorBytes` bytes per sample, counted slot
@@ -43,7 +44,7 @@ import { fail, isFault } from './fault.ts'
 import { FORMATS, FORMAT_NAMES, colorBytes, sampleKind } from './formats.ts'
 import type { Format } from './formats.ts'
 import { layoutBlock, scalarOf, widthOf } from './lens.ts'
-import type { Block, Inst, LensModule, Stage, ValueType } from './lens.ts'
+import type { Block, Builtin, Inst, LensModule, Stage, ValueType } from './lens.ts'
 import { Base, choice, every, flag, labelOf, listOf, own, record, whole } from './sync.ts'
 import type { Core } from './sync.ts'
 import { verify } from './verify.ts'
@@ -215,9 +216,22 @@ function vertexBuffers(core: Core, x: unknown, lens: LensImpl, where: string): r
   return Object.freeze(layouts)
 }
 
+/** Whether a body reads a builtin, nested instructions included. */
+function readsBuiltin(body: readonly Inst[], name: Builtin): boolean {
+  for (const inst of body) {
+    if (inst.op === 'builtin' && inst.name === name) return true
+    if (inst.op === 'if' && (readsBuiltin(inst.then, name) || readsBuiltin(inst.else, name))) return true
+    if (inst.op === 'loop' && readsBuiltin(inst.body, name)) return true
+  }
+  return false
+}
+
 function interStage(core: Core, vertex: LensImpl, fragment: LensImpl, where: string): void {
   const outs = vertex.module.outputs
-  if (outs.length > core.limits.interStage) fail('limit', `${where}: ${vertex.name} passes ${outs.length} values to the fragment stage; the device allows ${core.limits.interStage}`)
+  const facing = readsBuiltin(fragment.module.body, 'front-facing')
+  if (outs.length + (facing ? 1 : 0) > core.limits.interStage) {
+    fail('limit', `${where}: ${vertex.name} passes ${outs.length} values to the fragment stage${facing ? ', and front-facing takes one more' : ''}; the device allows ${core.limits.interStage}`)
+  }
   for (const p of fragment.module.inputs) {
     const o = outs.find((q) => q.slot === p.slot)
     if (o === undefined) fail('mismatch', `${where}: ${fragment.name} reads slot ${p.slot}, which ${vertex.name} does not write`)

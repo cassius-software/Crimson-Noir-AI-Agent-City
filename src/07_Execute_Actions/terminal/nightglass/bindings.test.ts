@@ -85,8 +85,9 @@ test('binding layout entries are sorted by binding with the defaults of their ki
 test('per-stage and dynamic limits hold over one binding layout and over a whole pipeline layout', () => {
   const r = rig()
   const uniforms = (n: number, first = 0): BindingEntry[] => Array.from({ length: n }, (_, i) => ({ binding: first + i, kind: 'uniform' as const, stages: ['fragment' as const] }))
-  layout(r, uniforms(12))
-  refuses(() => layout(r, [...uniforms(12), { binding: 12, kind: 'uniform', stages: ['vertex', 'fragment'] }]), 'limit', /the fragment stage would see 13 bindings that count against stageUniforms; the device allows 12/)
+  // 11, not WebGPU's 12: every back end keeps one uniform binding of each stage for the inline constants.
+  layout(r, uniforms(11))
+  refuses(() => layout(r, [...uniforms(11), { binding: 11, kind: 'uniform', stages: ['vertex', 'fragment'] }]), 'limit', /the fragment stage would see 12 bindings that count against stageUniforms; the device allows 11/)
   const storage = Array.from({ length: 5 }, (_, i): BindingEntry => ({ binding: i, kind: i % 2 === 0 ? 'storage' : 'storage-read', stages: ['compute'] }))
   layout(r, storage)
   const nine = Array.from({ length: 9 }, (_, i): BindingEntry => ({ binding: i, kind: 'storage-read', stages: ['vertex'] }))
@@ -98,12 +99,13 @@ test('per-stage and dynamic limits hold over one binding layout and over a whole
   const dynS = Array.from({ length: 5 }, (_, i): BindingEntry => ({ binding: i, kind: i < 3 ? 'storage' : 'storage-read', stages: ['compute'], dynamic: true }))
   refuses(() => layout(r, dynS), 'limit', /5 dynamic storage bindings is more than the device allows, 4/)
   // Over a pipeline layout: two sets that fit alone, but not together.
-  const a = layout(r, uniforms(8))
-  const b = layout(r, uniforms(8))
-  refuses(() => r.device.createPipelineLayout({ sets: [a, b] }), 'limit', /fragment stage would see 16 bindings that count against stageUniforms/)
+  const a = layout(r, uniforms(6))
+  const b = layout(r, uniforms(6))
+  refuses(() => r.device.createPipelineLayout({ sets: [a, b] }), 'limit', /fragment stage would see 12 bindings that count against stageUniforms; the device allows 11/)
+  refuses(() => r.device.createPipelineLayout({ sets: [layout(r, uniforms(8)), layout(r, uniforms(8))] }), 'limit', /fragment stage would see 16 bindings that count against stageUniforms/)
   const c = layout(r, Array.from({ length: 3 }, (_, i): BindingEntry => ({ binding: i, kind: 'storage', stages: ['compute'], dynamic: true })))
   refuses(() => r.device.createPipelineLayout({ sets: [c, c] }), 'limit', /6 dynamic storage bindings/)
-  r.device.createPipelineLayout({ sets: [a, layout(r, uniforms(4))] })
+  r.device.createPipelineLayout({ sets: [a, layout(r, uniforms(5))] })
 })
 
 test('createPipelineLayout: up to the device\'s sets, constants a multiple of 4 within the limit', () => {

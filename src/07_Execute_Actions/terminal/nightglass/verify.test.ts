@@ -529,6 +529,37 @@ test('the instruction and id limits of LENS_LIMITS hold', () => {
   verify(bare(lits, LENS_LIMITS.ids))
 })
 
+test('a module\'s variables take at most LENS_LIMITS.varBytes, each var counted once at its size rounded up to its alignment', () => {
+  // WGSL holds one function's variables to 8192 bytes; the GPU back end keeps four bytes for each of its 32 loop
+  // counters, one for each level `if` and `loop` may nest.
+  assert.equal(LENS_LIMITS.varBytes, 8064)
+  assert.equal(LENS_LIMITS.varBytes + 4 * LENS_LIMITS.depth, 8192)
+  const vars = (types: readonly ValueType[]): Loose => bare(types.map((t, id) => ({ op: 'var', id, t })), types.length)
+  const many = (n: number, t: ValueType): ValueType[] => new Array<ValueType>(n).fill(t)
+  // Exactly 8064 is accepted; 8068 is refused at the var that passes the bound.
+  verify(vars(many(2016, 'u32')))
+  refused(vars(many(2017, 'u32')), /^lens: body\[2016\] var: variables take 8068 bytes; a module holds at most 8064$/)
+  verify(vars(many(126, 'm4')))
+  refused(vars([...many(126, 'm4'), 'bool']), /^lens: body\[126\] var: variables take 8068 bytes; a module holds at most 8064$/)
+  // Each type's count: 4 for a scalar, 8 for x2, 16 for x3 (12 rounded up to its alignment) and x4, bools as numbers,
+  // and 16, 48 and 64 for m2, m3 and m4.
+  verify(vars([...many(503, 'boolx3'), 'i32x2', 'f32', 'bool']))
+  refused(vars([...many(503, 'f32x3'), 'u32x2', 'i32', 'boolx2']), /variables take 8068 bytes/)
+  verify(vars(many(504, 'f32x4')))
+  verify(vars(many(504, 'm2')))
+  refused(vars([...many(504, 'm2'), 'f32']), /^lens: body\[504\] var: variables take 8068 bytes/)
+  verify(vars(many(168, 'm3')))
+  refused(vars([...many(167, 'm3'), 'm4']), /^lens: body\[167\] var: variables take 8080 bytes/)
+  // Every declaration counts once, in either branch of an if and inside a loop, however often it would run.
+  const nested = (extra: boolean): Loose => bare([
+    { op: 'lit', id: 0, t: 'bool', v: [1] },
+    { op: 'if', c: 0, then: Array.from({ length: 1000 }, (_, k) => ({ op: 'var', id: 1 + k, t: 'f32x2' })), else: extra ? [{ op: 'var', id: 1001, t: 'f32' }] : [] },
+    { op: 'loop', body: [{ op: 'var', id: 1002, t: 'm4' }, { op: 'break' }] },
+  ], 1003)
+  verify(nested(false))
+  refused(nested(true), /^lens: body\[2\]\.body\[0\] var: variables take 8068 bytes; a module holds at most 8064$/)
+})
+
 test('hostile input: cycles, shared blocks, objects that raise when read, and junk anywhere only ever give a lens Fault', () => {
   // A body that contains itself is refused at the depth limit, not by a stack overflow.
   const body: Loose[] = []

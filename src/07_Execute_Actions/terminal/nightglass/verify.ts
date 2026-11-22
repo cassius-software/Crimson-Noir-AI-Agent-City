@@ -28,7 +28,8 @@ import { FORMATS, isFormat, sampleKind } from './formats.ts'
 import type { Format } from './formats.ts'
 import {
   BINARY, BUILTINS, DERIVATIVES, IMAGE_DIMS, LENS_LIMITS, RESOURCE_KINDS, SAMPLE_KINDS, STAGES, TERNARY, UNARY,
-  boolOf, columnOf, componentsOf, isGrid, isScalar, isValueType, isVector, layoutBlock, scalarOf, strideOf, vectorOf, walk, widthOf,
+  boolOf, columnOf, componentsOf, isGrid, isScalar, isValueType, isVector, layoutBlock, scalarOf, strideOf, varBytesOf, vectorOf, walk,
+  widthOf,
 } from './lens.ts'
 import type {
   BinaryFn, Block, BlockLayout, DataType, ImageDims, LayoutCache, LensModule, Op, Port, Resource, ResourceKind, SampleKind, Space,
@@ -453,6 +454,8 @@ class Checker {
   private readonly inputs = new Map<number, ValueType>()
   private readonly outputs = new Map<number, ValueType>()
   private count = 0
+  /** The bytes of the variables declared so far, each `var` counted once at varBytesOf() of its type. */
+  private varBytes = 0
   private returned = false
   private readonly budget = { left: FIELD_BUDGET }
   private readonly layouts: Layouts = { uniform: new WeakMap(), storage: new WeakMap() }
@@ -628,6 +631,8 @@ class Checker {
         break
       case 'var':
         if (x.init !== undefined) this.typed(x.init, 'the initial value', [t], no)
+        this.varBytes += varBytesOf(t)
+        if (this.varBytes > LENS_LIMITS.varBytes) no(`variables take ${this.varBytes} bytes; a module holds at most ${LENS_LIMITS.varBytes}`)
         break
       case 'get': same(t, this.variable(x.v, no), no); break
       case 'set': this.typed(x.a, 'the value', [this.variable(x.v, no)], no); break

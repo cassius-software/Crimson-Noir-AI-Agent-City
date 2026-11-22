@@ -783,10 +783,10 @@ test('a Lens shader goes from the builder to words and back, a device takes the 
 test('index.ts is the whole public face: exactly these values and no internals, and this file draws through it alone', () => {
   assert.deepEqual(Object.keys(nightglass).sort(), [
     'BINARY', 'BUILTINS', 'DERIVATIVES', 'FAULT_CODES', 'FEATURES', 'FORMATS', 'FORMAT_NAMES', 'Fault', 'LENS_LIMITS', 'LENS_MAGIC', 'LENS_VERSION',
-    'SCALARS', 'SOFT_HEAP', 'SOFT_LIMITS', 'SOFT_STEPS', 'STAGES', 'TERNARY', 'UNARY', 'VALUE_TYPES', 'arrayOf', 'block', 'boolOf', 'columnOf',
-    'componentsOf', 'createInstance', 'decode', 'decodeTexel', 'disassemble', 'encode', 'encodeTexel', 'fail', 'isFault', 'isFormat', 'isGrid',
-    'isScalar', 'isValueType', 'isVector', 'layoutBlock', 'lens', 'looksLikeLens', 'place', 'placeValue', 'sampleKind', 'scalarOf', 'softBackend',
-    'strideOf', 'vectorOf', 'verify', 'walk', 'widthOf',
+    'SCALARS', 'SOFT_HEAP', 'SOFT_LIMITS', 'SOFT_STEPS', 'STAGES', 'TERNARY', 'UNARY', 'VALUE_TYPES', 'WGSL_HIDDEN', 'arrayOf', 'block', 'boolOf',
+    'columnOf', 'componentsOf', 'createInstance', 'decode', 'decodeTexel', 'disassemble', 'encode', 'encodeTexel', 'fail', 'isFault', 'isFormat',
+    'isGrid', 'isScalar', 'isValueType', 'isVector', 'layoutBlock', 'lens', 'looksLikeLens', 'place', 'placeValue', 'positionSure', 'sampleKind',
+    'scalarOf', 'softBackend', 'strideOf', 'toWgsl', 'vectorOf', 'verify', 'walk', 'widthOf',
   ])
   const surface: { readonly [name: string]: unknown } = nightglass
   for (const internal of ['compile', 'dispatch', 'Raster', 'assemble', 'ImageStore', 'blend', 'resolveInto', 'checkOrder', 'hostRead', 'Core', 'DeviceImpl', 'LensBuilder', 'say']) {
