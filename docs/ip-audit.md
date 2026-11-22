@@ -525,14 +525,35 @@ rewrites the list after a lockfile changes, and its diff is the review of what t
    and the page's bundled JavaScript, and nothing for the crates. The boot images are not affected (two crates,
    covered by `NOTICE.txt`). Most Rust applications ship this way and it is rarely pursued, but it is a duty in the
    licences' own words. Now `tools/license/notices.mjs` writes `src-tauri/notices/RUST-CRATES.txt` from the same
-   `cargo metadata` and the crates' own packages: all 426 crates of the apps' lockfile (every platform's, so each
-   app's file names more crates than that app links, never fewer), the 214 distinct licence, copyright and notice
-   texts they ship, the source location of each MPL-2.0 crate, and for the 38 crates whose packages ship no text
-   their authors and the text of the licence taken. The app's program holds the file whole and every package ships
-   it as `licenses/RUST-CRATES.txt`; CI fails when the file is not what the registry gives or when a build does not
-   hold it. What it does not settle: whether a notice inside the program and a file in the package is enough in
-   every store's eyes (the phones' stores have their own rules for showing licences), and the reading of each
-   licence, which is counsel's.
+   `cargo metadata`, the crates' own packages and the Rust toolchain: all 426 crates of the apps' lockfile (every
+   platform's, so each app's file names more crates than that app links, never fewer), the 220 distinct licence,
+   copyright and notice texts they ship, the source location of each MPL-2.0 crate, for the 41 crates whose
+   packages have no licence text of their own their authors and the text of the licence taken, and the Rust
+   project's own statement of the standard library's copyrights for the rustc the apps are built with (1.97.0). The
+   app's program holds the file whole and every package ships it as `licenses/RUST-CRATES.txt`; CI fails when the
+   file is not what the registry and the toolchain give or when a build does not hold it.
+
+   **Licence files inside a package.** Fourteen licence files sit below the top folder of five packages and cover
+   something the package carries, not the crate. Each is accounted for by a rule in `tools/license/policy.json`
+   (`notices.nested`), and a file without a rule stops the tool. Reproduced (six): llama.cpp's licence and those of
+   four libraries it carries (`llama-cpp-sys-2`), and the Unicode data licence of the tables `regex-syntax`
+   compiles into every app. Named and not reproduced (eight), because no app is built with what they cover:
+   - `hidapi` carries the HIDAPI library in C, which its authors offer under any one of three licences, one of them
+     the GPL version 3. The crate compiles that C source on Windows only without its `windows-native` feature. The
+     apps take the crate for Windows alone and with that feature, where it is Rust over the system's own HID
+     interface, so no app holds any of that C code and the choice among the three licences never arises.
+   - `libdbus-sys` carries the D-Bus library's source for its `vendored` feature, which is off. The Linux app
+     loads the D-Bus library the system provides (already among the questions for counsel below).
+   - `tracing-core` carries a copy of a once cell that it compiles only without `std`; the apps take it with `std`.
+
+   Each of those three statements is a condition the tool reads from cargo's answer on every run (the feature that
+   is on, the feature that is off, the one platform the crate is taken for). When a dependency change makes one
+   untrue, `crate-licences` fails and names the rule.
+
+   What it does not settle: whether a notice inside the program and a file in the package is enough in every
+   store's eyes (the phones' stores have their own rules for showing licences); whether the standard library's
+   statement for all of its platforms is the right form for each app; and the reading of each licence, which is
+   counsel's.
 5. **The cover picture.** `docs/cover.jpg` carries Content Credentials (a C2PA manifest) signed by Google's media
    services, so it was made or last edited with one of Google's generative image tools. Julian supplied it and it
    was committed on 16 October 2026. Which tool and which plan made it is not recorded, so its terms for commercial

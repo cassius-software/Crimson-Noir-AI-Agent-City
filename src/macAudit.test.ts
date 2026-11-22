@@ -81,6 +81,12 @@ test('the package: a whole .app passes, and each missing, empty, wrong-sized or 
   assert.equal(a.NOTICES.path, 'Contents/Resources/licenses/RUST-CRATES.txt', 'beside llama.cpp\'s texts, in Tauri\'s resource folder')
   assert.match(appProblems(entries((e) => e.filter((x) => x.path !== a.NOTICES.path))).join('\n'), /no Contents\/Resources\/licenses\/RUST-CRATES\.txt \(the Rust crates the app is built with travel with their notices\)/)
   assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size: 12 } : x)))).join('\n'), /RUST-CRATES\.txt is 12 bytes; the committed notices are \d+/)
+  // One byte short or one byte over is not the committed file either.
+  for (const size of [a.NOTICES.bytes - 1, a.NOTICES.bytes + 1]) {
+    assert.deepEqual(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size } : x)))).filter((p: string) => p.includes('RUST-CRATES')).length, 1, String(size))
+    assert.match(appProblems(entries((e) => e.map((x) => (x.path === a.NOTICES.path ? { ...x, size } : x)))).join('\n'), new RegExp(`RUST-CRATES\\.txt is ${size} bytes; the committed notices are ${a.NOTICES.bytes}`))
+  }
+  assert.equal(appProblems(entries((e) => e)).filter((p: string) => p.includes('RUST-CRATES')).length, 0)
   const stray = appProblems(entries((e) => [...e, { path: 'Contents/Resources/models/tiny-a.gguf', size: 9000, dir: false }]))
   assert.match(stray.join('\n'), /holds the tiny test model \(Contents\/Resources\/models\/tiny-a\.gguf\)/)
   // The end-to-end test's own build carries the tiny model on purpose.

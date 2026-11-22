@@ -18,20 +18,35 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 - **Every app now carries the notices of the Rust crates it is built with.** The licence gate's first run found
   that the app packages carried notices for the model, llama.cpp and the page's bundled JavaScript, and none for the
   Rust crates linked into the app itself, whose licences ask that their copyright notice and licence text travel
-  with every copy. `tools/license/notices.mjs` now writes `src-tauri/notices/RUST-CRATES.txt` from the apps' lockfile
-  and the crates' own packages: the 426 crates with the licence each declares, the 214 distinct licence, copyright
-  and notice texts they ship (each once, under the crates and file names that ship it), where the source of each of
-  the five MPL-2.0 crates is, and, for the 38 crates whose packages ship no text, their authors and the text of the
-  licence taken. The file travels two ways: compiled into the app's program (`src-tauri/src/notices.rs`), so the
+  with every copy. `tools/license/notices.mjs` now writes `src-tauri/notices/RUST-CRATES.txt` (1,043,395 bytes) from
+  the apps' lockfile, the crates' own packages and the Rust toolchain: the 426 crates with the licence each
+  declares; where the source of each of the five MPL-2.0 crates is; the 220 distinct licence, copyright and notice
+  texts the packages ship (each once, under the crates and file names that ship it); for the 41 crates whose
+  packages have no licence text of their own, their authors and the text of the licence taken; the 14 licence files
+  that sit inside a package and cover something it carries, each accounted for by a rule in
+  `tools/license/policy.json`; and the Rust project's own statement of the standard library's copyrights for rustc
+  1.97.0, the toolchain every workflow builds with. Six of those 14 texts are reproduced: llama.cpp's and four of
+  the libraries it carries, and the Unicode data licence of the tables `regex-syntax` compiles into every app. The
+  other eight cover code no app is built with (HIDAPI's C source, a vendored copy of D-Bus, a copy of a once cell);
+  each is still named, with the reason, and its rule names the cargo feature or platform that makes it so, which
+  the tool checks against cargo's answer on every run. A licence file no rule accounts for, a crate from anywhere
+  but crates.io, and a licence file that is not UTF-8 each stop the run, so a person decides. The file travels two
+  ways: compiled into the app's program (`src-tauri/src/notices.rs`), so the
   bare Windows `.exe` and the library inside a phone's package hold it whole, and as `licenses/RUST-CRATES.txt`
   among every package's resources. Three checks keep it true: ci's `crate-licences` fails when the committed file is
-  not what the registry gives (`--check`), the build matrix and the Windows workflow read what they built and fail
-  when the notices are not inside whole (`carried`, an `.apk` or `.ipa` read as the archive it is), and the Linux
-  and macOS package checks fail on a package without the file at its committed size. `.gitattributes` keeps git
-  from converting the file's line ends, since it is compared byte for byte on every runner. Run here before CI: the
-  generator against the registry (426 crates, 767,097 bytes), `src/licenceNotices.test.ts` (12 tests), and the
-  shell's `cargo check` and `clippy` for the Windows target. It is a machine check and not legal advice; whether a
-  notice inside the program and a file in the package is all each phone store asks for is not settled by it.
+  not what the registry and the toolchain give (`--check`), the build matrix and the Windows workflow read what they
+  built and fail when the notices are not inside whole (`carried`, an `.apk` or `.ipa` read as the archive it is),
+  and the Linux and macOS package checks fail on a package without the file at its committed size. `.gitattributes`
+  keeps git from converting the file's line ends, since it is compared byte for byte on every runner. An independent
+  review of the first version found eleven faults, fixed before it was offered for merging. The ones that changed the
+  file: licence files below a package's top folder were never read; a crate whose only notice file is a list of
+  authors got neither a licence text nor a place among the crates without one; and the standard library's notices
+  were missing. CI on the first version showed each app build holding the notices whole: the Windows executables,
+  the Linux and macOS programs, the macOS app's resource, the `.apk`, both the program and the resource inside the
+  `.ipa`, and the shell's own unit test. Run here before CI on this version: the generator against the registry
+  and the toolchain (426 crates, rustc 1.97.0, 1,043,395 bytes) and `src/licenceNotices.test.ts` (17 tests). It is
+  a machine check and not legal advice; whether a notice inside the program and a file in the package is all each
+  phone store asks for is not settled by it.
 - **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
   repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
   (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0

@@ -63,6 +63,9 @@ on:
       - tools/browser/nativeE2e.mjs
       - tools/browser/tinyGguf.mjs
       - tools/verify/site_budget.mjs
+      - tools/license/notices.mjs
+      - tools/license/gate.mjs
+      - tools/test/held.mjs
       - package.json
       - package-lock.json
       - crimson_noir_os/boot/**

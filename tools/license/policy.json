@@ -35,6 +35,18 @@
       "docs/ip-audit.md": "The audit for counsel, which has to name what was found and removed."
     }
   },
+  "notices": {
+    "why": "What the notices of the Rust crates inside the apps (tools/license/notices.mjs, src-tauri/notices/RUST-CRATES.txt) need a person to have read. A licence, copyright or notice file below the top of a crate's package covers something the package carries inside it, which may come under terms the crate's manifest does not declare, so each must fall under a rule here that says what it covers; a file no rule covers stops the notices from being written. A rule with built false says no app is built with that part, so its text stays out of the notices: it must say why, and name under needs what makes it so (features that are on, features the crate lacks, the one target it is taken for), which is read from cargo's answer on every run. combined names crates under several licences at once whose single licence file holds every text.",
+    "nested": [
+      {"crate": "regex-syntax", "under": "src/unicode_tables/LICENSE-UNICODE", "covers": "the tables this crate generates from the Unicode Character Database, which are compiled into every app"},
+      {"crate": "llama-cpp-sys-2", "under": "llama.cpp/LICENSE", "covers": "llama.cpp, the C++ library this crate compiles and links, which runs the model in the Linux and macOS apps"},
+      {"crate": "llama-cpp-sys-2", "under": "llama.cpp/vendor", "covers": "libraries llama.cpp carries inside it (cpp-httplib, xxHash, a SHA-256 routine and rotate-bits); this crate's build compiles llama.cpp's common library, whose parts the linker keeps or drops, so their texts are reproduced whether or not any of their code is left in an app"},
+      {"crate": "tracing-core", "under": "src/spin/LICENSE", "covers": "a copy of the spin crate's once cell inside this crate", "built": false, "why": "This crate compiles that copy only without its std feature, and the apps take it with std.", "needs": {"features": ["std"]}},
+      {"crate": "hidapi", "under": "etc/hidapi", "covers": "the HIDAPI library in C that this package carries, offered by its authors under any one of three licences", "built": false, "why": "This crate compiles the C library on Windows only without its windows-native feature, and the apps take the crate for Windows alone, with that feature: there it is Rust over the system's own HID interface.", "needs": {"features": ["windows-native"], "target": "cfg(windows)"}},
+      {"crate": "libdbus-sys", "under": "vendor/dbus", "covers": "the D-Bus library's source, which this package carries for its vendored feature", "built": false, "why": "The vendored feature is off, so nothing of that source is compiled: the Linux app loads the D-Bus library the system provides.", "needs": {"lacks": ["vendored"]}}
+    ],
+    "combined": []
+  },
   "assets": {
     "why": "Every picture, icon and packed data file in the repository, with where it came from and whose it is. `open` is a question only the owner can answer; the gate repeats it on every run until it is answered here.",
     "files": [

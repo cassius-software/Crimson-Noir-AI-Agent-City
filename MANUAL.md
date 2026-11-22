@@ -5641,14 +5641,34 @@ brought in. The gate is not legal advice: it proves the files match the policy, 
 
 **The notices of the Rust crates inside the apps.** The apps for Windows, Linux, macOS, Android and iOS are built
 with open-source Rust crates, and most of their licences ask that the copyright notice and the licence text travel
-with every copy. `src-tauri/notices/RUST-CRATES.txt` is those notices: one line for each crate of
+with every copy. `src-tauri/notices/RUST-CRATES.txt` is those notices, in six sections: one line for each crate of
 `src-tauri/Cargo.lock` with the licence it declares and where it is published; where the source of each MPL-2.0
 crate is, exactly as used; every licence, copyright and notice file the crates ship in their own packages, each
-distinct text once, under the crates and file names that ship it; and, for a crate whose package ships no text, its
-authors, the licence taken and that licence's text. Nobody writes it by hand:
-`node tools/license/notices.mjs --write` writes it from the lockfile and the crates' packages, and CI's
-`crate-licences` check (`--check`) fails when the committed file is not what the registry gives, so a changed
-lockfile cannot go out with stale notices. The file travels two ways. It is compiled into the app's own program
+distinct text once, under the crates and file names that ship it; for a crate whose package has no licence text of
+its own, its authors, the licence taken and that licence's text; the files that sit inside a package, below its top
+folder; and the Rust standard library's own notices. Nobody writes it by hand:
+`node tools/license/notices.mjs --write` writes it from the lockfile, the crates' packages and the Rust toolchain,
+and CI's `crate-licences` check (`--check`) fails when the committed file is not what they give, so a changed
+lockfile cannot go out with stale notices.
+
+A licence file inside a package covers something the package carries, not the crate as a whole: a library in C or
+C++, or tables made from someone else's data. The tool reads none of them on its own word. Each must be accounted
+for by a rule in `tools/license/policy.json` (`notices.nested`) that says what the file covers, and a file with no
+rule stops the run, so a person reads it first. A rule may say that no app is built with what the file covers (the
+C source of a library the apps use only through the system's copy, say); then its text is left out, the file is
+still named in the fifth section with the reason, and the rule must name the cargo feature or the platform that
+makes it so. The tool checks that against cargo's own answer every time it runs, so the day a dependency turns the
+feature on, the check fails instead of the notices going stale. A crate that comes from anywhere but crates.io, and
+a licence file that is not UTF-8, stop the run too: both are decisions for a person.
+
+The standard library is not in the lockfile, yet every app is built with it. Its notices are the Rust project's own
+statement (`share/doc/rust/COPYRIGHT-library.html` in the toolchain), reduced to plain text, for the rustc the
+workflows pin (`RUST_TOOLCHAIN`). `--check` on a machine with another rustc says so and stops, since that rustc's
+statement is not the one the apps are built with; after the pinned version changes, write the file again with the
+new toolchain. The statement does not depend on the machine: for 1.97.0 it is the same file, byte for byte, in the
+toolchains for Linux x86-64, Windows x86-64 and macOS arm64.
+
+The file travels two ways. It is compiled into the app's own program
 (`src-tauri/src/notices.rs`), so a copy that is one file and nothing else, the bare Windows `.exe` or the library
 inside a phone's package, still holds it whole as plain text. And it is among every package's resources as
 `licenses/RUST-CRATES.txt` (`src-tauri/tauri.conf.json` `bundle.resources`): beside the program in a Windows

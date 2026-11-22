@@ -3,12 +3,13 @@
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 //! Why does this file exist? This app is built with some four hundred open-source Rust crates, and their licences ask
 //! that the copyright notices and licence texts travel with every copy of it. `../notices/RUST-CRATES.txt` is those
-//! notices (tools/license/notices.mjs writes it from the lockfile and the crates' own packages; CI fails when it is
-//! not what the registry gives). It travels twice. Here it is compiled into the binary, so a copy that is one file
-//! and nothing else (the bare Windows .exe, the library inside a phone's package) still carries it, whole and as
-//! plain text. And tauri.conf.json puts the same file among every package's resources (`licenses/RUST-CRATES.txt`),
-//! where a person can open it. `third_party_notices` lends the page the text, so the linker cannot drop it and a
-//! screen of the page can show it. The page's own notices, for what the page is built with, are inside the page.
+//! notices, with the Rust standard library's own (tools/license/notices.mjs writes it from the lockfile, the crates'
+//! packages and the toolchain; CI fails when it is not what they give). It travels twice. Here it is compiled into
+//! the binary, so a copy that is one file and nothing else (the bare Windows .exe, the library inside a phone's
+//! package) still carries it, whole and as plain text. And tauri.conf.json puts the same file among every package's
+//! resources (`licenses/RUST-CRATES.txt`), where a person can open it. `third_party_notices` lends the page the
+//! text, so the linker cannot drop it and a screen of the page can show it. The page's own notices, for what the
+//! page is built with, are inside the page.
 //! What breaks if it is removed? The apps go out without the notices their dependencies' licences ask for.
 
 /// The notices of every Rust crate this app is built with, as tools/license/notices.mjs wrote them.
