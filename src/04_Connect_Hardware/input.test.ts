@@ -8,7 +8,9 @@
  * lock, a click (no drag) captures the pointer, pitch is clamped to ±PITCH_LIMIT, the terminal and lost
  * focus end a drag, touch drag uses first-person sensitivity, the right stick turns the head,
  * `padFamily` follows the controller used last, the ping is one edge from Q, the middle mouse button
- * (never a drag) and a pad's right shoulder, a Command chord holds no key, Space and the arrows never click a
+ * (never a drag) and a pad's right shoulder, a talk is one edge from T and a pad's west face button (never typed in a
+ * field, never under the act card's shield) that keeps how it was pressed (T with a pad's stick held is still T, and
+ * a pad's press is the pad's), a Command chord holds no key, Space and the arrows never click a
  * button a pointer press left focused (one reached with Tab keeps Space; decided when the focus moves, since Chromium
  * reads every keydown as keyboard use, and kept when the window's focus comes back or a key repeats through a tap),
  * raw mouse counts are asked for and a driver's spike is dropped (judged by rate, so a busy frame's merged movement,
@@ -247,6 +249,87 @@ test('mute: V and the right stick click queue one edge each (M is rain mode, L3 
   assert.equal(input.take('mute'), false, 'L3 is the run latch, not the microphone')
   input.press('mute')
   assert.equal(input.take('mute'), true, 'the pill and the harness press it')
+})
+
+test('talk: T and a pad\'s west face button queue one edge each; a field (INPUT, TEXTAREA, contenteditable), the terminal, a held key and the act card\'s shield never do', () => {
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: false }))
+  assert.equal(input.take('talk'), true)
+  assert.equal(input.take('talk'), false, 'one edge per press')
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: true }))
+  assert.equal(input.take('talk'), false, 'a held key repeats nothing')
+  for (const field of [{ tagName: 'INPUT' }, { tagName: 'TEXTAREA' }, { tagName: 'DIV', isContentEditable: true }]) {
+    const typed = ev('keydown', { code: 'KeyT', repeat: false })
+    Object.defineProperty(typed, 'target', { value: field })
+    doc.dispatchEvent(typed)
+    assert.equal(input.take('talk'), false, `typing T in a field (${field.tagName}) is a letter, not a talk`)
+  }
+  input.suspend(true)
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: false }))
+  assert.equal(input.take('talk'), false, 'the terminal is open')
+  input.suspend(false)
+  for (const other of ['interact', 'ping', 'mute', 'browse'] as const) assert.equal(input.take(other), false, `T is not ${other}`)
+
+  pads.push(pad({ pressed: [PAD.west] }))
+  input.poll(1 / 60)
+  assert.equal(input.take('talk'), true, 'the west face button')
+  assert.equal(input.device, 'gamepad')
+  input.poll(1 / 60)
+  assert.equal(input.take('talk'), false, 'held')
+  input.press('talk')
+  assert.equal(input.take('talk'), true, 'the harness presses it')
+
+  // The act card's shield: the pad's talk edge is the card's like every other edge but the mute, and so is a press.
+  pads[0] = pad()
+  input.poll(1 / 60)
+  input.shield(true)
+  pads[0] = pad({ pressed: [PAD.west] })
+  input.poll(1 / 60)
+  assert.equal(input.take('talk'), false, 'shielded: the west button queues no talk')
+  input.press('talk')
+  assert.equal(input.take('talk'), false, 'shielded: nor a press')
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: false }))
+  assert.equal(input.take('talk'), true, 'the keyboard is untouched by the shield, as for E')
+  input.shield(false)
+  input.poll(1 / 60)
+  assert.equal(input.take('talk'), false, 'the button held through the shield replays nothing when it lifts')
+
+  // A left hand talks with the d-pad's up (gamepad.ts PadHand).
+  input.setHand('left')
+  pads[0] = pad()
+  input.poll(1 / 60)
+  pads[0] = pad({ pressed: [PAD.up] })
+  input.poll(1 / 60)
+  assert.equal(input.take('talk'), true, 'left hand: the d-pad\'s up')
+})
+
+test('takeTalk: how a talk was pressed is kept as it is queued, never read from the device as it is taken', () => {
+  // Walking with the pad's stick and pressing T to type: the poll before the take calls the device a pad again.
+  pads.push(pad({ axes: [0, -0.9, 0, 0] }))
+  input.poll(1 / 60)
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: false }))
+  input.poll(1 / 60)
+  assert.equal(input.device, 'gamepad', 'the stick held makes the device a pad again before the take')
+  assert.equal(input.takeTalk(), 'keyboard', 'T is still the keyboard\'s (a pad\'s press would close an open conversation)')
+  assert.equal(input.takeTalk(), null, 'one edge per press')
+  // The west face button is the pad's, the stick held or not, and so is a left hand's d-pad up.
+  pads[0] = pad({ axes: [0, -0.9, 0, 0], pressed: [PAD.west] })
+  input.poll(1 / 60)
+  assert.equal(input.takeTalk(), 'pad')
+  pads[0] = pad()
+  input.poll(1 / 60)
+  input.setHand('left')
+  pads[0] = pad({ pressed: [PAD.up] })
+  input.poll(1 / 60)
+  assert.equal(input.takeTalk(), 'pad', 'left hand: the d-pad\'s up')
+  // A programmatic press (the harness) is a key's, and a press taken leaves nothing of the pad behind it.
+  pads[0] = pad()
+  input.poll(1 / 60)
+  input.press('talk')
+  assert.equal(input.takeTalk(), 'keyboard')
+  // The edge is the same queue take('talk') reads: either takes it once.
+  doc.dispatchEvent(ev('keydown', { code: 'KeyT', repeat: false }))
+  assert.equal(input.take('talk'), true)
+  assert.equal(input.takeTalk(), null)
 })
 
 test('drain: every queued action dropped, and nothing else; the held keys, the stick and a held face button stay as they were', () => {

@@ -14,6 +14,10 @@
  * the sound is off, and a line stops the moment the next one starts or its signal aborts. Pure where it can be: the
  * tier choice, the voice pick and the settings are functions a Node test runs; only `ConciergeSpeaker` touches the
  * browser's objects, and it takes them as arguments.
+ * The people the player stops to talk with in the street (07_Execute_Actions/talk.ts) speak through this same mouth
+ * (`person`), so one line is ever said at a time and the microphone's echo guard and barge-in cover them as they cover
+ * Sloane. A person is never heard in her voice: a hired agent with a provider voice of their own is placed at their
+ * head, and anyone else speaks in a browser voice other than hers, quieter with distance.
  * What breaks if it is removed? Sloane is text on a card: the onboarding and the nudges make no sound.
  */
 import type { SpeechClip, Utterance, Voice } from '../operator.ts'
@@ -36,6 +40,8 @@ export interface UtteranceLike {
   pitch: number
   rate: number
   lang: string
+  /** From 0 to 1. Written only for a person in the street, quieter with distance; Sloane's lines leave the browser's 1. */
+  volume?: number
   onend: ((e: unknown) => void) | null
   onerror: ((e: unknown) => void) | null
 }
@@ -65,12 +71,39 @@ export function synthEnv(g: object = globalThis): SynthEnv {
   }
 }
 
+/**
+ * An English voice's language tag: `en` alone, or followed by a region after a hyphen or, as Android writes it
+ * (`en_US`), an underscore. A word boundary is not enough there, because the underscore is a word character.
+ */
+const ENGLISH = /^en(?:[-_]|$)/i
+
 /** The voices synthesised on this machine, English first (the lines are English), each language's default first. */
 export function offlineVoices(voices: readonly SynthVoice[]): SynthVoice[] {
   const local = voices.filter((v) => v.localService === true)
-  const rank = (v: SynthVoice): number => (/^en\b/i.test(v.lang) ? 0 : 1) * 2 + (v.default ? 0 : 1)
+  const rank = (v: SynthVoice): number => (ENGLISH.test(v.lang) ? 0 : 1) * 2 + (v.default ? 0 : 1)
   return [...local].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
 }
+
+/**
+ * The browser voice a person in the street speaks in (ConciergeSpeaker.person): one of the offline voices, chosen by
+ * `pick`, a fixed number per person (08_Swarm/talkLines.ts talkWho), so each person keeps one voice and two people
+ * side by side are likely to differ. It is never `avoid`, the voice Sloane speaks in (by name), while the machine has
+ * two offline voices or more, so a passer-by is not heard as her. English voices come first, because the lines are
+ * English; another language's voice is used only when no English one is left. Null when the browser has no voice it
+ * can synthesise here (a network voice is never used, as for Sloane).
+ */
+export function personVoice(voices: readonly SynthVoice[], pick: number, avoid: string | null): SynthVoice | null {
+  const local = offlineVoices(voices)
+  if (!local.length) return null
+  const others = local.length >= 2 && avoid !== null ? local.filter((v) => v.name !== avoid) : local
+  const pool = others.length ? others : local
+  const english = pool.filter((v) => ENGLISH.test(v.lang))
+  const from = english.length ? english : pool
+  return from[Number.isFinite(pick) ? Math.abs(Math.trunc(pick)) % from.length : 0]
+}
+
+/** A loudness the browser accepts: from 0 to 1, and the browser's own 1 for anything that is not a number. */
+const loudness = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1)
 
 /**
  * The voice to speak with: the one named (by its whole name, or a word of it, case-insensitively) among the offline
@@ -143,6 +176,27 @@ export interface ConciergeOut {
   play(clip: SpeechClip, text: string): Utterance
 }
 
+/**
+ * How a person in the street is heard (ConciergeSpeaker.person). talk.ts builds it from the person's TalkVoice
+ * (08_Swarm/talkLines.ts). `profile` shapes the browser voice's pitch and rate and is never Sloane's own. `pick`
+ * chooses among the offline voices (personVoice). `provider` is a hired agent's own speech-provider voice, and null
+ * for anyone else, so a passer-by never speaks in the operator's provider voice or spends its quota. `out` is where
+ * that provider audio sounds: the engine's output at the person's own head. With no `out` the provider is not used,
+ * because the speaker's own source plays at the player's head and captions the line as Sloane's. `volume` is the
+ * browser voice's loudness from 0 to 1: that voice cannot be placed in space, so the caller makes it quieter with
+ * distance (anything out of range is held to 0 to 1, and anything not a number is 1). `caption` is told true as a
+ * browser line starts and false as it ends, so the city can caption where the voice comes from; the provider tier's
+ * audio is captioned by the soundscape that plays it.
+ */
+export interface PersonVoice {
+  readonly profile: VoiceProfile
+  readonly pick: number
+  readonly provider: string | null
+  readonly out: ConciergeOut | null
+  readonly volume: number
+  readonly caption?: (on: boolean) => void
+}
+
 export interface SpeakerOptions {
   /** The browser's synthesis (synthEnv()); nulls for a page without it. */
   env: SynthEnv
@@ -153,7 +207,10 @@ export interface SpeakerOptions {
   store?: KeyStore | null
 }
 
-/** Sloane's mouth on the page: `speak` says a line in the best tier available, `settings` and the setters are the console's. */
+/**
+ * Sloane's mouth on the page: `speak` says a line in the best tier available, `person` says a line for someone in
+ * the street through the same mouth, `settings` and the setters are the console's.
+ */
 export class ConciergeSpeaker {
   readonly #env: SynthEnv
   readonly #sound: () => boolean
@@ -294,6 +351,54 @@ export class ConciergeSpeaker {
   }
 
   /**
+   * Says `text` as a person in the street (07_Execute_Actions/talk.ts), cutting any line still being said, Sloane's
+   * included, as her next line cuts theirs. It is one mouth: `speaking`, onSpeaking and onLine, and the microphone's
+   * echo guard and barge-in that hang on them, cover people exactly as they cover her. Like `preview`, the city's
+   * sound must be on and Sloane's own switch does not apply, because the switch is hers alone. The tiers: a hired
+   * agent's own provider voice (`v.provider`) played through `v.out` at their head, when the provider is up; else a
+   * browser offline voice of their own (personVoice by `v.pick`, never Sloane's while there is another), shaped by
+   * `v.profile`, at `v.volume`, with `v.caption` told as it starts and ends; else silent, and the text on screen
+   * carries everything. A provider that fails hands the line to the browser voice, unless it was cut on the way.
+   * Resolves with the tier that said it, when it has ended, was cut, or could not be said.
+   */
+  async person(text: string, v: PersonVoice, signal?: AbortSignal): Promise<Tier> {
+    this.stop()
+    const cuts = this.#cuts
+    const line = text.replace(/\s+/g, ' ').trim()
+    if (!line || signal?.aborted || !this.#sound()) return 'silent'
+    const provider = v.provider !== null && v.out !== null && this.#source() !== null ? v.provider : null
+    if (provider === null && !this.browserVoices().length) return 'silent'
+    return this.#saying(async (onAir) => {
+      if (provider !== null) {
+        try {
+          await this.#provider(line, signal, provider, onAir, v.out)
+          this.#last = 'provider'
+          return 'provider'
+        } catch {
+          // As in speak: a line cut or aborted on the way is not said at all, nor one whose sound went off meanwhile.
+          if (signal?.aborted || cuts !== this.#cuts) return 'silent'
+        }
+      }
+      if (!this.#sound() || !this.browserVoices().length) return 'silent'
+      let shown = false
+      const caption = (on: boolean) => { try { v.caption?.(on) } catch { /* a listener's fault is not the line's */ } }
+      const start = () => {
+        onAir()
+        if (shown) return
+        shown = true
+        caption(true)
+      }
+      try {
+        await this.#browser(line, signal, v.profile, start, v.pick, v.volume)
+      } finally {
+        if (shown) caption(false)
+      }
+      this.#last = 'browser'
+      return 'browser'
+    })
+  }
+
+  /**
    * Runs a line as speech: `speaking` is true from its first sound to its end, and onSpeaking is told at each edge. The
    * first sound is when the tier hands its audio to the output (`onAir`: the provider's clip played, the browser's
    * utterance spoken), not when the line is asked for: a provider's voice is synthesised and decoded first, and may
@@ -325,9 +430,11 @@ export class ConciergeSpeaker {
     cut?.()
   }
 
-  async #provider(line: string, signal?: AbortSignal, voice?: string, onAir: () => void = () => {}): Promise<void> {
+  /** Says `line` in the provider's voice (or `voice`), played through `out` when given (a person's head), else at the player's. */
+  async #provider(line: string, signal?: AbortSignal, voice?: string, onAir: () => void = () => {}, out?: ConciergeOut | null): Promise<void> {
     const src = this.#source()
     if (!src) throw new Error('no provider')
+    const sink = out ?? src.out
     const ctl = new AbortController()
     const onAbort = () => ctl.abort(signal?.reason)
     signal?.addEventListener('abort', onAbort, { once: true })
@@ -337,10 +444,10 @@ export class ConciergeSpeaker {
     try {
       const bytes = await src.voice.synthesize(line, ctl.signal, voice)
       ctl.signal.throwIfAborted()
-      const clip = await src.out.decode(bytes)
+      const clip = await sink.decode(bytes)
       ctl.signal.throwIfAborted()
       onAir()
-      const u = src.out.play(clip, line)
+      const u = sink.play(clip, line)
       // Cut or aborted while it plays: the clip fades out, and `ended` resolves (operator.ts Utterance).
       ctl.signal.addEventListener('abort', () => u.stop(), { once: true })
       await u.ended
@@ -350,15 +457,22 @@ export class ConciergeSpeaker {
     }
   }
 
-  #browser(line: string, signal?: AbortSignal, profile: VoiceProfile | null = voiceProfile(CONCIERGE_PROFILE), onAir: () => void = () => {}): Promise<void> {
+  /**
+   * Says `line` in a browser offline voice: Sloane's (her preference, or the first), or with `pick` a person's own
+   * (personVoice, never hers while there is another); `volume` is written only when given.
+   */
+  #browser(line: string, signal?: AbortSignal, profile: VoiceProfile | null = voiceProfile(CONCIERGE_PROFILE), onAir: () => void = () => {}, pick?: number, volume?: number): Promise<void> {
     const { synth, Utterance } = this.#env
     if (!synth || !Utterance) return Promise.resolve()
     return new Promise<void>((resolve) => {
       const u = new Utterance(line)
-      u.voice = pickVoice(synth.getVoices(), this.#settings.voice)
+      const voices = synth.getVoices()
+      const hers = pickVoice(voices, this.#settings.voice)
+      u.voice = pick === undefined ? hers : personVoice(voices, pick, hers?.name ?? null)
       u.lang = u.voice?.lang ?? 'en'
       u.pitch = profile?.pitch ?? 1
       u.rate = profile?.rate ?? 1
+      if (volume !== undefined) u.volume = loudness(volume)
       let done = false
       const finish = () => {
         if (done) return

@@ -10,6 +10,10 @@
  * taken off, so the room's talk never becomes a goal. The recogniser may spell her name "Sloan"; a possessive
  * ("Sloane's car") is talk about her, not to her. Nothing is taken while she speaks or for HEARD_QUIET_MS after:
  * her own line coming back through the speakers is not the visitor's. Pure: a function a Node test runs.
+ * While a conversation with a person in the street is open (07_Execute_Actions/talk.ts), the lines that do not name
+ * Sloane are that person's, not hers: the conversation takes them before they reach her card, and `addressesSloane`
+ * is how it knows which line to let through. A line that names her ends the conversation and comes here as before.
+ * A person's line said aloud goes through Sloane's own speaker, so the quiet tail covers their voice as well.
  * What breaks if it is removed? Every word near the microphone would be a goal, or none would.
  */
 
@@ -28,6 +32,16 @@ export function heardNow(speaking: boolean, now: number, quietAt: number): boole
 
 /** The longest goal taken from speech (Concierge.tsx's field takes as much). */
 export const HEARD_MAX = 200
+
+/**
+ * Whether `text` is said to Sloane: it names her first, as `heardGoal` reads an address, with white space folded.
+ * Unlike `heardGoal` her name alone counts ("Sloane?"), because the question here is whom the line is for, not what
+ * she is asked; a possessive ("Sloane's car") and a longer word ("Sloanes") are not an address. An open conversation
+ * with a person in the street (talk.ts) lets such a line go to her and ends itself.
+ */
+export function addressesSloane(text: string): boolean {
+  return ADDRESSED.test((typeof text === 'string' ? text : '').replace(/\s+/g, ' ').trim())
+}
 
 /**
  * What Sloane takes of `text`: the whole line while `open` (a question or the goal prompt is up), else the rest of a

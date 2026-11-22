@@ -9,18 +9,24 @@
  * - desktop: the procedural city's sixteen indoor workplaces handed to its crowd, keyboard walking, a mouse drag turning
  *   the head, a gamepad (a standard-mapping pad stood in for the real one) walking and turning, the Ring-0 console
  *   opened with the tilde key and answering, typing in it never moving the avatar, ghost view and rain mode toggled from
- *   their keys, and a car entered, driven and left; and the software adapter left as every device that is not a Peak
- *   candidate is: its range stops at Ultra, three writes no GPU timestamps, and there is no Peak rule; nor is it a
- *   multisampling candidate: one sample a pixel everywhere (FXAA alone); its ambient occlusion built and drawn once at
- *   boot (its two pipelines), then skipped below Ultra;
+ *   their keys, someone to talk to (a stand-in partner, window.__SIM__.talk) shown by the HUD's Talk chip, the T key
+ *   opening the conversation with its field taking the keyboard even from a focused button, T's repeats typing nothing
+ *   there, its panel clear of Sloane's chip, "hi" typed and sent with Enter answered in the transcript by the scripted
+ *   provider chosen on purpose, Esc then closing it, and Done closing it again, and a car entered, driven and left; and
+ *   the software adapter left as every device that is not a Peak candidate is: its range stops at Ultra, three writes
+ *   no GPU timestamps, and there is no Peak rule; nor is it a multisampling candidate: one sample a pixel everywhere
+ *   (FXAA alone); its ambient occlusion built and drawn once at boot (its two pipelines), then skipped below Ultra;
  * - phone: an iPhone's user agent, screen and touch (no mouse, no keyboard): the virtual stick walking, a drag on the
  *   right half turning the head, both thumbs at once, the Run and Ping buttons, and the menu that reaches what a
  *   keyboard reaches (the console, the clock, ghost view, rain mode, hiding the HUD), also with a thumb on the stick;
  *   on foot and at the wheel, at six phone and tablet sizes both ways up, every control on screen and clear of the
  *   others, the stick, the speedometer, Sloane's chip and her Controls card, the chip clear of the stick and the
- *   minimap, and the Menu's sheet inside the screen; a car entered from its button and, held upright while driving,
- *   Ping, Reset and Exit car clear of the stick, every text field reads at 16 px, and a mouse moving over a
- *   touch-first screen leaves the touch overlay where it is;
+ *   minimap, and the Menu's sheet inside the screen; on foot at each of those views the HUD's Talk chip clear of them
+ *   all, a tap on it opening the conversation, and its panel judged as her card is and never over her chip (tucked away
+ *   while the panel stands where no band is clear of it, and back once it closes), its field and Send in view, also at
+ *   200 % text; a car entered from its button and,
+ *   held upright while driving, Ping, Reset and Exit car clear of the stick, every text field reads at 16 px, and a
+ *   mouse moving over a touch-first screen leaves the touch overlay where it is;
  * - split: two players (?players=2) on two pads, one of them without the standard mapping: that pad moves nobody until
  *   a face button wakes it, then walks player 1, and player 2's own pad enters and leaves a car of their own; then
  *   ?msaa=1 split in two, both views drawn 4 samples a pixel on the renderer's own frame (the post chain is off, and
@@ -1121,6 +1127,19 @@ async function talkToSloane(p, url, until = `(() => { const t = ${SLOANE_TALK}; 
   return { card, notes }
 }
 
+/** The conversation's text field (TalkLayer.tsx TalkPanel). */
+const TALK_FIELD = '[data-talk="panel"] input[type="text"]'
+/** A page expression: Sloane's chip (Concierge.tsx data-concierge-pill), its box and whether it is tucked away, or null. */
+const TALK_PILL = `(() => { const e = document.querySelector('[data-concierge-pill]'); if (!e) return null; const r = e.getBoundingClientRect()
+  return { l: r.left, t: r.top, r: r.right, b: r.bottom, hidden: getComputedStyle(e).visibility === 'hidden' } })()`
+/** A page expression: the boxes of the conversation's field and Send (null for one that is missing). */
+const TALK_INNER = `['input[type="text"]', 'button[type="submit"]'].map((q) => { const e = document.querySelector('[data-talk="panel"] ' + q); if (!e) return null; const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })`
+/** A page expression: the HUD's Talk chip as it shows (its accessible name and the label it names), or null while none does. */
+const TALK_CHIP = `(() => { const b = document.querySelector('[data-hint="talk"]'); if (!b || b.getBoundingClientRect().width === 0) return null
+  return { name: b.getAttribute('aria-label') ?? '', label: b.querySelector('bdi')?.textContent ?? '' } })()`
+/** A page expression: the conversation's transcript, oldest first: who said each line ('you' or 'them') and its words. */
+const TALK_LINES = `[...document.querySelectorAll('[data-talk="transcript"] > li')].map((li) => ({ who: li.getAttribute('data-who'), text: li.querySelector(':scope > bdi')?.textContent ?? '' }))`
+
 const SCENARIOS = {
   async desktop(chrome, origin) {
     const p = await open(chrome)
@@ -1232,6 +1251,73 @@ const SCENARIOS = {
       const t1 = await p.snap()
       check(dist(t0, t1) < 0.05, 'desktop: typing W in the console does not walk the avatar', `${dist(t0, t1).toFixed(3)} m`)
       await p.tap('Escape', 'Escape', 27)
+
+      // Talking to the person near you (talk.ts, TalkLayer.tsx), the reply the script's: the scripted provider is chosen
+      // at the console first, as the actions scenario chooses it. A stand-in partner is offered (window.__SIM__.talk,
+      // talk.ts preview: no scan and no link, the replies real), the HUD shows its Talk chip, and the real T key, pressed
+      // while a button holds the focus (the microphone pill, as a click leaves it in most browsers), opens the
+      // conversation and its field takes the keyboard; T held on (its repeats) types nothing there; the panel stands
+      // clear of Sloane's chip (or her chip is tucked away while it stands); "hi" typed and sent with Enter gets a reply
+      // in the transcript, the field lets go, and Esc then closes the conversation; T opens it again and Done closes it.
+      // Every step waits on the page's state.
+      check(await p.openConsole(), 'desktop: the console opens again')
+      await p.command('operator unlock', /unlocked/)
+      const scripted = await p.command('ask provider scripted', /provider\s+scripted/)
+      await p.tap('Escape', 'Escape', 27)
+      await p.waitFor(`!document.querySelector('[aria-label$="Ring-0 terminal"][data-open]')`, 10_000).catch(() => {})
+      await p.eval(`window.__SIM__.talk('near')`)
+      const offered = await p.waitFor(TALK_CHIP, 15_000).catch(() => null)
+      check(!!scripted && !!offered && offered.name.startsWith(`Talk to ${offered.label}`) && offered.label !== '',
+        'desktop: someone to talk to shows the HUD\'s Talk chip, named for them (the scripted provider chosen)', `${offered ? offered.name : 'no chip'}; ${lastLine(scripted)}`)
+      const heldBy = await p.eval(`(() => { const b = document.querySelector('[data-hint="voice"]'); if (b) b.focus(); const a = document.activeElement; return a ? a.tagName + (a.getAttribute('data-hint') ? '[' + a.getAttribute('data-hint') + ']' : '') : 'nothing' })()`)
+      await p.tap('KeyT', 't', 84)
+      const opened = await p.waitFor(`!!document.querySelector('[data-talk="panel"]')`, 15_000).then(() => true, () => false)
+      const typing = opened && await p.waitFor(`document.activeElement === document.querySelector(${JSON.stringify(TALK_FIELD)})`, 5_000).then(() => true, () => false)
+      check(opened && typing, 'desktop: T opens the conversation and its field takes the keyboard, even from a focused button', `panel ${opened}, field focused ${typing}, the focus on ${heldBy} before T`)
+      if (opened) {
+        // A field that did not take the keyboard by itself is clicked into, as a person would, so the rest still runs.
+        if (!typing) await clickOn(p, TALK_FIELD, 5_000)
+        // T held past the system's repeat delay: its repeats arrive in the field, and type nothing there.
+        for (let i = 0; i < 3; i++) await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'KeyT', key: 't', text: 't', windowsVirtualKeyCode: 84, nativeVirtualKeyCode: 84, autoRepeat: true })
+        await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'KeyT', key: 't', windowsVirtualKeyCode: 84, nativeVirtualKeyCode: 84 })
+        const repeated = await p.eval(`document.querySelector(${JSON.stringify(TALK_FIELD)})?.value ?? null`)
+        check(repeated === '', 'desktop: the repeats of the T held as the conversation opened type nothing into its field', JSON.stringify(repeated))
+        // Sloane's chip stays where a tap reaches it: the panel stands clear of it, or it is tucked away while it stands.
+        await p.waitFor(`(() => { const e = document.querySelector('[data-talk="panel"]'); return !!e && e.getAnimations().length === 0 })()`, 5_000).catch(() => {})
+        const beside = await p.eval(`(() => { const box = (e) => { const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } }
+          const panel = document.querySelector('[data-talk="panel"]'), pill = document.querySelector('[data-concierge-pill]')
+          return { panel: panel && box(panel), pill: pill && box(pill), hidden: !!pill && getComputedStyle(pill).visibility === 'hidden', w: innerWidth, h: innerHeight } })()`)
+        const over = !!beside.panel && !!beside.pill && !beside.hidden && beside.panel.l < beside.pill.r - 1 && beside.pill.l < beside.panel.r - 1 && beside.panel.t < beside.pill.b - 1 && beside.pill.t < beside.panel.b - 1
+        check(!!beside.panel && !over, `desktop: at ${beside.w}x${beside.h} the conversation's panel stands clear of Sloane's chip`, JSON.stringify(beside))
+        await p.type('hi')
+        const sent = Date.now()
+        await p.b.send('Input.dispatchKeyEvent', { type: 'keyDown', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, text: '\r' })
+        await p.b.send('Input.dispatchKeyEvent', { type: 'keyUp', code: 'Enter', key: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 })
+        // The script answers after a beat of 350 to 750 ms (talk.ts BEAT_MIN_MS, BEAT_SPAN_MS); a software GPU's slow
+        // frames can hold the page's own render back, so the reply is waited for, and how long it took is recorded.
+        const reply = await p.waitFor(`(() => { const l = ${TALK_LINES}, i = l.findIndex((x) => x.who === 'you' && x.text === 'hi')
+          return (i >= 0 && l.slice(i + 1).find((x) => x.who === 'them' && x.text.trim() !== '')) || null })()`, 15_000).catch(() => null)
+        const waited = Date.now() - sent
+        check(!!reply, 'desktop: "hi" typed into the conversation and sent with Enter gets a reply in the transcript',
+          reply ? `"${reply.text.slice(0, 120)}" within ${waited} ms` : JSON.stringify(await p.eval(TALK_LINES)).slice(0, 300))
+        // After a sent line the field lets go of the keyboard (W A S D walk again); Esc, as Done's keycap says, still ends.
+        const letGo = await p.eval(`document.activeElement !== document.querySelector(${JSON.stringify(TALK_FIELD)})`)
+        await p.tap('Escape', 'Escape', 27)
+        const escaped = await p.waitFor(`!document.querySelector('[data-talk="panel"]')`, 10_000).then(() => true, () => false)
+        check(letGo && escaped, 'desktop: after a line sent with Enter the field lets go, and Esc closes the conversation', `field let go ${letGo}, closed ${escaped}`)
+        // Opened again with T, for Done: a conversation's end lets the stand-in go, so it is offered again first.
+        if (escaped) {
+          await p.eval(`window.__SIM__.talk('near')`)
+          await p.waitFor(TALK_CHIP, 10_000).catch(() => null)
+          await p.tap('KeyT', 't', 84)
+          await p.waitFor(`!!document.querySelector('[data-talk="panel"]')`, 15_000).catch(() => {})
+        }
+        const done = await clickOn(p, '[data-talk="done"]', 10_000)
+        // Someone really near may be offered once the stand-in is let go: only the stand-in's chip must go.
+        const closed = !!done && await p.waitFor(`!document.querySelector('[data-talk="panel"]') && !(${TALK_CHIP}?.label === ${JSON.stringify(offered?.label ?? '')})`, 10_000).then(() => true, () => false)
+        check(closed, 'desktop: Done closes the conversation, and the chip of the person talked with goes', done ? '' : 'no Done button to click')
+      }
+      await p.eval(`window.__SIM__.talk(null)`)
 
       // A car: the nearest one is parked, the avatar stands beside it, E enters, W drives, E leaves.
       const car = await p.eval(nearestCarParked(0))
@@ -1410,6 +1496,14 @@ const SCENARIOS = {
       const inside = (a, w, h) => a.l >= -1 && a.t >= -1 && a.r <= w + 1 && a.b <= h + 1
       const layouts = async (mode, views = VIEWS) => {
         const bad = []
+        // On foot, someone to talk to at every view (the chip shows only on foot): what is wrong with the Talk chip or
+        // the conversation's panel, the views where the panel lies over Sloane's chip she can still be seen in (never
+        // allowed: it stands clear of her chip, or her chip is tucked away while it stands, TalkLayer.tsx), and those
+        // where her chip was tucked away.
+        const talks = mode === 'on foot'
+        const talkBad = []
+        const overChip = []
+        const tuckedAt = []
         for (const [width, height] of views) {
           {
             const portrait = height > width
@@ -1477,13 +1571,109 @@ const SCENARIOS = {
             const again = await menuAt()
             if (again) await tapAt(again, 9)
             await p.waitFor(`!document.querySelector('[role="menu"]')`, 5_000).catch(() => bad.push(`${at}: the Menu did not close`))
+            if (talks) {
+              // A stand-in partner offered (window.__SIM__.talk, talk.ts preview), with the HUD's two messages raised
+              // again: the Talk chip on screen and clear of every control, the stick, Sloane's chip, the minimap, the
+              // microphone's badge and the HUD's panels; a tap on it opens the conversation, whose panel is judged by
+              // her card's rules (on screen, clear of every control, clear of the stick from 600 px across) and whose
+              // field a tap leaves alone (no soft keyboard comes up unasked); then the stand-in is let go.
+              await p.eval(`(() => { window.__SIM__.talk('near'); const e = window.__SIM__.engine; e.toast('Clock', '18:00'); e.toast('Transit coach', 'Stick ▲ to drive · Brake to brake or reverse · Exit car to leave') })()`)
+              const offered = await p.waitFor(TALK_CHIP, 10_000).catch(() => null)
+              if (!offered) talkBad.push(`${at}: no Talk chip`)
+              else {
+                await p.frames(2)
+                const T = await p.eval(LAYOUT)
+                const c = await p.eval(rectOf('[data-hint="talk"]'))
+                if (!c) talkBad.push(`${at}: the Talk chip went`)
+                else {
+                  if (!inside(c, T.w, T.h)) talkBad.push(`${at}: the Talk chip off screen ${JSON.stringify(c)}`)
+                  for (const b of T.buttons) if (meets(c, b)) talkBad.push(`${at}: the Talk chip under ${b.name}`)
+                  if (T.zone && meets(c, T.zone)) talkBad.push(`${at}: the Talk chip over the stick`)
+                  if (T.chip && meets(c, T.chip)) talkBad.push(`${at}: the Talk chip under Sloane's chip`)
+                  if (T.minimap && meets(c, T.minimap)) talkBad.push(`${at}: the Talk chip under the minimap`)
+                  if (T.mic && meets(c, T.mic)) talkBad.push(`${at}: the Talk chip under the microphone's badge`)
+                  for (const q of T.panels) if (meets(c, q)) talkBad.push(`${at}: the Talk chip under the HUD's "${q.text}"`)
+                }
+                const hit = await p.eval(hitOf('[data-hint="talk"]'))
+                if (hit) await tapAt(hit, 15)
+                else talkBad.push(`${at}: something lies over the Talk chip, so a tap cannot reach it`)
+                let opened = !!hit && await p.waitFor(`!!document.querySelector('[data-talk="panel"]')`, 5_000).then(() => true, () => false)
+                if (!opened) {
+                  if (hit) talkBad.push(`${at}: a tap on the Talk chip did not open the conversation`)
+                  // The panel is still judged: opened as the stand-in's conversation directly.
+                  await p.eval(`window.__SIM__.talk('open')`)
+                  opened = await p.waitFor(`!!document.querySelector('[data-talk="panel"]')`, 5_000).then(() => true, () => false)
+                }
+                if (!opened) talkBad.push(`${at}: the conversation's panel did not show`)
+                else {
+                  // Where it comes to rest: its entrance (a short slide up) over.
+                  const panel = await p.waitFor(`(() => { const e = document.querySelector('[data-talk="panel"]'); if (!e || e.getAnimations().length > 0) return null
+                    const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`, 5_000).catch(() => p.eval(rectOf('[data-talk="panel"]')))
+                  if (!panel) talkBad.push(`${at}: the conversation's panel went`)
+                  else {
+                    if (!inside(panel, T.w, T.h)) talkBad.push(`${at}: the conversation runs off screen ${JSON.stringify(panel)}`)
+                    for (const b of T.buttons) if (meets(panel, b)) talkBad.push(`${at}: the conversation over ${b.name}`)
+                    if (T.w >= 600 && T.zone && meets(panel, T.zone)) talkBad.push(`${at}: the conversation over the stick`)
+                    const pill = await p.eval(TALK_PILL)
+                    if (pill?.hidden) tuckedAt.push(at)
+                    else if (pill && meets(panel, pill)) overChip.push(`${at} ${JSON.stringify(panel)} over ${JSON.stringify(pill)}`)
+                    const inner = await p.eval(TALK_INNER)
+                    if (!inner || !inner.every((r) => r && r.t >= panel.t - 1 && r.b <= panel.b + 1)) talkBad.push(`${at}: the conversation's field or Send is not wholly in its panel ${JSON.stringify(inner)}`)
+                  }
+                  if (await p.eval(`document.activeElement === document.querySelector(${JSON.stringify(TALK_FIELD)})`)) talkBad.push(`${at}: the conversation's field took the keyboard on a tap`)
+                }
+              }
+              await p.eval(`window.__SIM__.talk(null)`)
+              await p.waitFor(`!document.querySelector('[data-talk="panel"]')`, 5_000).catch(() => talkBad.push(`${at}: the conversation did not close`))
+              if ((await p.eval(TALK_PILL))?.hidden) talkBad.push(`${at}: Sloane's chip did not come back when the conversation closed`)
+            }
           }
         }
         await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
         await p.frames(3)
         check(bad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, every control is on screen and clear of the others, the stick, the speedometer, Sloane's chip and her card, the chip clear of the HUD, the microphone's badge clear of them all, the overlay's own judge says valid, and the Menu opens inside the screen`, bad.slice(0, 24).join('; '))
+        if (talks) {
+          check(talkBad.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, the HUD's Talk chip is on screen and clear of every control, the stick, Sloane's chip, the minimap, the microphone's badge and the HUD's panels, a tap on it opens the conversation, and its panel stands on screen clear of every control (and of the stick from 600 px across) without taking the keyboard`, talkBad.slice(0, 24).join('; '))
+          check(overChip.length === 0, `phone: ${mode}, at ${views.length} phone and tablet views, the conversation's panel never lies over Sloane's chip: it stands clear of it, or her chip is tucked away while it stands and back once it closes`, overChip.slice(0, 12).join('; '))
+          info(`phone: ${mode}, Sloane's chip tucked away while the conversation stood`, tuckedAt.length ? tuckedAt.join(', ') : 'at no view')
+        }
       }
       await layouts('on foot')
+      // The conversation at 200 % text (access.ts writes the zoom onto <html> as --ui-zoom; set here as it does), upright
+      // and sideways: its panel on screen, clear of every control, never over Sloane's chip she can still be seen in,
+      // and its field and Send wholly in it (its transcript gives way first). The stick is not judged: at this size the
+      // panel, like her card, gives up the stick's inner edge rather than shrink under 16 rem between the thumbs.
+      {
+        const zoomBefore = await p.eval(`document.documentElement.style.getPropertyValue('--ui-zoom')`)
+        await p.eval(`document.documentElement.style.setProperty('--ui-zoom', '2')`)
+        const large = []
+        for (const [width, height] of [[375, 667], [402, 874], [320, 568], [667, 375], [568, 320], [874, 402]]) {
+          const at = `${width}x${height}`
+          await p.b.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: true, screenOrientation: height > width ? { type: 'portraitPrimary', angle: 0 } : { type: 'landscapePrimary', angle: 90 } })
+          await p.frames(3)
+          const L = await p.eval(LAYOUT)
+          await p.eval(`window.__SIM__.talk('open')`)
+          const panel = await p.waitFor(`(() => { const e = document.querySelector('[data-talk="panel"]'); if (!e || e.getAnimations().length > 0) return null
+            const r = e.getBoundingClientRect(); return { l: r.left, t: r.top, r: r.right, b: r.bottom } })()`, 5_000).catch(() => null)
+          if (!panel) large.push(`${at}: the conversation's panel did not show`)
+          else {
+            if (!inside(panel, L.w, L.h)) large.push(`${at}: the conversation runs off screen ${JSON.stringify(panel)}`)
+            for (const b of L.buttons) if (meets(panel, b)) large.push(`${at}: the conversation over ${b.name}`)
+            const pill = await p.eval(TALK_PILL)
+            if (pill && !pill.hidden && meets(panel, pill)) large.push(`${at}: the conversation over Sloane's chip`)
+            const inner = await p.eval(TALK_INNER)
+            if (!inner || !inner.every((r) => r && r.t >= panel.t - 1 && r.b <= panel.b + 1)) large.push(`${at}: the field or Send is not wholly in the panel ${JSON.stringify(inner)}`)
+          }
+          await p.eval(`window.__SIM__.talk(null)`)
+          await p.waitFor(`!document.querySelector('[data-talk="panel"]')`, 5_000).catch(() => large.push(`${at}: the conversation did not close`))
+          if ((await p.eval(TALK_PILL))?.hidden) large.push(`${at}: Sloane's chip did not come back`)
+        }
+        if (zoomBefore) await p.eval(`document.documentElement.style.setProperty('--ui-zoom', ${JSON.stringify(zoomBefore)})`)
+        else await p.eval(`document.documentElement.style.removeProperty('--ui-zoom')`)
+        await p.b.send('Emulation.setDeviceMetricsOverride', { width: IPHONE.width, height: IPHONE.height, deviceScaleFactor: 1, mobile: true, screenOrientation: { type: 'landscapePrimary', angle: 90 } })
+        await p.frames(3)
+        check(large.length === 0, 'phone: at 200 % text, upright and sideways, the conversation stands on screen clear of every control and of Sloane\'s chip, its field and Send in view', large.join('; '))
+      }
       // The Menu opens with the other thumb on the stick, as Ping and Run do (a browser makes no click of a tap then).
       const mAt = await menuAt()
       if (mAt) {

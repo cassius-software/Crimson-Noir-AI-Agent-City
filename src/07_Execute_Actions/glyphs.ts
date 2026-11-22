@@ -12,9 +12,12 @@
  * Concierge's tips and its control list.
  *
  * Positions follow the W3C standard gamepad mapping the driver reads (gamepad.ts): interact = south
- * button, handbrake = east, reset = north, ping = right shoulder, run = left-stick click, mic = right-stick click,
- * throttle/brake = right/left trigger, clock = d-pad left/right. Labels are position-true, so on the 'bayx' layout
- * the south button reads 'B'.
+ * button, handbrake = east, reset = north, talk = west, ping = right shoulder, run = left-stick click, mic = right-stick
+ * click, throttle/brake = right/left trigger, clock = d-pad left/right. Labels are position-true, so on the 'bayx'
+ * layout the south button reads 'B' and the west one 'Y'. Talk follows the player's hand (access.ts `pad`): a left hand
+ * talks with the d-pad's up (gamepad.ts PadHand), so glyph() given that hand names the d-pad's up as the pad prints it,
+ * and every talk hint (the label over the person, the HUD's Talk chip, the conversation's Done, the screen reader's
+ * line and the all-controls list) names the button that works. The mic is not hand-aware yet.
  */
 import type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 import { PAD, type PadHand } from '../04_Connect_Hardware/gamepad.ts'
@@ -23,6 +26,7 @@ export type { GlyphFamily } from '../05_Observe_Environment/telemetry.ts'
 
 export type ControlAction =
   | 'move' | 'look' | 'run' | 'interact' | 'handbrake' | 'reset' | 'throttle' | 'brake' | 'clock' | 'console' | 'hud' | 'ghost' | 'ping' | 'mic'
+  | 'talk'
 
 /**
  * A pad's layout: 'abxy' prints A B X Y at south, east, west, north; 'bayx' prints B A Y X there; 'numbered'
@@ -40,38 +44,43 @@ export interface Hint { action: ControlAction; glyph: string; kind: GlyphKind; l
 
 /** '' = the family has no control for the action. Touch reaches the clock, the console, the HUD and ghost view
  *  through its Menu button (TouchControls.tsx); a pad reaches the console, the HUD and ghost view through its own
- *  menu (PadMenu.tsx), opened by its menu button, named here as the pad prints it (PAD_BUTTON_NAMES). */
+ *  menu (PadMenu.tsx), opened by its menu button, named here as the pad prints it (PAD_BUTTON_NAMES). Touch talks
+ *  through the HUD's Talk chip, which carries its own words. */
 const GLYPHS = {
   keyboard: {
     move: 'W A S D', look: 'Mouse', run: 'Shift', interact: 'E', handbrake: 'Space', reset: 'R',
-    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q', mic: 'V',
+    throttle: 'W', brake: 'S', clock: '[ ]', console: '~', hud: 'H', ghost: 'G', ping: 'Q', mic: 'V', talk: 'T',
   },
   abxy: {
     move: 'L', look: 'R', run: 'LS', interact: 'A', handbrake: 'B', reset: 'Y',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'RB', mic: 'RS', talk: 'X',
   },
   bayx: {
     move: 'L', look: 'R', run: 'LS', interact: 'B', handbrake: 'A', reset: 'X',
-    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '+', hud: '+', ghost: '+', ping: 'R', mic: 'RS',
+    throttle: 'ZR', brake: 'ZL', clock: 'D-pad ◀ ▶', console: '+', hud: '+', ghost: '+', ping: 'R', mic: 'RS', talk: 'Y',
   },
   numbered: {
     move: 'L', look: 'R', run: 'L3', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'R1', mic: 'R3',
+    throttle: 'R2', brake: 'L2', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'R1', mic: 'R3', talk: 'West',
   },
   generic: {
     move: 'L', look: 'R', run: 'LS', interact: 'South', handbrake: 'East', reset: 'North',
-    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'RB', mic: 'RS',
+    throttle: 'RT', brake: 'LT', clock: 'D-pad ◀ ▶', console: 'Start', hud: 'Start', ghost: 'Start', ping: 'RB', mic: 'RS', talk: 'West',
   },
   touch: {
     move: 'Stick', look: 'Drag', run: 'Run', interact: 'Enter car', handbrake: 'Handbrake', reset: 'Reset',
-    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping', mic: 'Menu',
+    throttle: 'Stick ▲', brake: 'Brake', clock: 'Menu', console: 'Menu', hud: 'Menu', ghost: 'Menu', ping: 'Ping', mic: 'Menu', talk: '',
   },
 } as const satisfies Record<GlyphFamily, Record<ControlAction, string>>
 
-const FACE: ReadonlySet<ControlAction> = new Set(['interact', 'handbrake', 'reset'])
+const FACE: ReadonlySet<ControlAction> = new Set(['interact', 'handbrake', 'reset', 'talk'])
 
-/** The glyph for an action in a family ('' when the family has no such control). */
-export function glyph(action: ControlAction, family: GlyphFamily): string {
+/**
+ * The glyph for an action in a family ('' when the family has no such control). With one hand on a pad, `hand` left,
+ * talk is the d-pad's up (gamepad.ts reads no west button for that hand), named as the pad prints it.
+ */
+export function glyph(action: ControlAction, family: GlyphFamily, hand: PadHand = 'both'): string {
+  if (action === 'talk' && hand === 'left' && isPadFamily(family)) return padButtonName(family, PAD.up)
   return GLYPHS[family]?.[action] ?? ''
 }
 
@@ -87,11 +96,11 @@ export function isPadFamily(family: GlyphFamily): family is PadFamily {
   return family !== 'keyboard' && family !== 'touch'
 }
 
-export function glyphKind(action: ControlAction, family: GlyphFamily): GlyphKind {
+export function glyphKind(action: ControlAction, family: GlyphFamily, hand: PadHand = 'both'): GlyphKind {
   if (family === 'touch') return 'pill'
   if (family === 'keyboard') return 'key'
   if (action === 'move' || action === 'look') return 'stick'
-  if (FACE.has(action) && glyph(action, family).length === 1) return 'button'
+  if (FACE.has(action) && glyph(action, family, hand).length === 1) return 'button'
   return 'pill'
 }
 
@@ -132,7 +141,8 @@ type Row = readonly [ControlAction, string]
 
 const FOOT_ALL: readonly Row[] = [
   ['move', 'Walk'], ['look', 'Look around'], ['run', 'Run'], ['interact', 'Enter a car'], ['ping', 'Ping a spot or a person'],
-  ['mic', 'Microphone on · mute'], ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'], ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
+  ['talk', 'Talk to someone near'], ['mic', 'Microphone on · mute'], ['clock', 'Clock −1 h / +1 h'], ['console', 'Ring-0 console'],
+  ['hud', 'Hide the HUD'], ['ghost', 'Ghost view'],
 ]
 const DRIVE_ALL: readonly Row[] = [
   ['move', 'Steer'], ['throttle', 'Accelerate'], ['brake', 'Brake · reverse'], ['handbrake', 'Handbrake'],
@@ -195,6 +205,11 @@ export function controlHints(family: GlyphFamily, driving: boolean, scope: 'tips
     }
     if (isPadFamily(family) && (action === 'console' || action === 'hud' || action === 'ghost')) {
       if (!out.some((h) => h.label === PAD_MENU_LABEL)) out.push({ action, glyph: hand === 'both' ? g : padMenuWord(family, hand), kind: glyphKind(action, family), label: PAD_MENU_LABEL })
+      continue
+    }
+    // A left hand talks with the d-pad's up (gamepad.ts PadHand), so its row names that button as the pad prints it.
+    if (action === 'talk') {
+      out.push({ action, glyph: glyph(action, family, hand), kind: glyphKind(action, family, hand), label })
       continue
     }
     out.push({ action, glyph: g, kind: glyphKind(action, family), label })

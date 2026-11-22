@@ -5,8 +5,8 @@
  * Why does this file exist? It is the Supplier stage of the SIPOC X flow: keyboard, mouse (pointer-locked,
  * or dragged with the button held), gamepads and touch controls, merged into one per-frame intent — the
  * head's yaw and pitch, held keys, an Analog frame (sticks, triggers, touch stick) and edge-triggered
- * actions (enter/exit vehicle, reset, clock, ghost view, a ping) — plus the hardware bus (HalBus) and the adaptive-trigger hook
- * that turns brake pressure into trigger resistance. With more than one local player (setPlayers) it also keeps the
+ * actions (enter/exit vehicle, reset, clock, ghost view, a ping, a word with the person near you) — plus the hardware
+ * bus (HalBus) and the adaptive-trigger hook that turns brake pressure into trigger resistance. With more than one local player (setPlayers) it also keeps the
  * seating plan (seats.ts): the pads are read once a frame and dealt to seats, player 1 keeps the keyboard, the mouse,
  * touch and the pad in seat 0, and every other seat is its own PadSeat intent (intent(seat)).
  * What breaks if it is removed? The player cannot move, look, drive or interact.
@@ -19,7 +19,7 @@ import type { GamepadLike } from './web-hardware.d.ts'
 
 export type { Analog, PadFamily } from './gamepad.ts'
 
-export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse'
+export type Action = 'interact' | 'reset' | 'timeForward' | 'timeBack' | 'ghost' | 'matrix' | 'ping' | 'mute' | 'browse' | 'talk'
 
 /** Hold-type touch buttons. `run` is a toggle on the touch layout, but the state lives here. */
 export type TouchButton = 'brake' | 'handbrake' | 'run'
@@ -43,6 +43,8 @@ const ACTION_KEYS: Record<string, Action> = {
   KeyV: 'mute',
   /** A shop's catalogue, standing in it (01_Initialize_World/storefronts.ts; E does it too when no car is in reach). */
   KeyB: 'browse',
+  /** Talk to the person near you (07_Execute_Actions/talk.ts); also a pad's west face button (a left hand's d-pad up). */
+  KeyT: 'talk',
 }
 
 /** Modifier keys: held alone they are keys like any other (Shift runs); with Command they start no chord. */
@@ -131,6 +133,8 @@ export class Input {
   shielded = false
   private touchEngaged = false
   private lastSource: 'keyboard+mouse' | 'gamepad' | 'touch' = 'keyboard+mouse'
+  /** How the queued talk was pressed (takeTalk): set as it is queued, back to the keyboard's once taken. */
+  private talkBy: 'keyboard' | 'pad' = 'keyboard'
   private readonly keys = new Set<string>()
   private readonly queued = new Set<Action>()
   private readonly disposers: (() => void)[] = []
@@ -209,7 +213,10 @@ export class Input {
       this.keys.add(e.code)
       this.lastSource = 'keyboard+mouse'
       const action = ACTION_KEYS[e.code]
-      if (action && !e.repeat) this.queued.add(action)
+      if (action && !e.repeat) {
+        this.queued.add(action)
+        if (action === 'talk') this.talkBy = 'keyboard'
+      }
       // Space is the handbrake and the arrows walk: under pointer lock, and over a control a pointer press left focused
       // (pointerFocus), they never click it again or scroll its panel.
       if ((e.code === 'Space' || e.code.startsWith('Arrow')) && (this.locked || (target === this.pointerFocus && !isPage(target)))) e.preventDefault()
@@ -422,6 +429,19 @@ export class Input {
   }
 
   /**
+   * The queued talk, taken once: 'pad' when a pad's (or a headset controller's) talk button queued it, 'keyboard' for
+   * T or a programmatic press, null when none waits. How it was pressed is kept as it is queued, never read from
+   * `device` as it is taken: a pad's stick held while T goes down makes the next poll call the device a pad, and an
+   * open conversation closes on a pad's press where T only puts the cursor in its field.
+   */
+  takeTalk(): 'keyboard' | 'pad' | null {
+    if (!this.queued.delete('talk')) return null
+    const by = this.talkBy
+    this.talkBy = 'keyboard'
+    return by
+  }
+
+  /**
    * Drops every queued action and nothing else: held keys, the sticks, the pads' held bits and the look are untouched.
    * The engine calls it after each poll while a home's card holds the avatar still, so a pad's edge (which queues even
    * under suspend) never reaches a car's door or the clock.
@@ -589,6 +609,7 @@ export class Input {
     if (edges & PAD_EDGE.timeBack) this.queued.add('timeBack')
     if (edges & PAD_EDGE.ping) this.queued.add('ping')
     if (edges & PAD_EDGE.mute) this.queued.add('mute')
+    if (edges & PAD_EDGE.talk) { this.queued.add('talk'); this.talkBy = 'pad' }
     if (this.mapper.active) this.lastSource = 'gamepad'
     this.ui |= this.mapper.ui
 

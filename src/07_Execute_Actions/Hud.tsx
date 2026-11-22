@@ -10,6 +10,8 @@
  * while the .agv recorder runs, the operator's pings (a ring on the minimap per ping and, for the newest, a
  * chip over the world with its distance), and glyph-aware control hints (the enter-vehicle prompt and, until
  * the player is under way, a small capture-and-controls chip) that switch silently to a controller's glyphs.
+ * While someone is close enough to talk to (talk.ts, through the snapshot's supplier.talk), a Talk chip with their
+ * name and the key stands with the shop's and a home's chips; a tap or a click opens the conversation with them.
  * The operator's progression chip shows the level, XP, credits, hero points and the round's pips, what a fresh success
  * was and paid, and one soft ring for it (none under reduced motion); its words come finished in the snapshot.
  * Onboarding is zero-click: there is no title card; the Concierge (Concierge.tsx) greets the player.
@@ -35,6 +37,7 @@ import { BRAND } from '../brand.ts'
 import { MonolithLogo } from '../MonolithLogo.tsx'
 import { controlHints, glyph, glyphKind, spokenGlyph, type ControlAction, type GlyphKind } from './glyphs.ts'
 import { nextFootPeak, type FootPeak } from './footPeak.ts'
+import { pageHand } from './padNav.ts'
 import { credits, itemById } from './storeCatalog.ts'
 import { holdWalkSlot } from './walkSlot.ts'
 
@@ -202,7 +205,7 @@ function useFresh(news: number, ms: number): boolean {
   return news !== 0 && news !== over
 }
 
-export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13, onBrowse, homes = null, onHome }: {
+export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null, mic = null, onMic, highContrast = false, captionPx = 13, onBrowse, homes = null, onHome, onTalkChip }: {
   s: SipocSnapshot | null
   adapter: string
   visible: boolean
@@ -224,6 +227,9 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
   homes?: readonly Home[] | null
   /** Open the doorstep card of the room the avatar stands in, by its room (a hall's property index, or a sky floor's 7 or 8; the chip's tap; E and B go through the engine). */
   onHome?: (home: number) => void
+  /** Talk to the person the Talk chip names, by the serial of the proposal it showed (talk.ts press('tap', serial), so a
+   *  chip drawn for one person never opens another; T and the pad's button go through the engine). */
+  onTalkChip?: (serial: number) => void
 }) {
   const small = useSyncExternalStore(SMALL.subscribe, SMALL.matches, SMALL.server)
   const short = useSyncExternalStore(SHORT.subscribe, SHORT.matches, SHORT.server)
@@ -307,6 +313,28 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
       )}
     </div>
   )
+  // Someone close enough to talk to (talk.ts hud(), on the snapshot as supplier.talk), on foot, the console shut: their
+  // name and the key, a button a tap or a click opens the conversation with (the serial it shows goes back, so a chip
+  // drawn for one person never opens another). Where they stand, as an arrow and metres, follows the name (on screen as
+  // well as in its spoken name, which a reader hears in words: 'Talk to Pedestrian 1234 (Rust), 2 m ahead right').
+  // No key on touch: the chip itself is the way (as the shop's chip, the glyph goes with the touch overlay).
+  const talk = s.supplier.talk
+  /** A conversation is open (its panel stands where the wide layout's captions would be). */
+  const talking = talk !== undefined && talk.state !== 'near'
+  // The pad hand the accessibility settings chose (padNav.ts): a left hand talks with the d-pad's up.
+  const hand = pageHand()
+  const talkGlyph = touch || family === 'touch' ? '' : glyph('talk', family, hand)
+  const talkWhere = talk && talk.word !== '' && Number.isFinite(talk.metres)
+  const talkChip = talk && talk.state === 'near' && !driving && !terminalOpen && (
+    <button type="button" onClick={() => onTalkChip?.(talk.serial)} className={`pointer-events-auto flex max-w-full items-center gap-2 px-4 py-2 text-left ${panel}`} data-hint="talk"
+      aria-label={`Talk to ${talk.label}${talkWhere ? `, ${talk.metres} m ${talk.word}` : ''}`} aria-keyshortcuts={family === 'keyboard' && !touch ? talkGlyph : undefined}>
+      {talkGlyph && <><GlyphKey glyph={talkGlyph} kind={glyphKind('talk', family, hand)} />{' '}</>}
+      <span className="min-w-0">Talk to <bdi className="font-semibold">{talk.label}</bdi></span>
+      {talkWhere && <span className={`shrink-0 text-[11px] whitespace-nowrap tabular-nums ${muted}`} aria-hidden="true">{talk.arrow} {talk.metres} m</span>}
+    </button>
+  )
+  /** The chips in the wide layout's row above the speed panel's line (each about 2.5 rem tall, 0.5 rem apart). */
+  const wideRow = [shopChip, homeChip, talkChip, enterPrompt].filter(Boolean).length
   const nameTag = name && (
     <span className={`ml-2 inline-block max-w-[9rem] truncate rounded-full border px-2 py-px align-[1px] text-[11px] font-medium tracking-normal ${dark ? 'border-white/20 text-slate-100' : 'border-slate-900/15 text-slate-700'}`}>
       <bdi>{name}</bdi>
@@ -570,9 +598,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
             )}
           </div>
 
-          {(enterPrompt || shopChip || homeChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{homeChip}{enterPrompt}</div>}
-          {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. */}
-          {captionStrip && <div className="absolute bottom-32 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captionStrip}</div>}
+          {(enterPrompt || shopChip || homeChip || talkChip) && <div className="absolute bottom-20 left-1/2 flex -translate-x-1/2 flex-col items-center gap-2">{shopChip}{homeChip}{talkChip}{enterPrompt}</div>}
+          {/* The captions above the enter prompt, clear of the minimap and the speed panel like the capture chip. A row of
+              two or three chips (someone to talk to beside a car, in a shop or a home) lifts them 3 rem a chip, so the
+              strip never lies over a chip it would hide. While a conversation is open its panel stands over that line
+              (TalkLayer.tsx, its column under the centre of view), so they stand 0.5 rem above the panel's head, which
+              it publishes in window pixels as --talk-top (the centre of view until it has), never off the frame's top. */}
+          {captionStrip && <div className={`absolute ${talking ? 'bottom-[min(calc(calc(calc(100dvh_-_var(--talk-top,50dvh))_/_var(--ui-zoom,1))_-_max(1.25rem,env(safe-area-inset-bottom))_+_0.5rem),calc(100%_-_2.5rem))]' : wideRow > 2 ? 'bottom-56' : wideRow > 1 ? 'bottom-44' : 'bottom-32'} left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2`}>{captionStrip}</div>}
           {/* Clear of the minimap (13 rem) and the speed panel on either side. */}
           {captureHint && (
             <div className="absolute bottom-0 left-1/2 w-max max-w-[calc(100%_-_34rem)] -translate-x-1/2">{captureChip(roomy)}</div>
@@ -676,12 +708,13 @@ export function Hud({ s, adapter, visible, terminalOpen = false, mapLayer = null
               prompt, and — on a phone held in landscape, where browser bars take 30-60 px of its height
               and the speedometer under the minimap would reach the driving buttons — the speedometer. On a phone held
               upright the thumbs leave no room between them: the stack stands above the stick instead (FOOT_LIFTED). */}
-          {(captureHint || enterPrompt || shopChip || homeChip || (driving && short) || captionStrip) && (
+          {(captureHint || enterPrompt || shopChip || homeChip || talkChip || (driving && short) || captionStrip) && (
             <div key={lifted ? 'lifted' : 'centre'} ref={publishFoot} className={lifted ? FOOT_LIFTED : touch && short && !driving ? FOOT_BETWEEN : FOOT_CENTRE} data-hud="foot" data-lifted={lifted || undefined}>
               {captionStrip}
               {captureHint && captureChip(false)}
               {shopChip}
               {homeChip}
+              {talkChip}
               {enterPrompt}
               {driving && short && speedChip}
             </div>

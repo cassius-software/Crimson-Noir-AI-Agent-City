@@ -36,6 +36,7 @@
  * Ollama's model by what Ollama measured (modelFit.ts), and, for this visit, its context and answer cap too.
  * Where auto's looks stand and when anything the brain readout shows changes (lookState, onChange) are read from
  * memory here, so the readout (brainReadout.ts) never asks a provider anything.
+ * A request kept on this device (RouterRequest `cloud: false`, a passer-by's reply) never reaches the claude provider.
  * What breaks if it is removed? `ask` has one provider and no way to swap it; an offline environment has no drop-in.
  */
 import { scriptedAction } from '../06_Make_Decisions/actions.ts'
@@ -59,6 +60,15 @@ export type Found = Exclude<Provider, 'auto' | 'scripted'>
  */
 export interface RouterLook { readonly looked: boolean; readonly looking: boolean; readonly found: Found | null }
 /**
+ * A request as the router takes it: the operator tier's (operator.ts AnswerRequest), and `cloud`. False keeps it on
+ * this device (a passer-by's reply, onboarding/voice.ts personChat): the claude provider never answers it, whether auto
+ * would look for the gateway, auto has found it, or the operator chose it; it fails 'offline' instead, as with nothing
+ * answering. Absent or true: any provider may answer, as before.
+ */
+export interface RouterRequest extends AnswerRequest {
+  readonly cloud?: boolean
+}
+/**
  * The order auto looks in: the model servers on this machine (Ollama, llama.cpp, LM Studio's port), then the model the
  * app runs itself, then the model file kept in this page, then the Claude gateway.
  */
@@ -76,6 +86,8 @@ const LOOK_PHASES: readonly (readonly Found[])[] = Object.freeze([
   AUTO_ORDER.filter((p) => p === 'inpage'),
   AUTO_ORDER.filter((p) => p === 'claude'),
 ])
+/** Why a request kept on this device (RouterRequest `cloud: false`) is not answered by the gateway. */
+export const KEPT_ON_DEVICE = 'the claude provider is never asked for this: it is answered on this device or by the script'
 /** Where the in-page provider is, in a look's sentence and in auto's found line. */
 const IN_PAGE_PLACE = 'the model file kept in this page'
 /** Where the native provider is, in a look's sentence (only when it cannot start) and in auto's found line. */
@@ -183,6 +195,8 @@ function slice(kept: Kept, key: 'ollama' | 'llamacpp' | 'openai' | 'inpage', kee
  * others (server, model, think, api) are the chosen provider's.
  */
 export interface MindRouter extends Mind {
+  /** The chosen provider's answer, or auto's (RouterRequest: `cloud: false` is never answered by the claude provider). */
+  answer(req: RouterRequest, onPiece: (p: Piece) => void): Promise<Answer>
   setProvider(name: string): Provider
   /** Sets the Claude provider's key (empty clears it); returns it masked. */
   setKey(key: string): string | null
@@ -507,9 +521,10 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * only when the servers at their own addresses gave nothing usable (adopt), and called off once the first round has settled with a text model. An Ollama whose model the operator never chose (the default, or one auto chose before) but which lacks it is given
    * the default if it has it now, else the first such model. Throws the 'offline' failure (the script stands in for
    * it) when none answers, naming why each server it heard from would not do; the page's own model is named only when
-   * a file is kept, and the app's only when it cannot start.
+   * a file is kept, and the app's only when it cannot start. With `cloud` false (a request kept on this device:
+   * RouterRequest) the gateway is neither asked nor named: what is on this device is all it looks for.
    */
-  const seek = async (signal?: AbortSignal): Promise<Mind> => {
+  const seek = async (signal?: AbortSignal, cloud = true): Promise<Mind> => {
     await settled(signal)
     found = null
     looked = false // set aside with what it found: a look stopped part way leaves none standing (lookState)
@@ -547,6 +562,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     let pageNamed = false
     let appNamed = false
     for (const group of LOOK_PHASES) {
+      // Kept on this device: the gateway's phase is passed over, so nothing is asked of it.
+      if (!cloud && group.includes('claude')) continue
       const within = (): AbortSignal => (signal ? AbortSignal.any([signal, AbortSignal.timeout(lookMs)]) : AbortSignal.timeout(lookMs))
       const pending = Promise.all(group.map((p) => listOf(p, within()).then((names): string[] | unknown => names, (e: unknown) => e)))
       // The second round goes with the first, in each provider's own wire format, and is called off once the first round
@@ -622,18 +639,22 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
     const fixes = [...(unseen ? ["Ollama: add this page's origin to OLLAMA_ORIGINS"] : []), ...(vllmUnseen ? ['vLLM 0.32 and later: start it with --allowed-origins naming that origin'] : [])]
     if (fixes.length && isolatedPage()) notes.push(`one that is running may be refusing this page's origin, which looks the same from here (${fixes.join('; ')})`)
     lookNote = notes.map((n) => `; ${n}`).join('')
-    const where = AUTO_ORDER.filter((p) => (p !== 'inpage' || pageNamed) && (p !== 'native' || appNamed)).map((p) => placeOf(p, also.get(p))).join(', ')
+    const where = AUTO_ORDER.filter((p) => (p !== 'inpage' || pageNamed) && (p !== 'native' || appNamed) && (p !== 'claude' || cloud)).map((p) => placeOf(p, also.get(p))).join(', ')
     throw new CognitionError('offline', `no model is answering on this machine (looked for ${where})${lookNote}: start one, or choose one with ask provider <name>`)
   }
-  /** A look (seek), counted while it runs and noted once it settles (one stopped part way is not), each change heard. */
-  const look = async (signal?: AbortSignal): Promise<Mind> => {
+  /**
+   * A look (seek), counted while it runs and noted once it settles (one stopped part way is not), each change heard.
+   * One kept on this device (`cloud` false) that found nothing is not noted either: the gateway it passed over may
+   * answer, so no look stands until one has asked it.
+   */
+  const look = async (signal?: AbortSignal, cloud = true): Promise<Mind> => {
     looking++
     try {
-      const m = await seek(signal)
+      const m = await seek(signal, cloud)
       looked = true
       return m
     } catch (e) {
-      if (!signal?.aborted) looked = true
+      if (!signal?.aborted && cloud) looked = true
       throw e
     } finally {
       looking--
@@ -810,8 +831,11 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
    * context it grew from (R5): that, not R8 or a look, is the ask's one retry, and there is none after a settings
    * change. One that fails after some of the answer arrived goes back too, with no retry (the text shown would be
    * written twice). The answer after a look that goes at a grown context is measured there, as R8's retry is.
+   * A request kept on this device (RouterRequest `cloud: false`) is never the gateway's: with the gateway found it
+   * fails 'offline' at once, asking nothing and leaving the gateway found for the next request, and both its looks,
+   * the first and the one after a failure, pass the gateway over.
    */
-  const autoAnswer = async (req: AnswerRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
+  const autoAnswer = async (req: RouterRequest, onPiece: (p: Piece) => void): Promise<Answer> => {
     await settled(req.signal)
     // With a figure, an Ollama found without this server's list of sizes (found in the chat format, or another server
     // set since) has its list read first (one GET of /api/tags, given lookMs), so the model is sized before it is sent
@@ -825,9 +849,11 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       }
       if (req.signal.aborted) throw req.signal.reason
     }
+    const cloud = req.cloud !== false
     const first = found
+    if (first === 'claude' && !cloud) throw new CognitionError('offline', KEPT_ON_DEVICE)
     if (first === 'ollama' && figure() !== null && unchosen()) { const n = listedHere()?.map((m) => m.name); if (n) repick(n) }
-    const m = first !== null ? byName(first) : await look(req.signal)
+    const m = first !== null ? byName(first) : await look(req.signal, cloud)
     const os = ollama.settings()
     const sent: Sent | null = m === ollama && os.api !== 'chat' && os.model !== null && figure() !== null ? sending(os.server, os.model) : null
     let arrived = false
@@ -858,7 +884,7 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
       // The app's own model answers 'offline' only once it has none to run (failed for good after the look that found
       // it), and the next look passes it over: so it looks again even when this ask's own look found it.
       if ((first === null && m !== native) || arrived || req.signal.aborted || !(e instanceof CognitionError && (e.code === 'offline' || e.code === 'refused'))) throw e
-      const n = await look(req.signal)
+      const n = await look(req.signal, cloud)
       if (n !== ollama) return n.answer(req, onPiece)
       // Ollama again: the ask's one answer more. At a grown context (inside the gate) it is measured there, and goes back
       // when refused or failing partway, with no answer after it; at CONTEXT_TOKENS it is sent as before, not measured.
@@ -1050,6 +1076,8 @@ export function createMindRouter({ fetch: fetchFn, store, timeouts, lookMs = AUT
         // A conversation's prompt is its own page, apart from the guide's (nobody bound) that the rewording uses.
         await cache.page(req.talk === true ? 'talk' : agentKey(req.tethers), systemFor(req))
         if (kept.provider === 'auto') return await autoAnswer(req, onPiece)
+        // The gateway chosen: a request kept on this device is never sent to it.
+        if (kept.provider === 'claude' && req.cloud === false) throw new CognitionError('offline', KEPT_ON_DEVICE)
         // Under ask provider ollama the answer is not measured, but noted as in flight all the same (crossed).
         const m = active()
         return await flown(m === ollama ? unmeasured() : null, m, req, onPiece)
