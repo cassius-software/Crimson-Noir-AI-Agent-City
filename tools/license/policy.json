@@ -1,0 +1,63 @@
+{
+  "about": "What the licence gate (tools/license/gate.mjs) holds the repository to: the licences a dependency may come under, the names of other owners that may not be used, and where every picture, packed file and third-party directory came from. A change here is a decision about what the product may contain, so it is made in a pull request of its own words, with the reason written beside it. The gate checks what a machine can check; it is not a legal opinion (docs/ip-audit.md says what is left for counsel).",
+  "workspaces": ["crimson_noir_os", "native/kv-pager", "native/kv-pager-wasm", "native/llm", "native/routing", "src-tauri"],
+  "licences": {
+    "why": "Licences that let the product be sold closed, with no duty beyond keeping the notice and the text: the permissive family. Anything with a share-alike duty (the GPL family, AGPL, SSPL, EPL, CDDL, Creative Commons ShareAlike or NonCommercial) is absent on purpose, and so is anything unnamed.",
+    "allowed": ["MIT", "MIT-0", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Zlib", "Unlicense", "CC0-1.0", "BSL-1.0", "Unicode-3.0", "Unicode-DFS-2016"],
+    "exceptions": ["LLVM-exception"],
+    "byCrate": {
+      "MPL-2.0": {
+        "crates": ["cssparser", "cssparser-macros", "dtoa-short", "option-ext", "selectors"],
+        "why": "File-level copyleft, allowed for these five by name and for nothing else. They come in through the Tauri stack (dirs for option-ext, dom_query for the Servo CSS crates), unmodified, and no file of theirs is copied into the repository; their source stays at crates.io. As commonly read, a closed program may link unchanged MPL files while their source stays available and their notices are kept; docs/ip-audit.md §3 asks counsel to confirm that reading for this product. A sixth crate under MPL-2.0 is a new decision, not a default."
+      }
+    }
+  },
+  "marks": {
+    "why": "Names that belong to someone else and that the product must not use as its own or lean on. Platforms, hardware and tools the product runs on or speaks to are named plainly where a user needs them and credited in NOTICE.md (Third-party trademarks); those are not listed here.",
+    "listed": [
+      { "pattern": "\\bmatrix[- ](?:mode|style|like|rain|code|effect)\\b|\\bdigital rain\\b", "why": "a film franchise's name for falling code", "say": "rain mode" },
+      { "pattern": "\\bsith\\b", "why": "a film franchise's mark, which the terminal's first name held", "say": "the Crimson Terminal" },
+      { "pattern": "\\bxbox\\b|\\bnintendo\\b|\\bjoy-?cons?\\b", "why": "a console maker's name the owner had taken out of the product; pads are named by their layout" },
+      { "pattern": "\\bnemoclaw\\b|\\bopenclaw\\b|\\bsave the cat\\b", "why": "another owner's name that came in with a pasted plan; the product's own names are original" },
+      { "pattern": "\\bstar wars\\b|\\bjedi\\b|\\bdarth\\b|\\blightsab(?:er|re)s?\\b", "why": "a film franchise's mark" },
+      { "pattern": "\\bgrand theft auto\\b|\\bcyberpunk 2077\\b|\\bblade runner\\b|\\bwatch dogs\\b|\\bsim ?city\\b|\\bthe sims\\b|\\bminecraft\\b|\\bfortnite\\b|\\broblox\\b|\\bskynet\\b", "why": "another game's or film's title; the city is described in its own words, never by comparison" },
+      { "pattern": "\\bpok[eé]mon\\b|\\bsuper mario\\b|\\bzelda\\b|\\bmarvel\\b|\\bdisney\\b|\\blego\\b", "why": "an entertainment brand" },
+      { "pattern": "\\bcrimsonscript\\b", "why": "the language's name is never shortened", "say": "Crimson Noir Script" }
+    ],
+    "notOurs": "^third_party/|(?:^|/)(?:package-lock\\.json|Cargo\\.lock|flake\\.lock)$|^docs/autoscaler/[^/]+\\.csv$",
+    "until": {
+      "NOTICE.md": { "marker": "\n## Operator notes", "why": "The notice that ships ends there; below it is research for counsel, which has to name the marks it weighs." }
+    },
+    "exempt": {
+      "tools/license/policy.json": "The list itself.",
+      "src/licenceGate.test.ts": "The gate's own test, which shows the scan catching each kind of name.",
+      "src/compliance.test.ts": "The page's older list, with examples.",
+      "docs/ip-audit.md": "The audit for counsel, which has to name what was found and removed."
+    }
+  },
+  "assets": {
+    "why": "Every picture, icon and packed data file in the repository, with where it came from and whose it is. `open` is a question only the owner can answer; the gate repeats it on every run until it is answered here.",
+    "files": [
+      { "path": "brand/marks/", "origin": "Drawn for this product as hand-written SVG (brand/STYLE.md, Marks).", "rights": "The owner's." },
+      { "path": "src-tauri/icons/", "origin": "Rendered from brand/marks/crimson-noir-mark.svg by `npx tauri icon` (MANUAL.md, Desktop app).", "rights": "The owner's." },
+      { "path": "crimson_noir_os/docs/screenshots/", "origin": "Screenshots of Crimson Noir OS running in QEMU, taken by crimson_noir_os/tools/boot_test.py.", "rights": "The owner's: pictures of the product's own screen." },
+      { "path": "docs/track-b-console.png", "origin": "A screenshot of the page's console in Chromium (MANUAL.md).", "rights": "The owner's: a picture of the product's own screen." },
+      { "path": "world/previews/", "origin": "Pictures of the pilot region drawn by the product from the open government data NOTICE.md credits (Map data); in the repository since its first commit, 30 September 2026.", "rights": "The owner's pictures; the data under the Open Government Licences NOTICE.md names." },
+      { "path": "world/pilot.region.json.gz", "origin": "The pilot region's pack, compiled by tools/world from the open government data NOTICE.md credits (Map data).", "rights": "The data under the Open Government Licences NOTICE.md names; the compilation is the owner's." },
+      {
+        "path": "docs/cover.jpg",
+        "origin": "The cover picture at the top of README.md, supplied by the owner and committed on 16 October 2026. The file carries Content Credentials signed by Google's media services, so it was made or last edited with one of Google's generative image tools.",
+        "rights": "The owner's to use under that tool's terms, as far as those terms go.",
+        "open": "which tool and which plan made it has not been recorded, so its terms for commercial use are unread; a picture a model made may also carry no copyright of the owner's, which matters if it is to be the product's box art; and it shows the earlier title (Agent City, Spatial Operating System)"
+      }
+    ],
+    "thirdParty": {
+      "llama.cpp": { "licence": "MIT", "text": "LICENSE", "carries": ["NOTICE"] },
+      "moonshine-tiny-en": { "licence": "MIT", "text": "LICENSE", "carries": ["NOTICE", "SHA256SUMS"] },
+      "onnxruntime-web": { "licence": "MIT", "text": "1.31.1/LICENSE", "carries": ["1.31.1/NOTICE", "1.31.1/SHA256SUMS", "1.31.1/ThirdPartyNotices.txt"] },
+      "qwen2.5-0.5b-instruct": { "licence": "Apache-2.0", "text": "LICENSE", "carries": ["NOTICE", "SHA256SUMS"] },
+      "qwen2.5-1.5b-instruct": { "licence": "Apache-2.0", "text": "LICENSE", "carries": ["NOTICE", "SHA256SUMS"] },
+      "wllama": { "licence": "MIT", "text": "3.8.1/LICENCE", "carries": ["3.8.1/NOTICE", "3.8.1/SHA256SUMS"] }
+    }
+  }
+}

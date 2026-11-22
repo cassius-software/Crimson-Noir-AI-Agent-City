@@ -109,8 +109,8 @@ struct Params {
   player: vec4f, // x, z, heading, speed
   aux: vec4f,    // player visible, draw density beyond nearRadius (0..1), max draw distance, -
   camera: vec4f, // x, y, z, -
-  // Matrix mode's global state, the one word 01_Initialize_World/globalState.ts packs for every pipeline that takes
-  // the mode (this one and the mesh surface matrixMesh.wgsl): time (s), matrix mode (1 on, 0 off), the page's
+  // Rain mode's global state, the one word 01_Initialize_World/globalState.ts packs for every pipeline that takes
+  // the mode (this one and the mesh surface matrixMesh.wgsl): time (s), rain mode (1 on, 0 off), the page's
   // floating origin (x, z, m). The simulation reads the mode alone: its own geometry is lot-relative (streetOffsets,
   // pushOut), and its positions stay absolute so the fingerprinted run is the same whoever looks at it.
   global: vec4f,
@@ -310,7 +310,7 @@ fn corridorGap(u: f32, left: f32, halfWidth: f32, halfLength: f32, curvature: f3
 // ---------------------------------------------------------------- physics layers
 
 // The physics mask a pedestrian carries this tick (01_Initialize_World/globalState.ts PHYSICS_LAYER, PHYSICS_MASK): every layer, or in
-// matrix mode the static world alone (bit 0: the ground that holds them at y = 0, the lots pushOut keeps them out
+// rain mode the static world alone (bit 0: the ground that holds them at y = 0, the lots pushOut keeps them out
 // of, the city's edge), so the other pedestrians (bit 1) and the cars (bit 2) phase through them while they stay
 // grounded. The First-Law sensing is not a contact and keeps its eyes: a car still sees whoever is in its path.
 fn physicsMaskFor(global_state: vec4f) -> u32 {

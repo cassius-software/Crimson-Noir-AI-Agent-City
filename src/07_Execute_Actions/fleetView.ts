@@ -167,7 +167,7 @@ export class FleetView {
   /**
    * `kinds`: kind index per vehicle (SimMeta.kind); `paint`: body colour per vehicle, 0xRRGGBB (sRGB); `night`: 0 by
    * day, 1 at night (lamp glow); `matrixMode`: the page's global-state uniform (01_Initialize_World/matrixMode.ts), or
-   * null for a fleet without matrix mode.
+   * null for a fleet without rain mode.
    */
   constructor(kinds: readonly number[], paint: readonly number[], night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
     const count = kinds.length
@@ -231,7 +231,7 @@ export class FleetView {
     }
   }
 
-  /** The body material of one kind: its glass, lamps, cabin shell and extra lights, then matrix mode and the dissolve over all of it. */
+  /** The body material of one kind: its glass, lamps, cabin shell and extra lights, then rain mode and the dissolve over all of it. */
   private bodyMaterial(kind: VehicleKind, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null): MeshStandardNodeMaterial {
     const mat = new MeshStandardNodeMaterial()
     const p = positionGeometry
@@ -273,7 +273,7 @@ export class FleetView {
       lamps = select(beacon, vec3(1.0, 0.45, 0.05).mul(beaconPulse().mul(5).add(0.5)), lamps)
     }
     mat.emissiveNode = select(frontFacing, lamps, vec3(0))
-    // Matrix mode (matrixMode.ts) over the shell's own colour, under the dissolve.
+    // Rain mode (matrixMode.ts) over the shell's own colour, under the dissolve.
     if (matrixMode) applyMatrixMode(mat, matrixMode)
     // The code dissolve, over everything above: the amount per instance, the origin the instance's own (positionLocal
     // × 0), the cabin shell's mask kept and ANDed with the cells' survival.

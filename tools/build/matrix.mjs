@@ -5,10 +5,10 @@
 /**
  * Why does this file exist? It is the one command that builds every shipped form of Crimson Noir: Agent City from this
  * checkout, on the machine that can build it: `npm run build:matrix [-- --targets <ids>|all|host] [--out <dir>]
- * [--dry-run] [--list] [--skip-page]`. Nine targets (TARGETS below): the desktop app for Windows x64 and arm64 (the
+ * [--dry-run] [--list] [--skip-page]`. Ten targets (TARGETS below): the desktop app for Windows x64 and arm64 (the
  * NSIS installer, the .msi and the bare .exe), Linux x64 and arm64 (.deb, .rpm and .AppImage), macOS (one universal
- * .app and .dmg), the Android .apk, the iOS .ipa, and Crimson Noir OS's UEFI application for x86-64 and for aarch64
- * (and their bootable media where the media tools are installed). The page (dist/index.html) is built once, for the
+ * .app and .dmg), the Android .apk, the iOS .ipa, and Crimson Noir OS's UEFI application for x86-64, for aarch64 and
+ * for riscv64 (and their bootable media where the media tools are installed). The page (dist/index.html) is built once, for the
  * targets that carry it (the UEFI application does not), and every app is a Tauri 2 shell around it (src-tauri). The
  * version 1.0.0-stable-beta carries a pre-release tag, which WiX and rpm refuse in a version: the .msi takes the
  * numbers alone (1.0.0) and the .rpm the numbers as its Version with the tag in its Release (0.stable.beta), while
@@ -53,6 +53,8 @@ export const TRIPLES = Object.freeze({
   ios: 'aarch64-apple-ios',
   uefiX64: 'x86_64-unknown-uefi',
   uefiArm64: 'aarch64-unknown-uefi',
+  // Rust has no riscv64 UEFI target: the image is the bare-metal build behind a PE header of its own (arch/riscv64.rs).
+  uefiRiscv64: 'riscv64gc-unknown-none-elf',
 })
 
 /**
@@ -207,7 +209,7 @@ function npmCli() {
 const NO_PAGE_BUILD = JSON.stringify({ build: { beforeBuildCommand: '' } })
 
 /**
- * The nine targets, in the order the plan names them. `hosts`: the operating systems that build it (process.platform);
+ * The ten targets, in the order the plan names them. `hosts`: the operating systems that build it (process.platform);
  * `arch`: the host architecture it needs (process.arch), absent where the host's architecture does not matter (a
  * cross-compiled or interpreted target); `tools`: the programs that must be on PATH; `env`: the variables that must be
  * set; `plan(ctx)`: the steps, each a program and its argument vector; `collect(ctx)`: the files it leaves, as
@@ -316,6 +318,21 @@ export const TARGETS = Object.freeze([
       ...(media ? [[join(ROOT, 'crimson_noir_os/target/image-aarch64/crimson_noir_os.img'), 'crimson_noir_os-aarch64.img'], [join(ROOT, 'crimson_noir_os/target/image-aarch64/crimson_noir_os.iso'), 'crimson_noir_os-aarch64.iso']] : []),
     ],
     note: 'the same system as x86-64 (crimson_noir_os/boot/src/arch/aarch64.rs is the machine layer: the UART the firmware\'s ACPI SPCR table names, the generic timer, the image\'s own exception vectors); the keyboard is the serial console (an Arm machine has no PS/2 controller and the image has no USB stack); build-matrix.yml boots it on QEMU\'s Arm virt machine with edk2; not run on Arm hardware yet',
+  },
+  {
+    id: 'uefi-riscv64', artifact: 'Crimson Noir OS, UEFI riscv64: BOOTRISCV64.EFI, and the .img and .iso media where sh, mtools, sgdisk and xorriso are installed', hosts: ['linux', 'darwin', 'win32'],
+    tools: ['cargo', 'rustup'], page: false,
+    plan: ({ media }) => [
+      rustupTarget(TRIPLES.uefiRiscv64),
+      step('cargo', ['build', '--locked', '-p', 'crimson_boot', '--target', TRIPLES.uefiRiscv64, '--release'], { cwd: join(ROOT, 'crimson_noir_os') }),
+      ...(media ? [step('sh', ['tools/build-image.sh', join('target', 'image-riscv64'), TRIPLES.uefiRiscv64], { cwd: join(ROOT, 'crimson_noir_os') })] : []),
+    ],
+    // The linker writes the finished UEFI application itself, under the name a bare-metal program gets (no .efi).
+    collect: ({ media }) => [
+      [join(ROOT, `crimson_noir_os/target/${TRIPLES.uefiRiscv64}/release/crimson_boot`), 'BOOTRISCV64.EFI'],
+      ...(media ? [[join(ROOT, 'crimson_noir_os/target/image-riscv64/crimson_noir_os.img'), 'crimson_noir_os-riscv64.img'], [join(ROOT, 'crimson_noir_os/target/image-riscv64/crimson_noir_os.iso'), 'crimson_noir_os-riscv64.iso']] : []),
+    ],
+    note: 'the same system as x86-64 (crimson_noir_os/boot/src/arch/riscv64.rs is the machine layer and carries the PE header, since Rust has no riscv64 UEFI target: the SBI console, the time CSR, the image\'s own trap vector); the keyboard is the serial console; the firmware must offer a framebuffer (GOP), which many RISC-V boards do not; build-matrix.yml bakes the media twice, compares the bytes and boots them on QEMU\'s RISC-V virt machine with edk2; not run on a RISC-V machine',
   },
 ])
 
@@ -490,7 +507,7 @@ export function listLines(host) {
 }
 
 /**
- * `--summary <dir>`: the nine targets as a Markdown table from the reports the workflow's jobs left (<dir>/<artifact>/matrix.json,
+ * `--summary <dir>`: the ten targets as a Markdown table from the reports the workflow's jobs left (<dir>/<artifact>/matrix.json,
  * one folder per downloaded artifact), for the run's summary: built (with the files), failed or skipped (with the
  * reason), unsupported, the one target another workflow builds, and a job that left no report.
  */

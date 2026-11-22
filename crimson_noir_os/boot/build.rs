@@ -65,4 +65,13 @@ fn main() {
         panic!("\n\nthe bootable image would link crates containment.nix does not declare: {undeclared:?}\n\n");
     }
     fs::write(Path::new(&env::var("OUT_DIR").unwrap()).join("locked.rs"), src).unwrap();
+    // riscv64, bare metal (the image, as main.rs gates it): the link is laid out by the image's own script
+    // (riscv64.ld: the PE header first, at address 0). A hosted riscv64 build (a RISC-V Linux machine running the
+    // workspace's tests) is the note in main.rs, linked as any program is: the script names `_entry`, which only the
+    // image defines.
+    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("riscv64") && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("none") {
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("riscv64.ld");
+        println!("cargo:rerun-if-changed={}", script.display());
+        println!("cargo:rustc-link-arg-bins=-T{}", script.display());
+    }
 }

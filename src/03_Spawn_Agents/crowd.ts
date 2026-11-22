@@ -661,7 +661,7 @@ export class CrowdView {
     }
   }
 
-  /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no matrix mode. */
+  /** The page's global-state uniform (01_Initialize_World/matrixMode.ts); null, the bodies have no rain mode. */
   private readonly matrixMode: UniformNode<'vec4', Vector4> | null
 
   constructor(agentCount: number, matrixMode: UniformNode<'vec4', Vector4> | null = null) {
@@ -1552,7 +1552,7 @@ export class CrowdView {
       // Six tenths of the luminescent ink's albedo (tattoo.ts TATTOO_INKS).
       m.emissiveNode = vec3(0.33, 0.57, 0.48).mul(select(inkNo.equal(uint(TATTOO_INK.luminescent)), inkShown, float(0))).mul(float(1).sub(vDissolve))
     }
-    // Matrix mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
+    // Rain mode (matrixMode.ts), over the body's own colour; the dissolve below reads the dimmed colour as its base.
     if (this.matrixMode) applyMatrixMode(m, this.matrixMode)
     // The code dissolve, over everything above, with the body's feet as its origin (fresh reads: nothing of posed()'s
     // graph is shared across the fold's branches).
