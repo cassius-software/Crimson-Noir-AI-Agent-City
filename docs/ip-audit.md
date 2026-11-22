@@ -335,26 +335,27 @@ that package's code is in `dist/index.html`, under the licence text the build em
 other fourteen is in `dist/index.html` or served: they are installed because the package lists them for its other
 builds.
 
-## 3. The Rust dependency trees (unverified from the cloud)
+## 3. The Rust dependency trees (read from the registry on 22 November 2026)
 
-The crates in each lockfile were listed; their licences could **not** be confirmed from this session, because
-crates.io is not reachable from the cloud container (HTTP 403 through the proxy) and no registry cache is present.
-What follows is the crate names and what their licences are known to be from general knowledge of the ecosystem;
-counsel should have it confirmed on a machine with registry access, in one command each:
+When this audit was first written the crates' licences could not be read from the cloud session (crates.io was not
+reachable), and this section listed them from general knowledge. That is no longer so. On 22 November 2026 every
+crate of all six lockfiles was read from the registry with `cargo metadata --locked --all-features`, and the answer
+is committed as `tools/license/crates.json`: 550 crates, each with the licence its own manifest declares. §8 says
+what the gate that reads it holds them to and what it found. In short: every crate offers a permissive licence,
+except five under MPL-2.0 that the policy names one by one; none is under a GPL, AGPL, SSPL or any other share-alike
+or non-commercial licence, and the two versions of `r-efi` that list LGPL-2.1-or-later list it as one of three
+choices, beside MIT and Apache-2.0.
 
-```
-cargo install cargo-license
-cargo license --manifest-path crimson_noir_os/Cargo.toml
-cargo license --manifest-path native/kv-pager/Cargo.toml
-cargo license --manifest-path src-tauri/Cargo.toml
-cargo license --manifest-path native/llm/Cargo.toml
-```
+The same command proves it again on every pull request (`crate-licences`, in ci's Rust job), so the notes below are
+kept as the record of how each tree was first read, with what the registry has since settled marked as such:
 
-- **`crimson_noir_os/Cargo.lock` (152 crates)** and **`native/kv-pager/Cargo.lock` (126 crates)**: the `wgpu` stack
-  (`wgpu`, `wgpu-core`, `wgpu-hal`, `naga`, `ash`, `glow`, `metal`/`objc2`, `windows`), `bytemuck`, `font8x8`,
-  `log`, `env_logger`, `serde`, `tokio`, `parking_lot`, `hashbrown`, `indexmap`. Every one of these is MIT,
-  Apache-2.0, MIT OR Apache-2.0, BSD-3-Clause or Zlib as far as is known. `crimson_noir_os/README.md` already states the
-  image contains no Linux kernel or other GPL code and links only `font8x8` (MIT) at runtime.
+- **`crimson_noir_os/Cargo.lock` (149 crates from the registry)** and **`native/kv-pager/Cargo.lock` (125)**: the
+  `wgpu` stack (`wgpu`, `wgpu-core`, `wgpu-hal`, `naga`, `ash`, `glow`, `metal`/`objc2`, `windows`), `bytemuck`,
+  `font8x8`, `log`, `env_logger`, `serde`, `tokio`, `parking_lot`, `hashbrown`, `indexmap`. Read from the registry:
+  every one offers MIT, Apache-2.0, BSD, ISC, Zlib, Unlicense, CC0-1.0 or Unicode-3.0. The boot images link two
+  registry crates only, `font8x8` and `log` (`cargo tree -p crimson_boot -e normal` for the x86-64, AArch64 and
+  RISC-V targets alike), both MIT OR Apache-2.0, and `crimson_noir_os/NOTICE.txt`, which `build-image.sh` copies
+  into every image, covers them. The image contains no Linux kernel or other GPL code.
 - **`native/routing/Cargo.lock`** and **`native/kv-pager-wasm/Cargo.lock`**: no third-party crates at all (the
   routing core and the WebAssembly host import nothing; the air-gap check proves the modules import nothing).
 - **`native/llm/Cargo.lock` (65 crates, added 13 November 2026)**, each licence read from the crate's own manifest in
@@ -375,24 +376,24 @@ cargo license --manifest-path native/llm/Cargo.toml
   The notice for what llama.cpp compiles in (ggml, the llamafile matrix multiplication, the YaRN code) is
   `third_party/llama.cpp/NOTICE`, installed with the Linux app and held in the macOS app; none of its common library
   is linked.
-- **`src-tauri/Cargo.lock` (427 crates; 407 before 13 November 2026)**: the 20 added are the native runner's crate and
+- **`src-tauri/Cargo.lock` (426 crates from the registry)**: the 20 added on 13 November 2026 are the native runner's crate and
   what it brings (the list above), an optional dependency for Linux and macOS alone behind the `native-runner`
   feature, which is off by default: the Linux and macOS release builds turn it on (§1), and the Windows builds link
   exactly what they did. The rest is the Tauri 2 stack. Tauri, `wry`, `tao`, `muda`, `tray-icon`,
   `window-vibrancy`, `webview2-com`, the `windows` crates, `serde`, `tokio`, `reqwest`, `url`, `html5ever`,
   `brotli`, `png`, `uuid`: MIT, Apache-2.0, or both; the ICU crates (`icu_*`, `zerovec`, `yoke`) are Unicode-3.0;
   `r-efi` (via `getrandom`) is MIT OR Apache-2.0 OR LGPL-2.1-or-later, so a permissive choice is available.
-  **File-level copyleft (MPL-2.0) that reaches the Windows build:** `option-ext` 0.2.0 comes in through
-  `tauri` → `dirs` 7 → `dirs-sys` 0.5 → `option-ext`, and the lockfile records no target condition on that chain, so
-  as far as the lockfile shows it is compiled into the Windows installer and executable that `windows-app.yml`
-  publishes. `option-ext` is MPL-2.0. The Servo CSS crates `cssparser` 0.37, `cssparser-macros`, `selectors` 0.38
-  and `dtoa-short` (believed MPL-2.0) come in through `dom_query`, which both `tauri-utils` and `wry` use; whether
-  they end up in the Windows executable or only in build-time code depends on features and targets the lockfile
-  does not record, so `cargo tree --target x86_64-pc-windows-msvc -i cssparser` on a machine with registry access
-  should settle it. MPL-2.0 is file-level: as commonly read, a proprietary program may link MPL files unchanged,
-  provided the source of those files stays available to recipients and their notices are kept. **For counsel:**
-  confirm that reading for this product, and whether `NOTICE.md` should name these crates and where their source
-  is (crates.io). Nothing here was modified, and no MPL file is copied into the repository.
+  **File-level copyleft (MPL-2.0) that reaches every app:** five crates, and the registry confirms each is
+  MPL-2.0. `option-ext` 0.2.0 comes in through `tauri` → `dirs` → `dirs-sys`; the Servo CSS crates `cssparser`,
+  `selectors` and `dtoa-short` come in through `dom_query`, which both `tauri-utils` and `wry` use;
+  `cssparser-macros` is a procedural macro of `cssparser`'s, so it runs while the app is built and is not linked
+  into it. Settled on 22 November 2026 with `cargo tree --locked --target <target> -e normal`: all five are in the
+  normal dependency graph of the Windows, Linux, macOS, Android and iOS apps alike, with the runner's feature or
+  without it, so the four library crates are compiled into every app the build matrix publishes. MPL-2.0 is
+  file-level: as commonly read, a proprietary program may link MPL files unchanged, provided the source of those
+  files stays available to recipients and their notices are kept. **For counsel:** confirm that reading for this
+  product. Nothing here was modified, and no MPL file is copied into the repository; the policy allows MPL-2.0 for
+  these five by name and for nothing else (§8), and §8 records the notices the app packages do not yet carry.
   **Two more to confirm:** the crates recorded **only for Linux targets**, `libappindicator`/`libappindicator-sys`
   (the tray on Linux, wrapping an LGPL system library; the crates' own manifests in the registry cache say Apache-2.0
   OR MIT) and `libdbus-sys` (links the system `libdbus`, AFL-2.1 OR GPL-2.0 as a system library). `libdbus-sys` is
@@ -451,15 +452,12 @@ resolve, three-action pips and the four degrees of success. What was checked and
 `NOTICE.md` (attribution, Licensed Material, operator note 3) and `LICENSE` (section 3) were updated; nothing else
 in the licence files changed.
 
-## 6. Left for a machine with registry access
+## 6. Left for a machine with registry access (done, 22 November 2026)
 
-1. Run the four `cargo license` commands above and attach the output to this document.
-2. Consider adding `cargo deny check licenses` (with an allow-list of MIT, Apache-2.0, BSD, ISC, Zlib and
-   Unicode-3.0, plus per-crate exceptions for MPL-2.0 naming `option-ext` and, if `cargo tree` shows them in the
-   Windows build, the Servo CSS crates, once counsel has confirmed the MPL reading in §3) to `ci.yml` beside the
-   `license-headers` job, so the Rust trees are held the
-   way the npm tree now is. It needs network access to the registry on the runner, which CI has and this session
-   did not.
+Both points are done, in another form. The licences were read with `cargo metadata` itself (it needs no extra tool
+on the runner) and are committed as `tools/license/crates.json`; and the gate of §8 does in ci's Rust job what
+`cargo deny check licenses` was proposed for, with the allow-list and the five MPL-2.0 crates named in
+`tools/license/policy.json`.
 
 ## 7. Names in the storefronts and the property catalogue (7 November 2026)
 
@@ -483,3 +481,65 @@ through the USPTO, CIPO and EUIPO registers in classes 25 (clothing), 14 (watche
 35 (retail) and 36 (real estate). `storefronts.test.ts` and `storeCatalog.test.ts` keep the old names out of the
 shops and the catalogue.
 
+## 8. The licence gate and what its first run found (22 November 2026)
+
+Julian asked that every change be checked so the product stays legal to sell. A machine cannot give that answer,
+but it can refuse the mistakes a machine can see, on every pull request. `tools/license/gate.mjs` does, against
+`tools/license/policy.json`, and it is **not legal advice**: it proves that what the policy says is true of the
+files, not that the policy is enough. What it holds:
+
+| Check | What fails it | Where it runs |
+|---|---|---|
+| Crates | A crate in any of the six lockfiles that `tools/license/crates.json` does not list, or lists under a licence the policy does not allow (the permissive family; `LLVM-exception`; MPL-2.0 for five crates by name) | `src/licenceGate.test.ts`, with every test run |
+| Crates, from the registry | The committed list differing from what `cargo metadata --locked --all-features` reads from the registry for each workspace | `crate-licences`, in ci's Rust job |
+| Names | A name on the policy's list of other owners' names, in any text file of the repository (the page's older check, `compliance.test.ts`, reads the page's sources only) | the test |
+| Pictures and packed files | A picture, icon or packed data file with no entry saying where it came from and whose it is | the test |
+| Third-party directories | A directory under `third_party/` the policy does not name, or one without its licence text and notices | the test |
+
+`node tools/license/gate.mjs` runs the last four from the files alone; `node tools/license/gate.mjs crates --write`
+rewrites the list after a lockfile changes, and its diff is the review of what the change brought in.
+
+**What the first run found, and what was done.**
+
+1. **A film franchise's mark in two screenshots and two documents.** The terminal carried another name before it
+   was the Crimson Terminal, and that name held a film franchise's mark. The code was renamed long ago;
+   `crimson_noir_os/docs/screenshots/08-terminal-ready.png` and `09-terminal.png` still showed the old header, and
+   `crimson_noir_os/README.md` and `agent_handoff_state.md` still spelled the mark in their notes about the rename.
+   The screenshots were retaken from this commit's x86-64 image in QEMU and the notes reworded.
+   **Not fixed, and Julian's to decide:** the boot file `BOOTX64.EFI` on the published release tagged `stable-beta`
+   (7 October 2026) still contains the old name (read from the downloaded file's strings). The numbered releases
+   after it and the `current` pre-release do not. Removing or replacing a published release is the owner's step.
+2. **"Matrix mode" in the manual, the changelog and forty comment lines.** The labels a user sees have said "rain
+   mode" since the rename; a heading and two sentences of `MANUAL.md`, one changelog entry and comments in 22 source
+   files had not followed. They now say "rain mode". Identifiers and file names (`matrixMode.ts` and the like) are
+   unchanged: they are not shown to anyone, and the name check reads prose, not identifiers.
+3. **The crates.** All 550 pass. By what each declares: 516 are under MIT or Apache-2.0 or offer one of them as a
+   choice (most offer both; four of these name a second permissive licence that applies as well); 18 are
+   Unicode-3.0 (the ICU crates); four are Zlib, three BSD-3-Clause, two ISC, one CC0-1.0, one Apache-2.0 with the
+   LLVM exception; five are MPL-2.0 (§3). Share-alike or non-commercial: none.
+4. **A gap the gate does not close yet: the app packages carry no notices for their Rust crates.** Each app links
+   between 205 and 250 registry crates (`cargo tree --locked --target <target> -e normal --prefix none`, counted
+   per target on 22 November 2026, procedural macros included). MIT, BSD, ISC, Zlib and Apache-2.0 all ask that
+   their copyright notice and licence text travel with copies, and MPL-2.0 asks that recipients be told where the
+   source of its files is. The packages carry the notices for the model, llama.cpp and the page's bundled
+   JavaScript, and nothing for the crates. The boot images are not affected (two crates, covered by `NOTICE.txt`).
+   Most Rust applications ship this way and it is rarely pursued, but it is a duty in the licences' own words, so
+   the next change generates one third-party notices file from the same `cargo metadata` and puts it in every app
+   package, with the five MPL crates' source locations.
+5. **The cover picture.** `docs/cover.jpg` carries Content Credentials (a C2PA manifest) signed by Google's media
+   services, so it was made or last edited with one of Google's generative image tools. Julian supplied it and it
+   was committed on 16 October 2026. Which tool and which plan made it is not recorded, so its terms for commercial
+   use have not been read; a picture a model made may carry no copyright of the owner's, which matters if it is to
+   be the product's box art; and it shows the earlier title. The gate repeats this as an open question on every run
+   until the policy records the answer.
+6. **Checked and found in order.** The AppImage carries the copyright file of each system library it bundles
+   (`usr/share/doc/<package>/copyright`), the LGPL ones included; an earlier lead that it did not was wrong.
+
+**Left for the owner and for counsel.** None of this can be settled by a check:
+
+- the `stable-beta` release's boot file (point 1): delete the release, replace its files, or leave it;
+- the cover picture's tool and terms, and whether to replace it before anything is sold (point 5);
+- the MPL-2.0 reading of §3, and the position on the LGPL system libraries the AppImage carries and the Linux app
+  links (a written offer of their source, or a pointer to the distribution's), §3's `libdbus` question with them;
+- clearance of the product's name and of the names in §7 in the trademark registers, which no web search replaces;
+- the ORC question of §4.

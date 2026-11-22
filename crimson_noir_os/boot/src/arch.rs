@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Julian Cassius Subban. All Rights Reserved.
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
-//! Why does this file exist? The bootable image is built for two machines, `x86_64-unknown-uefi` and
-//! `aarch64-unknown-uefi`, and everything it does to the machine itself once the firmware lets go lives in one module per
+//! Why does this file exist? The bootable image is built for three machines, `x86_64-unknown-uefi`,
+//! `aarch64-unknown-uefi` and riscv64 (`riscv64gc-unknown-none-elf` behind its own PE header, arch/riscv64.rs), and
+//! everything it does to the machine itself once the firmware lets go lives in one module per
 //! architecture behind the same names: `serial_init` and `Serial` (the log, a line a test harness reads), `ticks` (the
 //! only clock), `cli` and `halt`, `take_over` (the image's own exception handling, so every CPU exception lands on the
 //! fault screen), `Keyboard` and `poll_keys` (the keys typed since the last frame, in the core's key codes), and `Fault`
@@ -18,3 +19,12 @@ pub use x86_64::*;
 mod aarch64;
 #[cfg(target_arch = "aarch64")]
 pub use aarch64::*;
+
+#[cfg(target_arch = "riscv64")]
+mod riscv64;
+#[cfg(target_arch = "riscv64")]
+pub use riscv64::*;
+
+/// The keys of the machines whose keyboard is the serial console.
+#[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
+mod serial_keys;

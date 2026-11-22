@@ -58,7 +58,7 @@ pub struct ConfigurationTable {
 ///
 /// # Safety
 /// `st` is the firmware's system table; its configuration table holds `number_of_table_entries` entries.
-#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "riscv64"), allow(dead_code))]
 pub unsafe fn configuration_table(st: *const SystemTable, guid: &Guid) -> Option<*const c_void> {
     unsafe {
         let t = (*st).configuration_table;
@@ -171,7 +171,7 @@ pub struct Guid {
 }
 
 /// EFI_ACPI_20_TABLE_GUID: the ACPI 2.0+ RSDP.
-#[cfg_attr(target_arch = "x86_64", allow(dead_code))]
+#[cfg_attr(any(target_arch = "x86_64", target_arch = "riscv64"), allow(dead_code))]
 pub const ACPI_20_GUID: Guid = Guid { data1: 0x8868_e871, data2: 0xe4f1, data3: 0x11d3, data4: [0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81] };
 
 /// EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID

@@ -9,8 +9,9 @@
  * service worker keeps a copy of it. The folder holds the same page with a few lines added to its head (the manifest,
  * the home-screen icon and title, the service worker's registration, and `manifest-src 'self'` in its content policy,
  * which otherwise refuses the manifest), the manifest, the service worker, the icons, build.txt (the published build's
- * name, which the worker asks the host for) and an empty .nojekyll (GitHub Pages would otherwise run Jekyll over the
- * folder). Any static https host can serve it; the web workflow
+ * name, which the worker asks the host for), an empty .nojekyll (GitHub Pages would otherwise run Jekyll over the
+ * folder) and, when the build is told its commit, build.json (which commit, ci run and publishing run the copy comes
+ * from: STAMP below). Any static https host can serve it; the web workflow
  * (.github/workflows/web.yml) publishes it on GitHub Pages each time ci passes on main, or when someone runs it.
  * The service worker (worker() below) keeps a copy of these files after the first visit, so the city then starts with
  * no network at all; it keeps one cache per build, named by the build's hash, and drops the others once a new build
@@ -27,8 +28,9 @@
  * the two cross-origin isolation headers a static host does not send to the page it serves, so from the second visit
  * on the physics bridge shares memory with its worker as it does under `npm run preview` (without them the bridge
  * copies, and nothing else changes).
- * Usage: node tools/web/pwa.mjs [--from dist] [--out dist-web]. Needs `npm run build` first (`npm run build:web` does
- * both).
+ * Usage: node tools/web/pwa.mjs [--from dist] [--out dist-web] [--commit <id>] [--ci <address>] [--run <address>]
+ * (or BUILD_COMMIT, BUILD_CI and BUILD_RUN in the environment, which is how `npm run build:web` is told). Needs
+ * `npm run build` first (`npm run build:web` does both).
  * What breaks if it is removed? dist/index.html still plays from a disk or a localhost server; a phone loses its way to
  * install the city and play it offline.
  */
@@ -62,6 +64,26 @@ export const CACHED = Object.freeze(['index.html', 'manifest.webmanifest', ...IC
  * while after a publish: GitHub Pages lets its answers be kept ten minutes).
  */
 export const PROBE = 'build.txt'
+
+/**
+ * The file that says which commit the published copy was built from: the commit, the version, the build word and the
+ * cache's name (as build.txt gives it), and the addresses of the ci run that passed on the commit and of the run
+ * that published it. It is written only when a commit is given (the publishing workflow gives it; a build on a desk
+ * has none to give), stays beside the page and outside everything the build word covers, is never kept by the worker
+ * (it is not in CACHED) and is asked for by neither the page nor the worker: it is for tools/build/sync.mjs and for a
+ * person, to tell that the web copy and the downloads were built from one commit. Two commits whose pages are the
+ * same bytes share a build word and differ here alone.
+ */
+export const STAMP = 'build.json'
+
+/** build.json's text for a build: fixed keys in a fixed order, so the same build gives the same bytes. */
+export function stampText({ commit, version, build, cache, ci = '', run = '' }) {
+  if (!/^[0-9a-f]{40}$/.test(String(commit ?? ''))) throw new Error(`the build's commit must be a full commit id (40 hex digits), not ${JSON.stringify(commit)}`)
+  for (const [name, url] of [['ci', ci], ['run', run]]) {
+    if (url !== '' && !/^https:\/\/[^\s"<>\\]+$/.test(String(url))) throw new Error(`the build's ${name} address must be an https address, not ${JSON.stringify(url)}`)
+  }
+  return `${JSON.stringify({ schema: 1, commit, version, build, cache, ci, run }, null, 2)}\n`
+}
 
 /** The manifest: the name, full screen in any orientation (the touch controls have a portrait layout), black. */
 export function manifest() {
@@ -277,6 +299,9 @@ const MODELS = new URL('models/', self.location).pathname
 // cache named for the pack (speech-pack:<id>, src/09_Cognition/speechPack.ts), which activate below never clears: only
 // caches named agent-city-* are this worker's.
 const SPEECH = new URL('speech/', self.location).pathname
+// The file that names the published copy's commit (STAMP above): never cached here, and a page load of it is the
+// file, not the city, so a person can open it.
+const STAMP = new URL(${JSON.stringify(STAMP)}, self.location).pathname
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -484,9 +509,10 @@ self.addEventListener('fetch', (event) => {
   const req = event.request
   if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return
   // The model, its manifest and its licence go straight to the network: no 0.4 GB copy in this cache, and a page load
-  // of models/LICENSE is the licence, not the city. The speech pack the same way (the page keeps it in its own cache).
+  // of models/LICENSE is the licence, not the city. The speech pack the same way (the page keeps it in its own cache),
+  // and the file that names the published commit.
   const path = new URL(req.url).pathname
-  if (path.startsWith(MODELS) || path.startsWith(SPEECH)) return
+  if (path.startsWith(MODELS) || path.startsWith(SPEECH) || path === STAMP) return
   if (req.mode === 'navigate') { event.respondWith(page(event)); return }
   event.respondWith(caches.open(CACHE).then((c) => c.match(req)).then((hit) => hit || fetch(req)))
 })
@@ -510,8 +536,11 @@ export function buildWord(html, icons = ICONS.map((icon) => readFileSync(join(RO
   return hash.digest('hex').slice(0, 12)
 }
 
-/** Builds dist-web/ from dist/index.html; returns what it wrote. */
-export function build({ from = join(ROOT, 'dist'), out = join(ROOT, 'dist-web') } = {}) {
+/**
+ * Builds dist-web/ from dist/index.html; returns what it wrote. With `commit` (the publishing workflow's
+ * BUILD_COMMIT), build.json says which commit this is; without one nothing more is written than before.
+ */
+export function build({ from = join(ROOT, 'dist'), out = join(ROOT, 'dist-web'), commit = '', ci = '', run = '' } = {}) {
   const page = join(from, 'index.html')
   if (!existsSync(page)) throw new Error(`${page} is missing: run \`npm run build\` first`)
   const html = readFileSync(page, 'utf8')
@@ -534,7 +563,12 @@ export function build({ from = join(ROOT, 'dist'), out = join(ROOT, 'dist-web') 
   writeFileSync(join(out, PROBE), `${cache}\n`)
   for (const icon of ICONS) copyFileSync(join(ROOT, icon.from), join(out, icon.name))
   writeFileSync(join(out, '.nojekyll'), '')
-  return { out, cache, build: digest, files: ['index.html', 'manifest.webmanifest', 'sw.js', PROBE, ...ICONS.map((i) => i.name), '.nojekyll'] }
+  const files = ['index.html', 'manifest.webmanifest', 'sw.js', PROBE, ...ICONS.map((i) => i.name), '.nojekyll']
+  if (commit) {
+    writeFileSync(join(out, STAMP), stampText({ commit, version, build: digest, cache, ci, run }))
+    files.push(STAMP)
+  }
+  return { out, cache, build: digest, files }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -543,7 +577,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     return i > 0 ? process.argv[i + 1] : undefined
   }
   try {
-    const r = build({ from: arg('from') && resolve(arg('from')), out: arg('out') && resolve(arg('out')) })
+    // The publishing workflow names the commit it builds (and the two runs) in its environment: `npm run build:web`
+    // passes no arguments on. An empty value is no value.
+    const env = (name) => process.env[name] || undefined
+    const r = build({
+      from: arg('from') && resolve(arg('from')), out: arg('out') && resolve(arg('out')),
+      commit: arg('commit') ?? env('BUILD_COMMIT'), ci: arg('ci') ?? env('BUILD_CI'), run: arg('run') ?? env('BUILD_RUN'),
+    })
     console.log(`web app  ${r.out}  (${r.cache})`)
     for (const f of r.files) console.log(`  ${f}`)
   } catch (e) {

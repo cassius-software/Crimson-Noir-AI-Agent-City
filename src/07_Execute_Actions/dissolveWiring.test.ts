@@ -144,13 +144,17 @@ test('the crowd: one amount per agent in a storage attribute named crowd.dissolv
   assert.doesNotMatch(read('./simProtocol.ts'), /dissolve/i)
 })
 
-test('the props: a dissolve attribute on each of the three prop geometries, the helper on each material, never on the buildings', () => {
+test('the props: a dissolve attribute on every prop mesh, the helper on each material, never on the buildings', () => {
   const world = read('../01_Initialize_World/world.ts')
   const props = between(world, 'function furnitureMeshes(', '\nexport function buildWorld(')
-  for (const geo of ['lampGeo', 'treeGeo', 'signalGeo']) assert.match(props, new RegExp(`${geo}\\.setAttribute\\('dissolve', dissolve\\.\\w+\\)`))
+  // Every mesh of a kind reads its run of the list's amounts: the city's one mesh the whole list, a region's tile its own.
+  for (const geo of ['lampGeo', 'treeGeo', 'signalGeo']) assert.match(props, new RegExp(`${geo}\\.setAttribute\\('dissolve', dissolve\\.\\w+\\.run\\(0, f\\.\\w+\\.length\\)\\)`))
+  assert.match(props, /g\.setAttribute\('dissolve', dissolve\[kind\]\.run\(start, end\)\)/)
   for (const mat of ['lampMat', 'treeMat', 'signalMat']) assert.match(props, new RegExp(`applyCodeDissolve\\(${mat}, amount, origin, PROP_DISSOLVE_INK\\)`))
-  // The tree's own position node (the sway) is set before the helper wraps it.
-  before(props, 'treeMat.positionNode = Fn(', 'applyCodeDissolve(treeMat,', 'the sway is under the fold')
+  // The tree's own position node (the sway, and in a region its placing and its fold by distance) is set before the
+  // helper wraps it.
+  before(props, 'treeMat.positionNode = Fn(', 'applyCodeDissolve(treeMat,', 'the city\'s sway is under the fold')
+  before(props, 'if (tiles) placeInTiles(treeMat, tiles, (at) => swayAt(at.x, at.y, at.z, part))', 'applyCodeDissolve(treeMat,', 'a region\'s placing, sway and fold too')
   assert.equal(world.match(/applyCodeDissolve\(/g)?.length, 3, 'three props, nothing else')
   assert.doesNotMatch(read('../01_Initialize_World/materials.ts'), /dissolve/i, 'the buildings\' material is untouched: walls are solid by law')
   assert.match(world, /dissolve: PropDissolve\n/)

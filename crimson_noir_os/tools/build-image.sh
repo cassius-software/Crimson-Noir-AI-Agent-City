@@ -5,9 +5,10 @@
 # Why does this file exist? It makes the one-click bootable media of Crimson Noir OS from the UEFI image: a raw GPT disk
 # image (an EFI system partition holding \EFI\BOOT\BOOTX64.EFI, the declared configuration and the notices) to write to a
 # USB stick or boot in a virtual machine, and a UEFI-bootable ISO (El Torito, hybrid). Usage: build-image.sh [out dir]
-# [target], the target x86_64-unknown-uefi (the default) or aarch64-unknown-uefi, whose media hold \EFI\BOOT\BOOTAA64.EFI
-# (the removable-media path an Arm machine's firmware boots). Tools: cargo with the target, mtools, sgdisk (gdisk) and
-# xorriso.
+# [target], the target x86_64-unknown-uefi (the default), aarch64-unknown-uefi, whose media hold \EFI\BOOT\BOOTAA64.EFI
+# (the removable-media path an Arm machine's firmware boots), or riscv64gc-unknown-none-elf, whose media hold
+# \EFI\BOOT\BOOTRISCV64.EFI (Rust has no riscv64 UEFI target, so that build is the bare-metal one behind a PE header
+# of its own: boot/src/arch/riscv64.rs). Tools: cargo with the target, mtools, sgdisk (gdisk) and xorriso.
 # The media are reproducible: the same commit gives the same bytes on any machine, so two release tags at one commit
 # publish one set of checksums and anyone can rebuild and compare. Everything that would otherwise vary is fixed by the
 # commit: every timestamp is its commit time (SOURCE_DATE_EPOCH, which mtools and xorriso honour), and the GPT's GUIDs
@@ -21,17 +22,23 @@ target=${2:-x86_64-unknown-uefi}
 case "$target" in
   x86_64-unknown-uefi) boot=BOOTX64.EFI; arch_id="" ;;
   aarch64-unknown-uefi) boot=BOOTAA64.EFI; arch_id="aarch64:" ;;
-  *) echo "build-image.sh: no media for $target (x86_64-unknown-uefi or aarch64-unknown-uefi)" >&2; exit 1 ;;
+  riscv64gc-unknown-none-elf) boot=BOOTRISCV64.EFI; arch_id="riscv64:" ;;
+  *) echo "build-image.sh: no media for $target (x86_64-unknown-uefi, aarch64-unknown-uefi or riscv64gc-unknown-none-elf)" >&2; exit 1 ;;
 esac
 cd "$here"
 cargo build -q --locked -p crimson_boot --target "$target" --release
 efi="$here/target/$target/release/crimson_boot.efi"
+# riscv64: the linker writes the finished UEFI application itself, under the name a bare-metal program gets.
+if [ "$target" = riscv64gc-unknown-none-elf ]; then efi="$here/target/$target/release/crimson_boot"; fi
+# Whatever built it, a firmware loads it only as a PE file, which begins with these two letters.
+[ "$(head -c 2 "$efi")" = MZ ] || { echo "build-image.sh: $efi is not a UEFI application (no PE header)" >&2; exit 1; }
 
 # What fixes every varying byte: the commit's time, and its hash as the media's identity.
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || echo 0)}
 id=${CRIMSON_MEDIA_ID:-$(git rev-parse HEAD 2>/dev/null || echo "$SOURCE_DATE_EPOCH")}
 export SOURCE_DATE_EPOCH
-# The aarch64 media's identity names the architecture (the x86-64 media's stays what it was: the same bytes as before).
+# The aarch64 and riscv64 media's identity names the architecture (the x86-64 media's stays what it was: the same
+# bytes as before).
 hex=$(printf '%s' "crimson-noir-media:$arch_id$id" | sha256sum | cut -c1-64)
 guid() { echo "$1" | sed 's/^\(.\{8\}\)\(.\{4\}\)\(.\{4\}\)\(.\{4\}\)\(.\{12\}\).*/\1-\2-\3-\4-\5/'; }
 disk_guid=$(guid "$(echo "$hex" | cut -c1-32)")

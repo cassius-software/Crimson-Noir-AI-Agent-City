@@ -18,7 +18,8 @@
  * a tile is simply the drawing buffer divided by that count (one uniform), the compute pass is built once, and nothing
  * recompiles on a resize or a tier change (the same promise quality.ts keeps for everything else it touches).
  *
- * Also here, pure and tested: which lamps are lit (the nearest to the focus, as many as the tier allows: nearestLamps),
+ * Also here, pure and tested: which lamps are lit (the nearest to the focus, as many as the tier allows: nearestLamps,
+ * and LampIndex, which answers the same from cells for a whole map's lamps),
  * the fixtures of a room (roomFixtures) and the lamp and fixture photometry (LAMP, FIXTURE).
  * What breaks if it is removed? The street lamps are emissive heads over a dark street, the rooms are lit by the sky
  * alone, and the sixth lamp is the last one the city can light.
@@ -124,6 +125,119 @@ export function nearestLamps(heads: readonly (readonly [number, number, number])
   order.sort((a, b) => d2[a] - d2[b])
   for (let k = 0; k < want; k++) out.push(order[k])
   return d2[order[want - 1]]
+}
+
+/**
+ * The lamp heads in square cells, for the nearest few to a focus without measuring every lamp of the map: a generated
+ * region's furniture is its whole map's (propTiles.ts: some 23,000 lamps), and nearestLamps sorts every head at each
+ * reselect. nearest() answers exactly what nearestLamps answers (the same lamps in the same order, ties by index, and
+ * the same squared radius, all in float32 as nearestLamps keeps them), visiting cells in rings round the focus until
+ * no lamp of an unvisited cell can be nearer than the farthest one chosen; a count above a quarter of the lamps, or a
+ * focus that is not finite or is more than FAR_CELLS cells off the grid (where counting rings in doubles could stall),
+ * takes nearestLamps itself. Pure: nothing of the lights.
+ */
+/** How many cells off its grid a LampIndex still counts rings (some 43,000 km at 40 m cells), far inside the integers a
+ *  double holds exactly; a focus farther out is nearestLamps' (a physics fault could throw the player that far). */
+const FAR_CELLS = 2 ** 30
+
+export class LampIndex {
+  readonly count: number
+  private readonly heads: readonly (readonly [number, number, number])[]
+  private readonly cell: number
+  private readonly x0: number
+  private readonly z0: number
+  private readonly nx: number
+  private readonly nz: number
+  /** The heads of cell c are items[start[c] … start[c + 1]), in index order. */
+  private readonly start: Uint32Array
+  private readonly items: Uint32Array
+  private candidates = new Uint32Array(64)
+  private d2 = new Float32Array(64)
+  private readonly scratch = { d2: new Float32Array(0), order: new Uint32Array(0) }
+
+  constructor(heads: readonly (readonly [number, number, number])[], cell = 40) {
+    this.heads = heads
+    this.count = heads.length
+    this.cell = cell > 0 ? cell : 40
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity
+    for (const h of heads) {
+      if (!Number.isFinite(h[0]) || !Number.isFinite(h[2])) continue
+      x0 = Math.min(x0, h[0]); z0 = Math.min(z0, h[2]); x1 = Math.max(x1, h[0]); z1 = Math.max(z1, h[2])
+    }
+    if (!(x1 >= x0)) { x0 = 0; z0 = 0; x1 = 0; z1 = 0 }
+    this.x0 = x0; this.z0 = z0
+    this.nx = Math.floor((x1 - x0) / this.cell) + 1
+    this.nz = Math.floor((z1 - z0) / this.cell) + 1
+    const cells = new Uint32Array(heads.length)
+    const counts = new Uint32Array(this.nx * this.nz)
+    heads.forEach((h, i) => {
+      const cx = Math.min(this.nx - 1, Math.max(0, Math.floor((h[0] - x0) / this.cell) || 0))
+      const cz = Math.min(this.nz - 1, Math.max(0, Math.floor((h[2] - z0) / this.cell) || 0))
+      cells[i] = cz * this.nx + cx
+      counts[cells[i]]++
+    })
+    this.start = new Uint32Array(counts.length + 1)
+    for (let c = 0; c < counts.length; c++) this.start[c + 1] = this.start[c] + counts[c]
+    this.items = new Uint32Array(heads.length)
+    const fill = this.start.slice(0, counts.length)
+    for (let i = 0; i < heads.length; i++) this.items[fill[cells[i]]++] = i
+  }
+
+  /** nearestLamps(heads, fx, fz, count, out, …), answered from the cells. */
+  nearest(fx: number, fz: number, count: number, out: number[]): number {
+    const n = this.count
+    const want = Math.max(0, Math.min(count, n))
+    if (want === 0 || want * 4 > n || !Number.isFinite(fx) || !Number.isFinite(fz)) return nearestLamps(this.heads, fx, fz, count, out, this.scratch)
+    const C = this.cell
+    const ci = Math.floor((fx - this.x0) / C), cj = Math.floor((fz - this.z0) / C)
+    if (!(Math.abs(ci) <= FAR_CELLS && Math.abs(cj) <= FAR_CELLS)) return nearestLamps(this.heads, fx, fz, count, out, this.scratch)
+    let found = 0
+    const take = (cx: number, cz: number): void => {
+      const c = cz * this.nx + cx
+      for (let k = this.start[c]; k < this.start[c + 1]; k++) {
+        if (found === this.candidates.length) {
+          const grown = new Uint32Array(found * 2); grown.set(this.candidates); this.candidates = grown
+          const d = new Float32Array(found * 2); d.set(this.d2); this.d2 = d
+        }
+        const i = this.items[k], h = this.heads[i]
+        const dx = h[0] - fx, dz = h[2] - fz
+        this.candidates[found] = i
+        this.d2[found] = dx * dx + dz * dz
+        found++
+      }
+    }
+    // Rings are square, `ring` cells out from the focus's cell, each clipped to the grid; the first that can hold a
+    // cell of the grid is the focus's distance to it in cells (0 inside it), the last the farthest corner's.
+    const first = Math.max(0, -ci, ci - (this.nx - 1), -cj, cj - (this.nz - 1))
+    const last = Math.max(Math.abs(ci), Math.abs(this.nx - 1 - ci), Math.abs(cj), Math.abs(this.nz - 1 - cj))
+    for (let ring = first; ring <= last; ring++) {
+      const xa = Math.max(0, ci - ring), xb = Math.min(this.nx - 1, ci + ring)
+      const za = Math.max(0, cj - ring + 1), zb = Math.min(this.nz - 1, cj + ring - 1)
+      if (ring === 0) take(ci, cj)
+      else {
+        if (cj - ring >= 0) for (let x = xa; x <= xb; x++) take(x, cj - ring)
+        if (cj + ring < this.nz) for (let x = xa; x <= xb; x++) take(x, cj + ring)
+        if (ci - ring >= 0) for (let z = za; z <= zb; z++) take(ci - ring, z)
+        if (ci + ring < this.nx) for (let z = za; z <= zb; z++) take(ci + ring, z)
+      }
+      if (found < want) continue
+      // Every head of a cell `ring + 1` or more cells off is more than `ring` cells' width away: stop once that is past
+      // the want-th nearest found (with a margin for float32's rounding, so no tie is left outside).
+      const clear = ring * C
+      if (clear * clear * (1 - 1e-5) > this.kth(found, want)) break
+    }
+    const order = Array.from(this.candidates.subarray(0, found).keys())
+    order.sort((a, b) => this.d2[a] - this.d2[b] || this.candidates[a] - this.candidates[b])
+    out.length = 0
+    for (let k = 0; k < want; k++) out.push(this.candidates[order[k]])
+    return this.d2[order[want - 1]]
+  }
+
+  /** The want-th smallest of the first `found` squared distances. */
+  private kth(found: number, want: number): number {
+    const sorted = this.d2.slice(0, found).sort()
+    return sorted[want - 1]
+  }
 }
 
 /** The parts of three's clustered node this file drives that its typings leave out. */

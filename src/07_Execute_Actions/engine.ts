@@ -42,7 +42,7 @@ import { Frustum, Matrix4, Quaternion, Vector3, type PerspectiveCamera, type Ren
 import { BRAND } from '../brand.ts'
 import { GRAPHICS_RESET, gpuPaused, noteGpuLoss, recentGpuLosses } from './bootFailure.ts'
 import { watchLongTasks } from './longTasks.ts'
-import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type World } from '../01_Initialize_World/world.ts'
+import { buildWorld, createRenderer, FULL_WORLD, gpuBufferOf, LIGHT_TUNE_RANGE, LITE_WORLD, ndStopsFor, releaseGpu, WebGPUUnavailableError, type Gpu, type LightTuning, type PropAmounts, type World } from '../01_Initialize_World/world.ts'
 import { CITY, CITY_SIZE, districtName } from '../01_Initialize_World/city.ts'
 import { RegionPlaces, SURFACE, hollowLots, layoutOf, regionPhysics, regionStart } from '../01_Initialize_World/region/regionWorld.ts'
 import { regionPlacement } from '../01_Initialize_World/region/placement.ts'
@@ -53,7 +53,7 @@ import { cityHomes, DEED_BASE, drawHomes, homeAt, type Home } from '../01_Initia
 import { deedOf, inMask, ROOM_COUNT, skyRoom } from '../02_Define_The_Rules/homeGrid.ts'
 import { cellAt, cellsNear, SHAPE_IDS } from '../02_Define_The_Rules/homeLayout.ts'
 import { freshHomes, HOME_COUNT, type HomeRecord } from '../05_Observe_Environment/homeStore.ts'
-import { streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
+import { mapStreetGrid, streetCapacity, streetGridOf, type StreetGrid } from '../01_Initialize_World/region/streets.ts'
 import { tallestBuilding, type RegionPack } from '../01_Initialize_World/region/pack.ts'
 import { LANDMARK } from '../01_Initialize_World/lakefront.ts'
 import { METRO } from '../01_Initialize_World/lakefrontPack.ts'
@@ -389,11 +389,11 @@ function sameDraft(a: Draft | null, b: Draft | null): boolean {
   return piece && a.home === b.home && a.cursor.c === b.cursor.c && a.cursor.r === b.cursor.r && a.ok === b.ok && a.view === b.view
 }
 
-/** One prop's dissolve amounts to its instanced attribute (dirty range only), marked for three's upload, then cleaned. */
-function flushProp(b: DissolveBuffer, attr: { array: ArrayLike<number>; needsUpdate: boolean }): void {
+/** One prop's dissolve amounts to the world's list (dirty range only), the meshes drawing that range marked for three's upload, then cleaned. */
+function flushProp(b: DissolveBuffer, amounts: PropAmounts): void {
   if (!b.dirty) return
-  copyDirty(b, attr.array as Float32Array)
-  attr.needsUpdate = true
+  copyDirty(b, amounts.array)
+  amounts.mark(b.dirtyStart, b.dirtyEnd)
   b.clean()
 }
 
@@ -605,7 +605,7 @@ export class Engine {
   private readonly wornSaved = new Float32Array(RIG_SLOTS * 2)
   /** Ghost view: the physics shapes as code over the finished frame (G, or the console's ghost). */
   private readonly ghost: GhostView
-  /** Matrix mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
+  /** Rain mode (01_Initialize_World/matrixMode.ts): on or off as last asked (M, or the console's matrix). */
   private matrixOn = false
   /** When the last frame was drawn, ms (the ghost view's fade runs on drawn frames). */
   private lastDrawnMs = Number.NaN
@@ -1196,6 +1196,9 @@ export class Engine {
       // region whose roads are not on the grid has none: its fleet stays empty and its crowd hidden (the AI drives the
       // procedural grid only), so it runs at the smallest size the realm takes (the GPU is the region's).
       const streets = pack && layout ? streetGridOf(pack, layout.offset, spawn) : null
+      // The whole map's grid, along every street of which the page stands a generated region's lamps, trees and signals
+      // (world.ts, drawn in tiles by distance): the crowd walks the window, the furniture stands everywhere.
+      const propMap = pack && layout && streets ? mapStreetGrid(pack, layout.offset) : null
       const empty = pack !== null && streets === null
       // Split screen: the post chain is player 1's alone (one pipeline, one velocity history, one full-screen pass), so
       // with more than one player it is off at every tier, as ?post=0 is, and every viewport takes the direct path. A
@@ -1234,7 +1237,7 @@ export class Engine {
       // The lots whose floors the window's painted light shows lit (region/paintedLight.ts): the workplaces', whose
       // ceilings hang real fixtures wherever lamps are lit, and the shops' and the homes', which have none.
       const interiors = hollow ? [...hollow.rooms.map(({ cx, cz }) => ({ cx, cz, fixtures: true })), ...[...hollow.shops, ...hollow.homes].map(({ cx, cz }) => ({ cx, cz, fixtures: false }))] : []
-      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan, rooms: hollow.rooms, transit, interiors } : null, lite ? LITE_WORLD : FULL_WORLD)
+      const world = buildWorld(gpu.renderer, options.seed, pack && layout && hollow ? { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, map: propMap, plan, rooms: hollow.rooms, transit, interiors } : null, lite ? LITE_WORLD : FULL_WORLD)
       // The craft boxes (transit.ts craftBoxesOf): the window's rectangular buildings, the needles and the plan, from the
       // hollowed pack (a building put out of a room's way is no pad), sent to the worker so that it lays the window's
       // VTOL routes and racetrack as the page does.
@@ -1245,12 +1248,13 @@ export class Engine {
       const spawns: { x: number; z: number }[] = []
       for (let k = 1; k < players; k++) spawns.push({ x: spawn.x + along.x * SPLIT.spawnGap * k, z: spawn.z + along.z * SPLIT.spawnGap * k })
       // The physics realm boots (Rapier, the city's colliders or the region's, the fleet) while this thread sets up quality.
-      // A lite boot hands it a lighter world: no street-furniture sensors (every worker query excludes sensors and they
-      // exchange no contact, so they only cost the broad phase; the page keeps world.furniture for drawing, the pole
-      // index, the contact pulse, the dissolve and the ghost view), no ragdoll, and no scheduled craft (nothing on the
+      // Its street-furniture sensors stand where the city's or the window's furniture does (world.sensors; a generated
+      // region's page draws its whole map's, world.furniture, which the pole index, the contact pulse and the dissolve
+      // read). A lite boot hands it a lighter world: no street-furniture sensors (every worker query excludes sensors and
+      // they exchange no contact, so they only cost the broad phase), no ragdoll, and no scheduled craft (nothing on the
       // page draws them yet).
       simBoot = SimClient.create({
-        seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.furniture, spawn,
+        seed: options.seed, cars: options.cars, agents: options.agents, boxes: world.boxes, furniture: lite ? NO_FURNITURE : world.sensors, spawn,
         debug: options.debug === true, region: hollow && layout ? regionPhysics(hollow.pack, layout, transit?.openings ?? []) : null, streets, tracks: options.tracks !== false,
         ragdoll: options.ragdoll !== false && !pack && !lite, craft: !lite,
         ...(spawns.length > 0 && { spawns }),
@@ -1329,6 +1333,7 @@ export class Engine {
         setAmbientOcclusion: (taps) => { live.ao = taps },
         setTextureSize: (size) => world.setTextureSize(size),
         setLampLights: (count) => world.setLampLights(count),
+        setPropReach: (metres) => world.setPropReach(metres),
         setShadowTaps: (count) => world.setShadowTaps(count),
       }
       const applied = first
@@ -1362,7 +1367,7 @@ export class Engine {
       // The network ghosts (netView.ts): two hidden instanced meshes until a session's poses arrive, compiled with the rest.
       const netView = new NetView()
       world.scene.add(netView.people, netView.cars)
-      const ghost = createGhost({ boxes: world.boxes, furniture: world.furniture, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
+      const ghost = createGhost({ boxes: world.boxes, furniture: world.sensors, suv: sim.meta.suv, crowdPos: view0.pos, agents: options.agents, rigs: rigShapes })
       const chainOf = (samples: 0 | 4): ReturnType<typeof buildPost> =>
         buildPost(gpu.renderer, world.scene, world.camera, options.cinema === false ? null : { resorted: world.resorted }, ghost, { sceneSamples: samples, ao: aoBuilt })
       let { pipeline: post, volumetrics, cinema, vision, ao, release } = chainOf(sceneSamples)
@@ -1610,7 +1615,7 @@ export class Engine {
   }
 
   /**
-   * Matrix mode on or off (01_Initialize_World/matrixMode.ts): falling code on every surface, drawn in world space by
+   * Rain mode on or off (01_Initialize_World/matrixMode.ts): falling code on every surface, drawn in world space by
    * the surfaces' own materials (the sky untouched), and in the physics realm the pedestrians' mask reduced to the
    * static world, so people and cars pass through each other while the ground still holds them. The page's uniform
    * and the realm's crowd take the same global state (the uniform is set every frame; the realm is told now).
@@ -2988,7 +2993,7 @@ export class Engine {
       if (st.craft) this.craftView?.sync(st.craft)
       this.fresh = false
     }
-    // Matrix mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
+    // Rain mode's global state for this frame: the realm's clock (the one its crowd packs), the mode, and the
     // floating origin anchored to this camera. Every surface's uniform and the cull's Params take it from here.
     this.world.matrixMode.set(st.simTime, this.matrixOn, cam.position.x, cam.position.z)
     // Who is drawn for this camera, over the newest pedestrian frame from the worker.
@@ -3038,8 +3043,9 @@ export class Engine {
       cam.updateMatrixWorld()
     }
     // The other players' viewports: each culled for its own camera, under the sky re-centred on that head, drawn on the
-    // direct path. The lamp lights and the building sort stay player 1's (world.update above); the sun's two shadow
-    // cascades are fitted by three to the camera of each render, so each viewport's are fitted to its own head.
+    // direct path. The lamp lights (dimmed for each head as a region's poles fold: World.follow) and the building sort
+    // stay player 1's (world.update above); the sun's two shadow cascades are fitted by three to the camera of each
+    // render, so each viewport's are fitted to its own head.
     if (split) for (let k = 1; k < this.views.length; k++) this.presentView(this.views[k])
     // GPU timings: for the stats row under ?profile, and while the governor judges Peak (governor.ts wantsGpu, gpuSample);
     // only where three writes them (Gpu.timestamps).

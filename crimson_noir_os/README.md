@@ -30,7 +30,7 @@ rendered at 640x360 and scaled 2x.
 | ![The intro: the tutor walks in; the content card](docs/screenshots/01-intro.png) | ![Why 1: the live memory march and the seal](docs/screenshots/02-memory.png) |
 | ![Why 2: the scripted run matches the build's fingerprint](docs/screenshots/03-compute.png) | ![Why 3: the containment cage around the looper's trap](docs/screenshots/04-containment.png) |
 | ![Why 4: the screen's read-back at the crash cart](docs/screenshots/05-display.png) | ![Why 5: the sort, a comparator mid-swap](docs/screenshots/06-sort.png) |
-| ![Self-test passed](docs/screenshots/07-passed.png) | ![The Crimson Terminal: a session, the floor map, the swarm running (shot before the rename, so its header still reads the old name)](docs/screenshots/09-terminal.png) |
+| ![Self-test passed](docs/screenshots/07-passed.png) | ![The Crimson Terminal: a session, the floor map, the swarm running ](docs/screenshots/09-terminal.png) |
 
 ## Quick start
 
@@ -41,6 +41,8 @@ python3 tools/boot_test.py target/image/crimson_noir_os.img --wait "SELFTEST PAS
   --step 'type:golden\n' --step wait:MATCH --step 'type:halt\n' --step 'wait:POWER OFF' --step exit
 sh tools/build-image.sh target/image-aarch64 aarch64-unknown-uefi   # the same for 64-bit Arm, in target/image-aarch64
 python3 tools/boot_test.py target/image-aarch64/crimson_noir_os.img --arch aarch64 --wait "SELFTEST PASS"
+sh tools/build-image.sh target/image-riscv64 riscv64gc-unknown-none-elf   # the same for 64-bit RISC-V
+python3 tools/boot_test.py target/image-riscv64/crimson_noir_os.img --arch riscv64 --wait "SELFTEST PASS"
 cargo run --release -- selftest            # the hosted runtime: CPU and GPU, compared word for word
 cargo test --workspace                     # 85 tests (set NOIR_REQUIRE_GPU=1 to fail rather than skip without a GPU)
 npm run smoke:bridge                       # from the repository root: the bridge against the real host (below)
@@ -50,9 +52,9 @@ npm run smoke:bridge                       # from the repository root: the bridg
 
 | Purpose | What you need |
 |---|---|
-| Build | Rust 1.88 or newer with the `x86_64-unknown-uefi` target (and `aarch64-unknown-uefi` for Arm) |
+| Build | Rust 1.88 or newer with the `x86_64-unknown-uefi` target (`aarch64-unknown-uefi` for Arm; `riscv64gc-unknown-none-elf` for RISC-V, which has no UEFI target of its own) |
 | Make the media | `mtools`, `gdisk` (sgdisk) and `xorriso` |
-| Boot test | `qemu-system-x86_64` and OVMF; for Arm, `qemu-system-aarch64` and AAVMF (Debian's `qemu-efi-aarch64`) |
+| Boot test | `qemu-system-x86_64` and OVMF; for Arm, `qemu-system-aarch64` and AAVMF (Debian's `qemu-efi-aarch64`); for RISC-V, `qemu-system-riscv64` (Debian's `qemu-system-misc`) and edk2 (`qemu-efi-riscv64`) |
 | Hosted GPU path | Any Vulkan, Metal or DX12 adapter; Mesa's lavapipe works, with no GPU at all |
 
 **Releases**
@@ -65,11 +67,13 @@ tag's GitHub Release. The workflow:
 4. boots both in QEMU with OVMF (the disk image through the tutorial and the terminal to a clean power-off);
 5. attaches `crimson_noir_os.img`, `crimson_noir_os.iso`, `BOOTX64.EFI`, the configuration and `SHA256SUMS`.
 
-The aarch64 media are not made by that workflow. The repository's build matrix builds them (`npm run build:matrix`,
-target `uefi-arm64`, which bakes once), and its workflow, `.github/workflows/build-matrix.yml`, bakes them a second
-time from a clean build, compares the bytes, boots the disk image in QEMU's Arm `virt` machine with AAVMF through the
+The aarch64 and riscv64 media are not made by that workflow. The repository's build matrix builds them
+(`npm run build:matrix`, targets `uefi-arm64` and `uefi-riscv64`, which bake once), and its workflow,
+`.github/workflows/build-matrix.yml`, bakes them a second time from a clean build, compares the bytes, boots each
+disk image in QEMU's `virt` machine for its architecture (AAVMF on Arm, edk2 over OpenSBI on RISC-V) through the
 same steps, and the ISO to the self-test. On a `v*` tag (not `stable-*`) it attaches `BOOTAA64.EFI` and
-`crimson_noir_os-aarch64.img`/`.iso` (the build matrix's names for them) to the tag's release.
+`crimson_noir_os-aarch64.img`/`.iso`, and `BOOTRISCV64.EFI` and `crimson_noir_os-riscv64.img`/`.iso` (the build
+matrix's names for them) to the tag's release.
 
 The media are reproducible. Every timestamp is the commit's time, the disk's GUIDs and the FAT serial come from the
 commit's hash, and the linker writes a hash of the output where it would stamp the build time (`.cargo/config.toml`:
@@ -98,7 +102,8 @@ only the media's description under the marker is refreshed.
 - To make a bootable stick, write `crimson_noir_os.img` to it, for example
   `dd if=target/image/crimson_noir_os.img of=/dev/sdX bs=4M`, then boot it on a UEFI x86-64 machine with Secure Boot
   off. The image is unsigned. `crimson_noir_os-aarch64.img` is the same for a 64-bit Arm machine with UEFI firmware
-  and ACPI (see Hardware support below).
+  and ACPI, and `crimson_noir_os-riscv64.img` for a 64-bit RISC-V machine whose UEFI firmware offers a framebuffer
+  (see Hardware support below).
 - The ISO is hybrid, so it boots from a stick or as a virtual machine's CD.
 
 ## What is where
@@ -109,9 +114,9 @@ only the media's description under the marker is refreshed.
 | `containment.canonical` | That canonical form, byte for byte (`cargo run -- canonical`); a test holds it equal to the generator, and the host's tests hold its SHA-256 equal to the lock |
 | `containment.seal` | The scripted run's ledger head, entry count and weights digest (`cargo run -- seal`): the host keeps for the fleet only the run with this seal; a test holds it equal to the run |
 | `crates/noir_core` | The `no_std` + `alloc` core, shared by the image and the hosted runtime (48 unit tests, 21 property tests under tests/) |
-| `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, a sealed bump allocator, and per architecture (`arch/x86_64.rs`, `arch/aarch64.rs`) the serial log, the clock, the image's own GDT/IDT or exception vectors, and the keyboard (PS/2 on x86-64, the serial console on Arm) |
+| `boot/` (`crimson_boot`) | The UEFI application: its own UEFI bindings, GOP framebuffer, ExitBootServices, a sealed bump allocator, and per architecture (`arch/x86_64.rs`, `arch/aarch64.rs`, `arch/riscv64.rs`) the serial log, the clock, the image's own GDT/IDT, exception vectors or trap vector, and the keyboard (PS/2 on x86-64, the serial console on Arm and RISC-V, decoded in `arch/serial_keys.rs`). The riscv64 layer also carries the PE header that makes a bare-metal build a UEFI application, laid out with `boot/riscv64.ld`, since Rust has no riscv64 UEFI target |
 | `src/`, `shaders/` | The hosted runtime (std, wgpu 30, bytemuck, log + env_logger, pollster) and the WGSL kernels; `wire.rs`, `ledger.rs` and `bridge.rs` are the bridge, which only this runtime has (16 tests, and 1 run against a live host) |
-| `tools/` | `build-image.sh` makes the disk image and the ISO for either target; `boot_test.py` boots them in QEMU + OVMF (or AAVMF with `--arch aarch64`), follows the serial log, types, and takes screenshots |
+| `tools/` | `build-image.sh` makes the disk image and the ISO for any of the three targets; `boot_test.py` boots them in QEMU + OVMF (or AAVMF with `--arch aarch64`, or edk2 on the RISC-V `virt` machine with `--arch riscv64`), follows the serial log, types, and takes screenshots |
 
 The core crate's modules:
 
@@ -120,7 +125,7 @@ The core crate's modules:
 | `config.rs` | The configuration parser, validator, lock and generator |
 | `matrix.rs` | The Global Matrix, the world, spawning and the scripted self-test run |
 | `kernels.rs` | The branch-free hot path: the scalar reference tick, the SIMD tick (four agents a register), the relaxation and the sorting network's comparator |
-| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on x86_64, plain lane loops on both UEFI targets |
+| `lanes.rs` | The SIMD lane type the tick runs on: SSE2 registers on a hosted x86_64, plain lane loops in all three images (the x86-64 one builds with SSE off) |
 | `sort.rs` | The bitonic network and its 0-1 proof |
 | `render.rs` | The integer-only rasterizer |
 | `scene.rs` | The room, built from the matrix |
@@ -302,13 +307,18 @@ These are stated plainly so nobody has to discover them.
   UART the firmware's ACPI SPCR table names (a PL011 or an SBSA generic UART), read and written after
   ExitBootServices, where the arrow keys and Page Up/Down arrive as a terminal's escape sequences. A machine without
   that table boots, but has no log and no keyboard; one with device trees only (no ACPI) is the same.
+- On riscv64 the keyboard is the serial console too, through the SBI console (the supervisor interface under the
+  UEFI firmware: its Debug Console extension, or the older console calls), so it needs no table to find a UART. The
+  image is built for a processor with floating point (`riscv64gc`) and needs a UEFI firmware that offers a
+  framebuffer (GOP); many RISC-V boards' firmware offers none, and there the image stops with "no graphics output".
+  Only edk2 has loaded it; U-Boot's UEFI loader is untried.
 - The image has no network, by design, and its configuration refuses one (`network = false`). Only the hosted
   runtime's bridge speaks to anything, and only to this machine.
-- Nothing here has been booted on physical hardware: the image is tested in QEMU with OVMF, and the aarch64 image in
-  QEMU's `virt` machine with AAVMF. The keyboard, the framebuffer and the firmware calls are the standard ones a PC
+- Nothing here has been booted on physical hardware: the image is tested in QEMU with OVMF, the aarch64 image in
+  QEMU's `virt` machine with AAVMF, and the riscv64 image in QEMU's RISC-V `virt` machine with edk2. The keyboard, the framebuffer and the firmware calls are the standard ones a PC
   (or an Arm server's UEFI and ACPI) provides, but no physical machine has confirmed them.
-- The x86-64 image is soft-float, so the renderer is integer-only; the aarch64 image has NEON and draws the same
-  integer frames.
+- The x86-64 image is soft-float, so the renderer is integer-only; the aarch64 image has NEON, the riscv64 image
+  hardware floating point, and both draw the same integer frames.
 - The firmware watchdog is turned off; the step budget is the only watchdog.
 
 **Looks**
@@ -320,8 +330,9 @@ These are stated plainly so nobody has to discover them.
 
 **Trademarks**
 
-- The terminal was named the "Sith Lord Terminal" until Phase 17; "Sith" is a third-party trademark (Lucasfilm), so it
-  is the Crimson Terminal now. The screenshot gallery's terminal shot predates the rename.
+- The terminal had another name until Phase 17. That name held a third-party trademark (a film franchise's), so it is
+  the Crimson Terminal now, in the program, in these pages and in the screenshot gallery (`docs/ip-audit.md` at the
+  repository's root has the detail).
 
 **Licences**
 

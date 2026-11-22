@@ -8,8 +8,10 @@
 # speech pack and a spoken clip, which no other check has). These jobs run side by side:
 # - page: tsc, oxlint, the 1,300-test suite, the single-file build with its no-server-code check, the host's smoke
 #   test, and the self-healing agent's own tests;
-# - rust: the OS workspace's tests on CPU and GPU (lavapipe) and clippy on every target, the native crates' tests,
-#   and the WebAssembly modules rebuilt and compared with the committed ones (the air-gap check);
+# - rust: every crate's licence, read from its own manifest in the registry and held to the policy and to the
+#   committed inventory (tools/license/gate.mjs crates --check), the OS workspace's tests on CPU and GPU (lavapipe)
+#   and clippy on every target, the native crates' tests, and the WebAssembly modules rebuilt and compared with the
+#   committed ones (the air-gap check);
 # - fvps: the formal step's fast parts: the SMT theorems, the LLVM-IR call graph and the WebAssembly air gap;
 # - browser: the built page in the runner's Chrome on the software WebGPU adapter (tools/browser/smoke.mjs): the 3D
 #   city booted as a desktop, as an iPhone, from disk, at the Ultra tier with Peak pinned above it, on a faked big
@@ -102,10 +104,10 @@ jobs:
             native/kv-pager/target
             native/kv-pager-wasm/target
           key: rust-${{ runner.os }}-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.lock') }}
-      - name: The OS workspace's tests (CPU and GPU), clippy, the native crates, the WebAssembly modules
+      - name: Every crate's licence, read from the registry and held to the policy; then the OS workspace's tests (CPU and GPU), clippy, the native crates, the WebAssembly modules
         env:
           NOIR_REQUIRE_GPU: '1'
-        run: sh tools/selfheal/checks.sh rust-test rust-clippy native-test fvps-wasm
+        run: sh tools/selfheal/checks.sh crate-licences rust-test rust-clippy native-test fvps-wasm
 
   fvps:
     runs-on: ubuntu-24.04
