@@ -12,17 +12,17 @@
  */
 import {
   ACESFilmicToneMapping, BoxGeometry, BufferAttribute, BufferGeometry, Color, CylinderGeometry,
-  Float32BufferAttribute, HemisphereLight, IcosahedronGeometry, InstancedBufferAttribute, InstancedMesh, Matrix4,
+  Box3, Float32BufferAttribute, HemisphereLight, IcosahedronGeometry, InstancedBufferAttribute, InstancedBufferGeometry, InstancedMesh, Matrix4,
   Mesh, MeshStandardNodeMaterial, Object3D, PCFShadowMap, PMREMGenerator, PerspectiveCamera, PlaneGeometry,
-  PointLight, SRGBColorSpace, Scene, SphereGeometry, Vector2, Vector3, WebGPURenderer, type Node, type NodeBuilder, type UniformNode,
+  PointLight, SRGBColorSpace, Scene, Sphere, SphereGeometry, Vector2, Vector3, WebGPURenderer, type Node, type NodeBuilder, type UniformNode,
 } from 'three/webgpu'
 import {
-  Fn, attribute, exp, float, fog, max, mix, positionLocal, positionPrevious, positionView, positionWorld, select, sin, step,
+  Fn, attribute, cos, exp, float, fog, max, mix, normalLocal, positionLocal, positionPrevious, positionView, positionWorld, select, sin, smoothstep, step,
   time, uniform, vec3,
 } from 'three/tsl'
 import { SkyMesh } from 'three/addons/objects/SkyMesh.js'
 import { SKY_CEILINGS, buildingMaterial, groundMaterial, waterMaterial, type RealLight } from './materials.ts'
-import { clusterCityLights, LAMP, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
+import { clusterCityLights, LAMP, LampIndex, lampHead, roomFixtures } from './cityLights.ts'
 import { clampTaps, createSun } from './sunShadow.ts'
 import type { SunLight } from 'three/addons/lights/SunLight.js'
 import { workplaces, type Workplace } from './interiors.ts'
@@ -34,6 +34,7 @@ import { SPILL, bakePaintedLight, type PaintInput } from './region/paintedLight.
 import type { RegionTransit } from './region/transit.ts'
 import type { RegionPack } from './region/pack.ts'
 import { windowFurniture, type StreetGrid } from './region/streets.ts'
+import { PROP_FOLD, propKeep, tileFurniture, tileWithin, type TiledFurniture } from './region/propTiles.ts'
 import { SIGNAL } from '../02_Define_The_Rules/civic.ts'
 import { applyCodeDissolve } from './codeDissolve.ts'
 import { applyMatrixMode, createMatrixMode, type MatrixMode } from './matrixMode.ts'
@@ -70,11 +71,22 @@ export function skyAtFarPlane(sky: SkyMesh, reversedDepth: boolean): void {
  */
 export const PROP_DISSOLVE_INK: readonly [number, number, number] = Object.freeze([0.3, 0.95, 0.6] as [number, number, number])
 
-/** The code dissolve's amounts, one float per instance of each prop mesh (0 solid, 1 gone): the engine writes them. */
+/**
+ * The code dissolve's amounts of one prop list, one float per prop in list order (0 solid, 1 gone): the engine writes
+ * `array` and then marks the range it wrote (`mark(start, end)`, end exclusive), which re-uploads the meshes that draw
+ * any of it. Each mesh of the list (one, or one per tile of a generated region's map: propTiles.ts) reads its own run of
+ * the list through a view of the same array.
+ */
+export interface PropAmounts {
+  readonly array: Float32Array
+  mark(start: number, end: number): void
+}
+
+/** The code dissolve's amounts of each prop list: the engine writes them. */
 export interface PropDissolve {
-  lamps: InstancedBufferAttribute
-  trees: InstancedBufferAttribute
-  signals: InstancedBufferAttribute
+  lamps: PropAmounts
+  trees: PropAmounts
+  signals: PropAmounts
 }
 
 export interface Gpu {
@@ -203,7 +215,15 @@ export interface World {
   scene: Scene
   camera: PerspectiveCamera
   boxes: Box[]
+  /**
+   * Every street prop the page draws: the city's, or a generated region's along every street of its map, listed tile by
+   * tile (region/propTiles.ts). Index i of the three lists in turn is the pole index (contact.ts PoleIndex) and the
+   * code dissolve's slot (dissolve.ts poleSlot).
+   */
   furniture: Furniture
+  /** The props the physics realm stands its pole sensors on, which the ghost view draws: the city's own furniture, or a
+   *  generated region's street window's (as a region's furniture was before its whole map was furnished). */
+  sensors: Furniture
   /** 0 by day, 1 at night: drives window, shop, lamp and signal-head emission. */
   night: UniformNode<'float', number>
   /** Where the real lamp light reaches (materials.ts RealLight): the painted pools fade out inside it. With no lamp lit
@@ -232,6 +252,14 @@ export interface World {
    * beyond the farthest lit lamp.
    */
   setLampLights(count: number): void
+  /**
+   * How far from the focus a generated region's street furniture is drawn, m (governor propReach): a tile of props with
+   * ground within it is shown, and each prop folds down to its foot over the last PROP_FOLD metres. The first reach is
+   * taken at once; a later one is glided to by update() (REACH_GLIDE metres a second of its `signalSeconds`), so a tier
+   * step's band of props grows or folds rather than popping. Tiles are shown and hidden and the reach is a uniform, so
+   * the change never recompiles. The city's furniture is always drawn.
+   */
+  setPropReach(metres: number): void
   /** Operator tuning read every update(): scale factors (1 = the authored look). Bounds in LIGHT_TUNE_RANGE. */
   tuning: LightTuning
   /**
@@ -241,17 +269,19 @@ export interface World {
    */
   resorted: readonly InstancedMesh[]
   /**
-   * Re-centres the sky on another camera before it draws (local split screen: each viewport's head). update() centres it
-   * on `camera`; the lamp lights and the building sort stay where update() put them, and the sun's shadow cascades are
-   * fitted to whichever camera three renders (sunShadow.ts), so each viewport gets shadows of its own.
+   * Re-centres the sky and a region's street furniture (the tiles shown, their fold, and with them the painted pools'
+   * fade) on another camera before it draws (local split screen: each viewport's head). update() centres them on
+   * `camera` and the focus; the lamp lights stay on the lamps update() chose, dimmed for this camera as their poles fold
+   * (a lit lamp past its reach goes dark for its draw), the building sort stays where update() put it, and the sun's
+   * shadow cascades are fitted to whichever camera three renders (sunShadow.ts), so each viewport gets shadows of its own.
    */
   follow(camera: PerspectiveCamera): void
   /** The region drawn instead of the procedural city (?region), with its counts; null for the city. */
   region: RegionScene | null
   /**
-   * The code dissolve (codeDissolve.ts) of the props: per-instance amounts the engine writes when the user's body is
-   * inside a lamp, a tree or a signal pole (instance i is furniture list index i). Empty in a region. View-only.
-   * Buildings never dissolve: walls are solid by law.
+   * The code dissolve (codeDissolve.ts) of the props: per-prop amounts the engine writes when the user's body is
+   * inside a lamp, a tree or a signal pole (slot i is furniture list index i, whichever tile's mesh draws it). Empty in
+   * a region without furniture. View-only. Buildings never dissolve: walls are solid by law.
    */
   dissolve: PropDissolve
   /**
@@ -360,8 +390,41 @@ function assemble(parts: [BufferGeometry, number][]): BufferGeometry {
   return out
 }
 
+/**
+ * How fast a generated region's prop reach moves to a new one, m a second of the realm's clock (World.setPropReach):
+ * when the tier steps, the band between the two reaches grows out of the street or folds back into it, one fold's
+ * depth (PROP_FOLD, propTiles.ts) a second, never all at once. A step counts at most REACH_STEP_MAX seconds, so a
+ * frame that hitched does not skip the glide.
+ */
+export const REACH_GLIDE = PROP_FOLD
+export const REACH_STEP_MAX = 0.25
+
+/** A generated region's tiles of props (propTiles.ts) and their fold by distance (PROP_FOLD): the focus (x, z, engine metres) and the reach, m. */
+interface PropTiles {
+  tiled: TiledFurniture
+  focus: UniformNode<'vec2', Vector2>
+  reach: UniformNode<'float', number>
+}
+
+/** A prop list's amounts (PropAmounts) and the instanced attributes that read its runs. */
+function propAmounts(count: number): PropAmounts & { run(start: number, end: number): InstancedBufferAttribute } {
+  const array = new Float32Array(count)
+  const runs: { start: number; end: number; attribute: InstancedBufferAttribute }[] = []
+  return {
+    array,
+    run(start, end) {
+      const attribute = new InstancedBufferAttribute(array.subarray(start, end), 1)
+      runs.push({ start, end, attribute })
+      return attribute
+    },
+    mark(start, end) {
+      for (const r of runs) if (r.start < end && start < r.end) r.attribute.needsUpdate = true
+    },
+  }
+}
+
 /** Matrices for [x, z, yaw-or-scale] entries. Trees pass `scaleOf` and get a pseudo-random yaw. */
-function placed(list: [number, number, number][], scaleOf?: (e: [number, number, number]) => number): Matrix4[] {
+function placed(list: readonly (readonly [number, number, number])[], scaleOf?: (e: readonly [number, number, number]) => number): Matrix4[] {
   const o = new Object3D()
   return list.map((e) => {
     o.position.set(e[0], 0, e[1])
@@ -382,14 +445,51 @@ function instanced(geo: BufferGeometry, mat: MeshStandardNodeMaterial, matrices:
   return mesh
 }
 
-/** A fresh, all-solid dissolve attribute for `instances` slots. */
-const dissolveAttribute = (instances: number): InstancedBufferAttribute => new InstancedBufferAttribute(new Float32Array(instances), 1)
+/** A tree's sway in the wind at a place (x, z) and height y over the ground, m: the canopy's alone (part 1). */
+const swayAt = (x: Node<'float'>, y: Node<'float'>, z: Node<'float'>, part: Node<'float'>): Node<'vec3'> => {
+  const w = sin(time.mul(1.3).add(x.mul(0.21)).add(z.mul(0.17))).mul(0.07).mul(max(y.sub(2.5), 0))
+  return vec3(w, 0, w.mul(0.6)).mul(step(0.5, part))
+}
 
-function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>, matrixMode: MatrixMode, detail: Readonly<WorldDetail>): { meshes: InstancedMesh[]; dissolve: PropDissolve } {
+/**
+ * A generated region's prop material places its own instances: a tile is a plain mesh over instanced geometry, the
+ * instance's `place` attribute its foot (x, z), its yaw and its scale, because three builds an InstancedMesh's shader
+ * for each mesh (its cache key holds the mesh's id) and a map has hundreds of tiles; as plain meshes every tile of a
+ * kind shares one shader and one pipeline, built before the first frame. On the placed prop, the trees' sway (`swayed`),
+ * then the fold onto the foot as it nears the reach (PROP_FOLD), so a tile shown or hidden at the reach's edge holds
+ * only points on the ground. The geometry's normal turns with the yaw, as three's instancing turns it (a scale is the
+ * same on every axis, so it never bends one), so every reader of it sees the prop as it stands: the lit normal, rain
+ * mode's plane (matrixMode.ts) and the roughness of a curved face.
+ * A pass that writes motion vectors places, sways and folds the previous position the same way: the props never move,
+ * so the velocity buffer reads no motion from any of it.
+ */
+function placeInTiles(material: MeshStandardNodeMaterial, tiles: PropTiles, swayed: ((at: Node<'vec3'>) => Node<'vec3'>) | null): void {
+  const place = attribute('place', 'vec4')
+  const c = cos(place.z), s = sin(place.z)
+  const turn = (p: Node<'vec3'>): Node<'vec3'> => vec3(c.mul(p.x).add(s.mul(p.z)), p.y, c.mul(p.z).sub(s.mul(p.x)))
+  const at = (p: Node<'vec3'>): Node<'vec3'> => turn(p).mul(place.w).add(vec3(place.x, 0, place.y))
+  const ground = vec3(place.x, 0, place.y)
+  const keep = float(1).sub(smoothstep(tiles.reach.sub(PROP_FOLD), tiles.reach, place.xy.sub(tiles.focus).length()))
+  material.positionNode = Fn((builder: NodeBuilder) => {
+    normalLocal.assign(turn(normalLocal))
+    const own = at(positionLocal).toVar()
+    const wind = swayed ? swayed(own) : vec3(0, 0, 0)
+    if (needsPrevious(builder)) positionPrevious.assign(mix(ground, at(positionPrevious).add(wind), keep))
+    return mix(ground, own.add(wind), keep)
+  })()
+}
+
+/**
+ * The street furniture's meshes and their dissolve amounts. The city's (`tiles` null): one instanced mesh of each kind,
+ * every prop. A generated region's: one plain mesh of each kind per tile (placeInTiles), sharing the kind's material
+ * and shape, its instances its run of the tiled lists (none for an empty run), bounded by a sphere round its props so
+ * the camera's frustum and each shadow cascade cull it whole. Returns the meshes per tile (the city's one), in the
+ * order lamps, trees, signals.
+ */
+function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', number>, signalClock: UniformNode<'float', number>, matrixMode: MatrixMode, detail: Readonly<WorldDetail>, tiles: PropTiles | null): { meshes: (Mesh | null)[][]; dissolve: PropDissolve } {
   const part = attribute('part', 'float')
-  // The code dissolve: a per-instance amount, read by the helper in every stage; the origin is the instance's own
-  // (positionLocal × 0, which the instance matrix maps to where the pole stands), so a gone prop folds to its foot.
-  const dissolve: PropDissolve = { lamps: dissolveAttribute(f.lamps.length), trees: dissolveAttribute(f.trees.length), signals: dissolveAttribute(f.signals.length) }
+  // The code dissolve: a per-instance amount, read by the helper in every stage, each mesh's run of its list's amounts.
+  const dissolve = { lamps: propAmounts(f.lamps.length), trees: propAmounts(f.trees.length), signals: propAmounts(f.signals.length) }
   const amount = attribute('dissolve', 'float')
   const origin = positionLocal.mul(0)
 
@@ -404,7 +504,7 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   lampMat.metalnessNode = float(0.6)
   lampMat.roughnessNode = float(0.45)
   lampMat.emissiveNode = vec3(1.0, 0.82, 0.55).mul(step(0.5, part).mul(night).mul(6))
-  lampGeo.setAttribute('dissolve', dissolve.lamps)
+  if (tiles) placeInTiles(lampMat, tiles, null)
   applyMatrixMode(lampMat, matrixMode.globalState)
   applyCodeDissolve(lampMat, amount, origin, PROP_DISSOLVE_INK)
 
@@ -419,15 +519,16 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   const leafTone = fbm.sample(positionWorld.xz.div(7)).r
   treeMat.colorNode = select(part.greaterThan(0.5), mix(vec3(0.12, 0.2, 0.07), vec3(0.24, 0.32, 0.1), leafTone), vec3(0.2, 0.15, 0.11))
   treeMat.roughnessNode = float(0.85)
-  const sway = sin(time.mul(1.3).add(positionWorld.x.mul(0.21)).add(positionWorld.z.mul(0.17))).mul(0.07).mul(max(positionLocal.y.sub(2.5), 0))
-  const swayed = vec3(sway, 0, sway.mul(0.6)).mul(step(0.5, part))
-  treeMat.positionNode = Fn((builder: NodeBuilder) => {
-    // A motion-vector pass sees the canopy where it sways now in both frames: the sway itself moves millimetres per
-    // exposure, but a previous position without it would read the whole offset as motion.
-    if (needsPrevious(builder)) positionPrevious.assign(positionPrevious.add(swayed))
-    return positionLocal.add(swayed)
-  })()
-  treeGeo.setAttribute('dissolve', dissolve.trees)
+  if (tiles) placeInTiles(treeMat, tiles, (at) => swayAt(at.x, at.y, at.z, part))
+  else {
+    const swayed = swayAt(positionWorld.x, positionLocal.y, positionWorld.z, part)
+    treeMat.positionNode = Fn((builder: NodeBuilder) => {
+      // A motion-vector pass sees the canopy where it sways now in both frames: the sway itself moves millimetres per
+      // exposure, but a previous position without it would read the whole offset as motion.
+      if (needsPrevious(builder)) positionPrevious.assign(positionPrevious.add(swayed))
+      return positionLocal.add(swayed)
+    })()
+  }
   applyMatrixMode(treeMat, matrixMode.globalState)
   applyCodeDissolve(treeMat, amount, origin, PROP_DISSOLVE_INK)
 
@@ -440,7 +541,7 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
     [new SphereGeometry(0.1, lensW, lensH).scale(1, 1, 0.4).translate(0, 4.42, 0.25), 3],
     [new SphereGeometry(0.1, lensW, lensH).scale(1, 1, 0.4).translate(0, 4.09, 0.25), 4],
   ])
-  signalGeo.setAttribute('signalAxis', new InstancedBufferAttribute(new Float32Array(f.signals.map((s) => s[3])), 1))
+  const axes = new Float32Array(f.signals.map((s) => s[3]))
   const signalMat = new MeshStandardNodeMaterial()
   const ns = attribute('signalAxis', 'float').greaterThan(0.5)
   const ph = signalClock.mod(SIGNAL.cycle)
@@ -458,15 +559,74 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
   signalMat.roughnessNode = select(isLens, float(0.15), float(0.5))
   signalMat.metalnessNode = float(0.4)
   signalMat.emissiveNode = lens(2, red, [1.0, 0.08, 0.04]).add(lens(3, amber, [1.0, 0.55, 0.05])).add(lens(4, green, [0.1, 1.0, 0.45]))
-  signalGeo.setAttribute('dissolve', dissolve.signals)
+  if (tiles) placeInTiles(signalMat, tiles, null)
   applyMatrixMode(signalMat, matrixMode.globalState)
   applyCodeDissolve(signalMat, amount, origin, PROP_DISSOLVE_INK)
 
-  const meshes = [
-    instanced(lampGeo, lampMat, placed(f.lamps), 'StreetLamps'),
-    instanced(treeGeo, treeMat, placed(f.trees, (e) => e[2]), 'StreetTrees'),
-    instanced(signalGeo, signalMat, placed(f.signals.map((s) => [s[0], s[1], s[2]])), 'TrafficSignals'),
-  ]
+  if (!tiles) {
+    lampGeo.setAttribute('dissolve', dissolve.lamps.run(0, f.lamps.length))
+    treeGeo.setAttribute('dissolve', dissolve.trees.run(0, f.trees.length))
+    signalGeo.setAttribute('dissolve', dissolve.signals.run(0, f.signals.length))
+    signalGeo.setAttribute('signalAxis', new InstancedBufferAttribute(axes, 1))
+    return {
+      meshes: [[
+        instanced(lampGeo, lampMat, placed(f.lamps), 'StreetLamps'),
+        instanced(treeGeo, treeMat, placed(f.trees, (e) => e[2]), 'StreetTrees'),
+        instanced(signalGeo, signalMat, placed(f.signals.map((s) => [s[0], s[1], s[2]])), 'TrafficSignals'),
+      ]],
+      dissolve,
+    }
+  }
+
+  // Each prop's place for placeInTiles: its foot, its yaw and its scale (a tree's yaw from its size, as the city's).
+  const places = (list: readonly (readonly number[])[], tree: boolean): Float32Array => {
+    const out = new Float32Array(list.length * 4)
+    list.forEach((e, i) => out.set([e[0], e[1], tree ? e[2] * 7.3 : e[2], tree ? e[2] : 1], 4 * i))
+    return out
+  }
+  const placeOf = { lamps: places(f.lamps, false), trees: places(f.trees, true), signals: places(f.signals, false) }
+  for (const g of [lampGeo, treeGeo, signalGeo]) g.computeBoundingSphere()
+  // A tile mesh of a kind over the run [start, end) of its list: the shape's attributes shared, its own views of the
+  // places, the dissolve amounts and the signals' axes, and a sphere round every instance it holds.
+  const tileMesh = (kind: 'lamps' | 'trees' | 'signals', base: BufferGeometry, mat: MeshStandardNodeMaterial, [start, end]: readonly [number, number], name: string): Mesh | null => {
+    if (end <= start) return null
+    const g = new InstancedBufferGeometry()
+    for (const [n, a] of Object.entries(base.attributes)) g.setAttribute(n, a)
+    g.setIndex(base.index)
+    const place = placeOf[kind].subarray(4 * start, 4 * end)
+    g.setAttribute('place', new InstancedBufferAttribute(place, 4))
+    g.setAttribute('dissolve', dissolve[kind].run(start, end))
+    if (kind === 'signals') g.setAttribute('signalAxis', new InstancedBufferAttribute(axes.subarray(start, end), 1))
+    g.instanceCount = end - start
+    // The shape's sphere at each instance (its centre turned, scaled and moved; its radius scaled), and a little more
+    // for the canopy's sway.
+    const own = base.boundingSphere!
+    const box = new Box3()
+    const centre = new Vector3()
+    for (let i = 0; i < place.length; i += 4) box.expandByPoint(centre.set(place[i], own.center.y, place[i + 1]))
+    box.getCenter(centre)
+    let radius = 0
+    for (let i = 0; i < place.length; i += 4) {
+      const reachOf = Math.hypot(place[i] - centre.x, place[i + 1] - centre.z) + (own.center.length() + own.radius) * place[i + 3]
+      radius = Math.max(radius, reachOf)
+    }
+    g.boundingSphere = new Sphere(centre.clone(), radius + 0.5)
+    g.boundingBox = new Box3().setFromCenterAndSize(centre.clone(), new Vector3(2 * radius + 1, 2 * radius + 1, 2 * radius + 1))
+    const m = new Mesh(g, mat)
+    m.castShadow = true
+    m.receiveShadow = true
+    m.name = name
+    // A tile stands at the origin for good: its matrices are never recomposed, so hundreds of tiles cost the scene's
+    // matrix pass nothing each frame.
+    m.matrixAutoUpdate = false
+    m.matrixWorldAutoUpdate = false
+    return m
+  }
+  const meshes = tiles.tiled.tiles.map((r) => [
+    tileMesh('lamps', lampGeo, lampMat, r.lamps, `StreetLamps ${r.i},${r.j}`),
+    tileMesh('trees', treeGeo, treeMat, r.trees, `StreetTrees ${r.i},${r.j}`),
+    tileMesh('signals', signalGeo, signalMat, r.signals, `TrafficSignals ${r.i},${r.j}`),
+  ])
   return { meshes, dissolve }
 }
 
@@ -478,10 +638,12 @@ function furnitureMeshes(f: Furniture, fbm: FbmSet, night: UniformNode<'float', 
  * them, whose ceilings get fixtures (the city's are its seed's, interiors.ts workplaces); `transit` (region/transit.ts)
  * adds the window's painted crossings and its strip to the region's meshes; `interiors`, every lot of the window that
  * is a room, a shop or a home (`fixtures`: its ceiling hangs real lights, as a workplace's does), for the window's
- * painted light (region/paintedLight.ts), which a region with a street window always has. `detail`: FULL_WORLD, or
- * LITE_WORLD for a lite device profile.
+ * painted light (region/paintedLight.ts), which a region with a street window always has; `map`, the whole map's street
+ * grid (region/streets.ts mapStreetGrid), along every street of which the region's lamps, trees and signals stand, drawn
+ * in tiles by distance (World.setPropReach; without it, the window's). `detail`: FULL_WORLD, or LITE_WORLD for a lite
+ * device profile.
  */
-export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[]; transit?: RegionTransit | null; interiors?: PaintInput['interiors'] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
+export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pack: RegionPack; layout: RegionLayout; streets?: StreetGrid | null; map?: StreetGrid | null; plan?: readonly Building[]; rooms?: readonly Workplace[]; transit?: RegionTransit | null; interiors?: PaintInput['interiors'] } | null = null, detail: Readonly<WorldDetail> = FULL_WORLD): World {
   const scene = new Scene()
   const camera = new PerspectiveCamera(62, 1, 0.1, 2400)
   const plan = region ? [...(region.plan ?? [])] : generateBuildings(seed)
@@ -495,9 +657,15 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     skies.set(k * 1e4 + m, new Vector3((k + 0.5) * CITY.pitch, y1, (m + 0.5) * CITY.pitch))
   }
   SKY_CEILINGS.forEach((u, i) => u.value.copy([...skies.values()][i] ?? new Vector3(0, -1e9, 0)))
-  // A region's street furniture stands along its street window (region/streets.ts), where its people walk; a surveyed
-  // region without one has none.
-  const furniture: Furniture = region ? (region.streets ? windowFurniture(region.streets, seed) : { lamps: [], trees: [], signals: [] }) : streetFurniture(seed)
+  // A generated region's street furniture stands along every street of its map (region/streets.ts windowFurniture over
+  // the whole map's grid; the window's without one), listed tile by tile (region/propTiles.ts) for the meshes below; the
+  // physics realm's pole sensors and the ghost view stand along the window alone, as they did before the map was
+  // furnished (`sensors`). A surveyed region without a window has none.
+  const none: Furniture = { lamps: [], trees: [], signals: [] }
+  const propGrid = region ? region.map ?? region.streets ?? null : null
+  const tiled = propGrid ? tileFurniture(windowFurniture(propGrid, seed), propGrid) : null
+  const furniture: Furniture = region ? tiled?.furniture ?? none : streetFurniture(seed)
+  const sensors: Furniture = region ? (region.streets ? windowFurniture(region.streets, seed) : none) : furniture
   const night = uniform(0)
   const signalClock = uniform(0)
   // Where the real lamp light reaches (below): the focus and the farthest lit lamp's distance, for the ground's pools.
@@ -629,19 +797,27 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     homeSlots.needsUpdate = true
     homeStyles.needsUpdate = true
   }
+  // A generated region's props are drawn by distance (showProps below): the focus of the view being drawn and the reach.
+  const propFocus = uniform(new Vector2(NO_REAL_LIGHT, NO_REAL_LIGHT))
+  const propReach = uniform(0)
   // The window's painted light (region/paintedLight.ts): the lamps' pools, the frontages' spill and the lit floors,
-  // baked once into one picture the region's ground reads. The pools fade inside the real light's reach, as the city
-  // ground's do; the floors under real fixtures show only while those are off (setLampLights).
+  // baked once into one picture the region's ground reads. The pools are the window's lamps' (sensors: the picture
+  // holds each of their pools whole, PAINT_MARGIN), fading inside the real light's reach, as the city ground's do, and
+  // past the prop reach, as their poles fold (propKeep); the floors under real fixtures show only while those are off
+  // (setLampLights).
   const paintFloors = uniform(1)
   let paint: RegionPaint | null = null
   if (region?.streets) {
     const picture = bakePaintedLight({
-      window: region.streets, lamps: furniture.lamps, interiors: region.interiors ?? [],
+      window: region.streets, lamps: sensors.lamps, interiors: region.interiors ?? [],
       frontages: regionFrontages(region.pack, region.layout, paintBounds(region.streets), SPILL.reach),
     })
     const map = paintTexture(picture)
     renderer.initTexture(map)
-    paint = { originX: picture.originX, originZ: picture.originZ, size: picture.size, map, night, real: realLight, floors: paintFloors }
+    paint = {
+      originX: picture.originX, originZ: picture.originZ, size: picture.size, map, night, real: realLight, floors: paintFloors,
+      props: tiled ? { focus: propFocus, reach: propReach } : null,
+    }
   }
   const regionScene = region ? regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState, region.transit ?? null, paint) : null
   if (regionScene) for (const m of regionScene.meshes) scene.add(m)
@@ -661,13 +837,42 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   const lake = new Mesh(new PlaneGeometry(3200, lakeDepth).rotateX(-Math.PI / 2).translate(CITY_CENTER, LAKE.water, north - lakeDepth / 2), applyMatrixMode(waterMaterial(fbm), matrixMode.globalState))
   lake.receiveShadow = true
   lake.name = 'Lake'
-  // A region without street furniture has empty dissolve attributes (nothing to write, nothing drawn).
-  let dissolve: PropDissolve = { lamps: dissolveAttribute(0), trees: dissolveAttribute(0), signals: dissolveAttribute(0) }
   if (!region) scene.add(lake)
-  if (!region || region.streets) {
-    const props = furnitureMeshes(furniture, fbm, night, signalClock, matrixMode, detail)
-    for (const mesh of props.meshes) scene.add(mesh)
-    dissolve = props.dissolve
+  // The street furniture: the city's in one mesh of each kind, always drawn; a generated region's in one of each kind per
+  // tile, shown while the tile has ground within the prop reach of the focus (showProps, from update() and follow()),
+  // each prop folding to its foot over the reach's last PROP_FOLD metres. A region without furniture draws none and its
+  // dissolve amounts are empty (nothing to write).
+  const props = !region || tiled ? furnitureMeshes(furniture, fbm, night, signalClock, matrixMode, detail, tiled ? { tiled, focus: propFocus, reach: propReach } : null) : null
+  const dissolve: PropDissolve = props?.dissolve ?? { lamps: { array: new Float32Array(0), mark: () => {} }, trees: { array: new Float32Array(0), mark: () => {} }, signals: { array: new Float32Array(0), mark: () => {} } }
+  const propMeshes = props?.meshes ?? []
+  for (const kinds of propMeshes) for (const mesh of kinds) if (mesh) scene.add(mesh)
+  // Which tiles a focus needs (none until the first update), and the fold's focus with them. The city's are always drawn.
+  const showProps = (x: number, z: number) => {
+    if (!tiled) return
+    if (Number.isFinite(x) && Number.isFinite(z)) propFocus.value.set(x, z)
+    tiled.tiles.forEach((t, n) => {
+      const on = tileWithin(t, x, z, propReach.value)
+      for (const mesh of propMeshes[n]) if (mesh) mesh.visible = on
+    })
+  }
+  for (const kinds of tiled ? propMeshes : []) for (const mesh of kinds) if (mesh) mesh.visible = false
+  let shownX = Number.NaN, shownZ = Number.NaN
+  // The reach asked for (setPropReach); update() glides the drawn one to it (REACH_GLIDE) on the realm's clock.
+  let reachWanted = 0, reachSeconds = Number.NaN
+  const setPropReach = (metres: number) => {
+    reachWanted = Number.isFinite(metres) ? Math.max(0, metres) : 0
+    // While nothing is drawn (the boot's first tier, before any glide) the reach is taken at once.
+    if (propReach.value === 0) {
+      propReach.value = reachWanted
+      showProps(shownX, shownZ)
+    }
+  }
+  const glideReach = (seconds: number) => {
+    const dt = seconds - reachSeconds
+    reachSeconds = seconds
+    const gap = reachWanted - propReach.value
+    if (gap === 0 || !(dt > 0)) return
+    propReach.value += Math.sign(gap) * Math.min(Math.abs(gap), REACH_GLIDE * Math.min(dt, REACH_STEP_MAX))
   }
 
   // Real light after dark from the lamps nearest the player (as many as the tier allows: setLampLights), so the street,
@@ -690,22 +895,26 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     return l
   })
   if (detail.lampLights > 0) clusterCityLights(renderer, scene)
-  const lampHeads = furniture.lamps.map(lampHead)
+  // A boot that lights no lamp (lite: LITE_WORLD) never asks for one, so it builds no heads and an empty index.
+  const lampHeads = detail.lampLights > 0 ? furniture.lamps.map(lampHead) : []
+  // The heads in cells (cityLights.ts LampIndex): a region's map has some 23,000 lamps, too many to sort at each reselect.
+  const lamps = new LampIndex(lampHeads)
   const nearest: number[] = []
-  const lampScratch = { d2: new Float32Array(lampHeads.length), order: new Uint32Array(lampHeads.length) }
   let litLamps = 0
+  /** A lit lamp's intensity this update, before the prop reach dims it (dimBeyondReach). */
+  let lampBright = 0
   let placedCount = -1, placedX = Number.NaN, placedZ = Number.NaN
   const setLampLights = (count: number) => {
     litLamps = Math.max(0, Math.min(lampLights.length, Math.floor(count)))
     for (const l of fixtureLights) l.visible = litLamps > 0
     paintFloors.value = litLamps > 0 ? 0 : 1
   }
-  // The nearest lamps are chosen again when the focus has moved RESELECT_M or the count changed (a sort of every lamp
-  // head, cityLights.ts nearestLamps); the brightness follows the night every update.
+  // The nearest lamps are chosen again when the focus has moved RESELECT_M or the count changed (the lamp index, the
+  // same choice as a sort of every lamp head, cityLights.ts nearestLamps); the brightness follows the night every update.
   const placeLampLights = (fx: number, fz: number, nightness: number) => {
     const want = nightness > 0.002 ? litLamps : 0
     if (want !== placedCount || (want > 0 && (fx - placedX) ** 2 + (fz - placedZ) ** 2 > RESELECT_M * RESELECT_M)) {
-      realLight.radius.value = Math.sqrt(nearestLamps(lampHeads, fx, fz, want, nearest, lampScratch))
+      realLight.radius.value = Math.sqrt(lamps.nearest(fx, fz, want, nearest))
       if (want > 0) realLight.focus.value.set(fx, fz)
       else realLight.focus.value.set(NO_REAL_LIGHT, NO_REAL_LIGHT)
       for (let n = 0; n < lampLights.length; n++) {
@@ -720,7 +929,17 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
       }
       placedCount = want; placedX = fx; placedZ = fz
     }
-    for (let n = 0; n < nearest.length; n++) lampLights[n].intensity = LAMP.candela * nightness
+    lampBright = LAMP.candela * nightness
+    for (let n = 0; n < nearest.length; n++) lampLights[n].intensity = lampBright
+  }
+  // In a generated region a lit lamp shines only as far as its pole stands for the view being drawn (propKeep: whole
+  // inside the reach's fold, out past it), so no pool of real light lies under a lamp that view does not draw.
+  const dimBeyondReach = (fx: number, fz: number) => {
+    if (!tiled || !Number.isFinite(fx) || !Number.isFinite(fz)) return
+    for (let n = 0; n < nearest.length; n++) {
+      const [x, , z] = lampHeads[nearest[n]]
+      lampLights[n].intensity = lampBright * propKeep(Math.hypot(x - fx, z - fz), propReach.value)
+    }
   }
 
   const warm = new Color(1.0, 0.62, 0.36)
@@ -775,7 +994,11 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
     envSky.sunPosition.value.set(s.x, s.y, s.z)
     if (envProbe.refresh(hours) && scene.environment !== envProbe.target!.texture) scene.environment = envProbe.target!.texture
     scene.environmentIntensity = (0.12 + 0.28 * day) * fill * tuning.fill
+    glideReach(signalSeconds)
     placeLampLights(focusX, focusZ, 1 - day)
+    dimBeyondReach(focusX, focusZ)
+    shownX = focusX; shownZ = focusZ
+    showProps(focusX, focusZ)
 
     if (!region) sortBuildings(focusX, focusZ)
     // The sun light's position is its direction (it shines toward the origin); its two shadow cascades are fitted
@@ -785,7 +1008,11 @@ export function buildWorld(renderer: WebGPURenderer, seed: number, region: { pac
   }
 
   const setTextureSize = (size: number) => { fbm.setSize(size) }
-  const follow = (other: PerspectiveCamera) => { sky.position.copy(other.position) }
+  const follow = (other: PerspectiveCamera) => {
+    sky.position.copy(other.position)
+    showProps(other.position.x, other.position.z)
+    dimBeyondReach(other.position.x, other.position.z)
+  }
 
-  return { scene, camera, boxes, furniture, night, realLight, signalClock, matrixMode, sun, setTextureSize, setLampLights, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, setHomes, region: regionScene, dissolve, update }
+  return { scene, camera, boxes, furniture, sensors, night, realLight, signalClock, matrixMode, sun, setTextureSize, setLampLights, setPropReach, setShadowTaps, tuning, resorted: region ? [] : [buildings], follow, setHomes, region: regionScene, dissolve, update }
 }

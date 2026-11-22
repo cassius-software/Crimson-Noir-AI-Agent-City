@@ -2583,6 +2583,51 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   to two homes. Unverified on a real phone or GPU (the pictures are software
   WebGPU).
 
+- **Lakefront Metro's lamps, trees and signal poles stand along every street of the map, and the lamps nearest you
+  light wherever you walk.** They stood along the 640 m street window round the start alone, so the rest of the
+  2.56 km map had bare streets, dark after sunset. Now the street furniture is the whole map's (`streets.ts`
+  `windowFurniture` over `mapStreetGrid`: 45,844 props on seed 1337's metropolis, where its start's window had 2,696),
+  cut into 160 m tiles (`region/propTiles.ts`), and the page draws the tiles within a new quality knob's reach of you
+  (`governor.ts` `propReach`: 160 m on Lite, 220, 260, 320, 400 and 480 m from Minimal to Ultra, 520 m on Peak; a
+  uniform and shown or hidden meshes, so a tier change never recompiles). Each prop folds down to its foot over the
+  reach's last 40 m (`propTiles.ts` `PROP_FOLD`, `propKeep`), so a tile appears and goes holding only points on the
+  ground and the props grow up out of the street as you near them; when the tier changes the reach glides to the new
+  one at 40 m a second of the realm's clock (`world.ts` `REACH_GLIDE`, a step counting at most a quarter second), so
+  the band between the two grows or folds rather than popping. In split screen each viewport draws the tiles round its
+  own head (`World.follow`). A lit lamp's real light and its painted pool fade with its pole past the reach of the
+  view being drawn (`dimBeyondReach`, `regionWorld.ts` `paintedGlow`), so no light lies under a lamp that view does
+  not draw. A tile is one plain mesh of each kind over instanced geometry that places its own instances
+  (`placeInTiles`: foot, yaw and size per instance; the geometry's normal turned with the yaw as three's instancing
+  turns it, so lighting, rain mode's code planes and the shadow's normal bias see the prop as it stands), because
+  three builds an instanced mesh's shader for each mesh and a map has 256 tiles: every tile of a kind is the same
+  code, one pipeline built before the first frame (`shadowShaders.test.ts`). Each tile is culled by the camera and by
+  each shadow cascade as one sphere, and its matrices are never recomposed. At seed 1337's start Lite's reach holds 8
+  tiles, 24 meshes (about 15 drawn after the camera's culling, where the window drew its props in 3) and 1,475 props
+  (about 950 in view) where the window drew 2,696; on seeds 1337, 7 and 42, wherever the visitor stands, Lite's reach
+  holds at most nine tiles and under nine tenths of the props the start's window drew, and Peak's under five
+  windows' worth (47 tiles at the start, about 51 meshes drawn), of which the frustum draws a part. The lit lamps are
+  chosen from the map's lamps in 40 m cells (`cityLights.ts` `LampIndex`), the same lamps in the same order as a sort
+  of every head (400 choices from 80 places tested, ties among them; a focus beyond some 43,000 km of the map takes
+  the sort itself), about seventeen times faster on 23,000 lamps (0.29 ms against 4.9 ms a choice here); a lite boot,
+  which lights no lamp, builds no index. The physics realm's pole sensors and the ghost view keep the window's
+  furniture (`World.sensors`); the pole index, the contact pulse and the code dissolve read the map's, the dissolve
+  re-uploading only the tiles a change touches. The painted pools stay the window's lamps' (each pool whole inside
+  the picture). A tree's size now comes from where it stands (`streets.ts` `treeScale`), so a tree is the same size in
+  the window and the map. The city's furniture is as it was. Before the pull request an independent review found
+  seven faults (rain mode's planes on turned props, a tier step popping a band of props, real lamp light without its
+  pole in a far split-screen view, map lamps' pools cut at the painted picture's edge, a far focus stalling the lamp
+  index, cost figures measured against the wrong window, a test that could not fail); each is fixed with a test that
+  fails without the fix. New tests: `propTiles.test.ts` (12: the tiling, the reach, `propKeep`, the window's props
+  being the map's, the cost of every tier's reach on three seeds, the world's tiles, the reach's glide, follow, the
+  lamp lights and painted pools round each view, the dissolve, a surveyed region with no window and the city
+  unchanged), `LampIndex` against `nearestLamps` in `cityLights.test.ts` (3, far foci among them), every tile of a
+  kind building one shader with its normal turned in `shadowShaders.test.ts`, and `propReach` in `governor.test.ts`.
+  `dist/index.html` grows by 7,948 bytes, from 12,369,342 to 12,377,290; the limit in `tools/verify/page_dist.mjs`
+  is unchanged. Boot builds about 46,000 more props: in Node here the metropolis's world took about 25 to 95 ms longer
+  to build and the pole index 40 ms. Not there yet: the painted night light is still the window's, so beyond it the
+  ground under the lamps has no painted pool (Lite, which lights no real lamp, shows glowing lamp heads over unpainted
+  ground there), and the people and cars still live in the window. Unverified on a real phone or GPU.
+
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
   is drawn: "Thinking on this device" for the model kept in the page or the one the app carries, "Thinking with a model
