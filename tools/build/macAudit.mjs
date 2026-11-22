@@ -56,6 +56,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BANNED_STRINGS, BANNED_SYMBOLS, NETWORK_IMPORTS, PROCESS_IMPORTS, TINY, bannedStrings, compareVersions } from './linuxAudit.mjs'
+import { ASSET_LIMIT } from '../verify/site_budget.mjs'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const conf = (name) => JSON.parse(readFileSync(join(ROOT, 'src-tauri', name), 'utf8'))
@@ -69,8 +70,9 @@ export const MODEL_DIR = 'Contents/Resources/models/'
 export const MAC_FILES = Object.freeze(Object.keys(conf('tauri.model.conf.json').bundle.macOS.files).map((p) => `Contents/${p.replace(/^\//, '')}`).sort())
 /** The macOS the app promises (bundle.macOS.minimumSystemVersion): no slice may need a newer one. */
 export const MINIMUM = conf('tauri.conf.json').bundle.macOS.minimumSystemVersion
-/** GitHub refuses a release asset of 2 GiB or more. */
-export const ASSET_LIMIT = 2 * 1024 ** 3
+/** GitHub refuses a release asset of 2 GiB or more: the number is tools/verify/site_budget.mjs's, which every release
+ * workflow runs on the files it uploads. */
+export { ASSET_LIMIT }
 /** Where macOS keeps its own libraries, which every Mac has. */
 export const SYSTEM_PREFIXES = Object.freeze(['/System/Library/', '/usr/lib/'])
 /** Libraries the binary must not load, wherever they are. */
