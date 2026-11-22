@@ -4771,6 +4771,12 @@ test('images: textureSampleLevel is texture.ts\'s sample; a NaN coordinate or le
   assert.ok(e.slice(0, 4).every(Number.isFinite))
   const v = runImages(body, nanIns, only('sample-nan'), res).words
   assert.deepEqual(v.slice(0, 4), [PB, PB, PB, PB])
+  // A NaN level alone, the coordinate finite: texture.ts's in exact mode, poison under sample-nan.
+  const lvlIns = [fb(f32(0.3)), fb(f32(0.6)), NAN_BITS, 0]
+  const el = runImages(body, lvlIns, EXACT_RUN, res).words.map(bf)
+  assert.deepEqual(el.slice(0, 2), want(f32(0.3), f32(0.6), NaN, 0, t).slice(0, 2))
+  assert.ok(el.slice(0, 4).every(Number.isFinite))
+  assert.deepEqual(runImages(body, lvlIns, only('sample-nan'), res).words.slice(0, 4), [PB, PB, PB, PB])
 })
 
 test('images: bindings are checked as WebGPU checks them, and image builtins outside the subset are refused', () => {
@@ -4859,6 +4865,31 @@ test('quads: discard demotes a lane that runs on for its neighbours\' difference
   assert.deepEqual(v.words, [fb(2), fb(2), fb(10), 0, 1, 1, 1, 0])
 })
 
+test('quads: a texture store follows the same rule: helpers store nothing, a demoted lane stores only under helper-stores', () => {
+  const src = `
+    @group(1) @binding(5) var ts: texture_storage_2d<r32float, write>;
+    @fragment fn f(@builtin(position) pos: vec4<f32>, @location(0) v: vec4<f32>) -> @location(0) vec4<f32> {
+      let x = u32(pos.x - 0.5) % 2u;
+      let y = u32(pos.y - 0.5) % 2u;
+      if (v.x > 0.5 && v.x < 1.5) { discard; }
+      textureStore(ts, vec2<u32>(x, y), vec4<f32>(v.x + 10.0, 0.0, 0.0, 1.0));
+      return vec4<f32>(v.x);
+    }`
+  const quad = quadAt(0, 0, (l) => [l * l, 0, 0, 0], (l) => l === 3)
+  const texels = (options: RunOptions): number[] => {
+    const store = new ImageStore({ format: 'r32f', width: 2, height: 2, layers: 1, levels: 1, samples: 1 })
+    new Program(src, options).fragment(quad, { '1:5': { store, view: viewOf(store) } })
+    return [0, 1, 2, 3].map((l) => {
+      const out = [0, 0, 0, 0]
+      store.read(0, 0, l & 1, l >> 1, 0, out)
+      return out[0]
+    })
+  }
+  // Lane 1 (value 1) discards, lane 3 is a helper: neither stores in exact mode.
+  assert.deepEqual(texels(EXACT_RUN), [10, 0, 14, 0])
+  assert.deepEqual(texels(only('helper-stores')), [10, 11, 14, 0])
+})
+
 test('quads: a difference or implicit-level sample reached by only some lanes is a RunError (exact) or poison (derivatives)', () => {
   const src = `
     diagnostic(off, derivative_uniformity);
@@ -4903,6 +4934,26 @@ test('quads: implicit-level textureSample takes its level from the quad\'s fine 
   }
   const lod = lodFromRates(k, 0, 0, f32(0.45), 8, 8)
   assert.ok(lod > 1 && lod < 2, 'the quad reads between levels 1 and 2')
+  // Under the derivatives freedom the level comes from the coarse differences: with the bottom row's u spread wider
+  // than the top row's, the bottom lanes then read another level than their fine differences give.
+  const wide = uvs.map(([u, v], l) => [l === 3 ? f32(u + f32(0.9)) : u, v])
+  const us = wide.map((c) => c[0])
+  const vs = wide.map((c) => c[1])
+  const quadWide = quadAt(0, 0, (l) => [wide[l][0], wide[l][1], 0, 0])
+  const res = { '1:0': { store, view: viewOf(store) }, '1:6': { sampler: LINEAR } }
+  const at = (l: number, fine: boolean): number[] => {
+    const r = (v: Lanes, axis: string): number => quadDerivative(v, l, axis, fine) as number
+    const want = [0, 0, 0, 0]
+    sample(store, viewOf(store), LINEAR, wide[l][0], wide[l][1], 0, lodFromRates(r(us, 'dpdx'), r(vs, 'dpdx'), r(us, 'dpdy'), r(vs, 'dpdy'), 8, 8), want)
+    return want
+  }
+  const exact = new Program(src, EXACT_RUN).fragment(quadWide, res).map((o) => o.locations[0])
+  const coarse = new Program(src, only('derivatives')).fragment(quadWide, res).map((o) => o.locations[0])
+  for (let l = 0; l < 4; l++) {
+    assert.deepEqual(exact[l], at(l, true), `fine, lane ${l}`)
+    assert.deepEqual(coarse[l], at(l, false), `coarse, lane ${l}`)
+  }
+  assert.notDeepEqual(exact[2], coarse[2], 'the bottom row reads another level under the freedom')
 })
 
 test('quads: textureSampleGrad takes its level from the rates it is given, as lodFromRates computes it; a rate not finite is poison under sample-nan', () => {
@@ -7810,4 +7861,66 @@ test('an implicit-level sample takes its level from the raw coordinate\'s fine r
   assert.deepEqual(levels['NaN u in lane 0'], [0, 0, 0, 0])
   assert.deepEqual(levels['0 u in lane 0'], [3, 3, 3, 0])
   assert.deepEqual(levels['+inf u in lane 1'], [6, 6, 0, 6])
+})
+
+test('the comparator is as tight as the ledger: each class refuses a value just past its bound, an E word one bit off, a fragment alternative that differs', () => {
+  const inside = (a: Allow, x: number): boolean => a.k === 'any' || (a.k === 'in' && x >= a.lo && x <= a.hi)
+  const one = (tag: Tag, fn: string, ops: readonly (readonly number[])[], types: readonly ValueType[]): Allow => {
+    const a = allowed(tag, fn, ops, types, 1)
+    assert.equal(a.length, 1)
+    return a[0]
+  }
+  // A14 over numbers and a payload of a number are held exactly; only a NaN operand leaves them open.
+  assert.deepEqual(one('A14', 'add', [[1.5], [2]], ['f32', 'f32']), ALLOW_EXACT)
+  assert.deepEqual(one('A14', 'add', [[NaN], [2]], ['f32', 'f32']), ALLOW_ANY)
+  assert.deepEqual(one('payload', 'add', [[1.5], [2]], ['f32', 'f32']), ALLOW_EXACT)
+  // A9: an add is correctly rounded, so one of the two neighbours of the exact sum and nothing past them.
+  const add = one('A9', 'add', [[1], [2 ** -24]], ['f32', 'f32'])
+  assert.ok(inside(add, 1) && inside(add, 1 + 2 ** -23) && !inside(add, 1 + 2 ** -22) && !inside(add, f32(1 - 2 ** -24)))
+  // Division: 2.5 ULP of the exact quotient (2^-25 apart near 1/3).
+  const q = f32(1 / 3)
+  const div = one('A10', 'div', [[1], [3]], ['f32', 'f32'])
+  assert.ok(inside(div, q + 2 * 2 ** -25) && !inside(div, q + 3 * 2 ** -25) && !inside(div, q - 3 * 2 ** -25))
+  // A sum of n products: n roundings of the sum of the terms' sizes (32 here, 2^-18 apart).
+  const dot = one('A9', 'dot', [[1, 2, 3], [4, 5, 6]], ['f32x3', 'f32x3'])
+  assert.ok(inside(dot, 32 + 2 * 2 ** -18) && !inside(dot, 32 + 12 * 2 ** -18) && !inside(dot, 32 - 12 * 2 ** -18))
+  // pow inherits exp2(b * log2(a)): near the root of 2, far from anything else; its edges are exact.
+  const pow = one('A12', 'pow', [[2], [0.5]], ['f32', 'f32'])
+  assert.ok(inside(pow, f32(Math.SQRT2)) && !inside(pow, 1.5) && !inside(pow, f32(Math.SQRT2) + 2 ** -15))
+  assert.deepEqual(one('A12', 'pow', [[2], [0]], ['f32', 'f32']), ALLOW_EXACT)
+
+  // compareRuns on a family's own reference output: clean, then one bit off in an E word or in an A record's exact
+  // edge, each refused in adversarial mode.
+  const fam = FAMILIES.find((f) => f.name.startsWith('values known never NaN')) as Family
+  const built = buildFamily(fam, false)
+  const ins = inputsOf(built.g.res, perLane(fam.word))
+  const ref = runReference(built.m, built.g.res, ins, built.inv)
+  const R = new DataView(ref.buffer, ref.byteOffset, ref.length)
+  const classes = built.g.classify(false)
+  const words = recordWords(built.g.res, built.g.recs, 0)
+  const check = (at: number | null): string[] => {
+    const got = new Uint8Array(ref)
+    if (at !== null) new DataView(got.buffer).setUint32(at, R.getUint32(at, true) ^ 1, true)
+    const failures: string[] = []
+    compareRuns('canary', built, ref, got, 'adversarial', null, newTally(), failures)
+    return failures
+  }
+  assert.deepEqual(check(null), [])
+  const eWord = built.g.recs.flatMap((_, ri) => (classes[ri] === 'E' ? words[ri] : [])).find((o) => !isNanBits(R.getUint32(o, true)))
+  assert.ok(eWord !== undefined, 'an E word that is not a NaN')
+  assert.equal(check(eWord).length, 1)
+  const edge = built.g.recs.flatMap((rec, ri) => {
+    if (classes[ri] !== 'A' || rec.approx === null || words[ri].every((o) => R.getUint32(o, true) === CANARY)) return []
+    const a = rec.approx
+    const ops = a.ops.map((oi, o) => words[oi].map((off) => asNum(R.getUint32(off, true), kindOf(a.types[o]))))
+    const allow = allowed(a.tag, a.fn, ops, a.types, words[ri].length)
+    return words[ri].filter((o, c) => allow[c].k === 'exact' && !isNanBits(R.getUint32(o, true)))
+  })
+  assert.ok(edge.length > 0, 'an approximated record held exactly at an edge')
+  assert.equal(check(edge[0]).length, 1)
+
+  // A fragment word matches the reference or one of the alternatives exactly, never merely because some exist.
+  assert.equal(fragMatch(0.25, 0.25, [[0.75]], 0, 'f32'), 'ref')
+  assert.equal(fragMatch(0.75, 0.25, [[0.75]], 0, 'f32'), 'alt')
+  assert.equal(fragMatch(0.5, 0.25, [[0.75]], 0, 'f32'), null)
 })
