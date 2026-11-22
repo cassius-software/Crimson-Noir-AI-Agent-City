@@ -39,6 +39,7 @@ import { clipRing, isRect, type Pt, type Rect } from './clip.ts'
 import { BUILDING_KIND, DM, FLOW, ROAD_CLASS, WATER_KIND, polygonAt, polygonCount, roadAt, type RegionPack } from './pack.ts'
 import { PAINT_MARGIN, PAINT_TEXEL, type PaintedLight } from './paintedLight.ts'
 import type { RegionPlacement } from './placement.ts'
+import { PROP_FOLD } from './propTiles.ts'
 import { quarterAt, quarterName } from './quarters.ts'
 import { LANE_WIDTH, SIDEWALK, roadWidth } from './streets.ts'
 import type { Crossing, RegionTransit } from './transit.ts'
@@ -488,6 +489,9 @@ export interface RegionPaint {
   /** 1 while no ceiling fixture is lit (a lite boot, a headset: world.ts setLampLights), 0 while they are: the
    *  workplaces' painted floors stand in for their fixtures, never under them. */
   floors: UniformNode<'float', number>
+  /** How far the region's props are drawn round the view being drawn (world.ts showProps): the pools fade past it as
+   *  their lamps fold (propTiles.ts propKeep), so no pool lies under a lamp that view does not draw. Null: never. */
+  props?: { focus: UniformNode<'vec2', Vector2>; reach: UniformNode<'float', number> } | null
 }
 
 /**
@@ -525,7 +529,8 @@ export function paintTexture(p: PaintedLight): DataTexture {
  * world position (so a junction's patch, a plaza and a room's floor read it as the ribbons do, with no attribute).
  * Outside the picture there is none: the mask says so, because the sampler's clamp would otherwise repeat the edge of
  * the coarser mips, which average lit texels in, as far as the ground goes. The pools fade inside the real light's
- * reach (a lamp is lit by its light or by its pool, never both); the spill has no real light anywhere; a workplace's
+ * reach (a lamp is lit by its light or by its pool, never both) and past the prop reach (their lamps fold there: the
+ * smoothstep of propTiles.ts propKeep, taken at the ground's place); the spill has no real light anywhere; a workplace's
  * floor shows only while its fixtures are off, a shop's and a home's always (no light hangs there).
  */
 function paintedGlow(paint: RegionPaint): (base: V3) => V3 {
@@ -535,8 +540,9 @@ function paintedGlow(paint: RegionPaint): (base: V3) => V3 {
   picture.updateMatrix = false
   const inside = step(abs(uv.x.sub(0.5)), 0.5).mul(step(abs(uv.y.sub(0.5)), 0.5))
   const beyondReal = smoothstep(paint.real.radius.mul(0.75).max(1), paint.real.radius.max(1.5), length(p.xz.sub(paint.real.focus)))
+  const drawn = paint.props ? float(1).sub(smoothstep(paint.props.reach.sub(PROP_FOLD), paint.props.reach, length(p.xz.sub(paint.props.focus)))) : float(1)
   const { pool, spill, floor } = PAINT_LIGHT
-  const light = vec3(...pool.color).mul(picture.r.mul(beyondReal).mul(pool.gain))
+  const light = vec3(...pool.color).mul(picture.r.mul(beyondReal).mul(drawn).mul(pool.gain))
     .add(vec3(...spill.color).mul(picture.g.mul(spill.gain)))
     .add(vec3(...floor.color).mul(picture.b.mul(paint.floors).add(picture.a).mul(floor.gain)))
   const lit = light.mul(inside.mul(paint.night))
@@ -957,7 +963,7 @@ function quad(b: Buffers, r: Rect, y: number): void {
 export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null, transit: Pick<RegionTransit, 'markings' | 'strip'> | null = null, paint: RegionPaint | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
-  // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
+  // Every surface takes rain mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
   // material is made, never per mesh. The buildings' one facade is every tile's, and each wrap reads the colour under
   // it twice, so a wrap per tile doubled the shadow pass's shader with every tile until no browser could build it.
   const moded = (m: MeshStandardNodeMaterial): MeshStandardNodeMaterial => (matrixMode ? applyMatrixMode(m, matrixMode) : m)

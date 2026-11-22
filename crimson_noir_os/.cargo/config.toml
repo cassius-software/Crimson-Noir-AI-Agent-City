@@ -16,3 +16,12 @@ rustflags = ["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"]
 
 [target.aarch64-unknown-uefi]
 rustflags = ["-C", "link-arg=/Brepro", "-C", "link-arg=/DEBUG:NONE"]
+
+# riscv64: Rust has no riscv64 UEFI target and its linker writes no RISC-V PE file, so the image is the bare-metal
+# target linked position-independent at address 0 behind a PE header of its own (boot/riscv64.ld,
+# boot/src/arch/riscv64.rs), and the linker writes the finished file itself (--oformat=binary): no second tool.
+# The other arguments: no dynamic linker is named and the relocations the entry applies may sit in any section
+# (-znotext) with nothing made read-only behind its back (-znorelro); no relaxation, which would address data through
+# gp, a register that is the firmware's; and no build id, so nothing in the file varies from one build to the next.
+[target.riscv64gc-unknown-none-elf]
+rustflags = ["-C", "relocation-model=pie", "-C", "link-arg=-pie", "-C", "link-arg=--no-dynamic-linker", "-C", "link-arg=-znotext", "-C", "link-arg=-znorelro", "-C", "link-arg=--no-relax", "-C", "link-arg=--build-id=none", "-C", "link-arg=--oformat=binary"]

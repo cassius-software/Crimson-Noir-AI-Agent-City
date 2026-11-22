@@ -84,13 +84,17 @@ test('engine: a lite profile caps the post chain off as ?post=0 does, and no cap
 })
 
 test('engine: the lite boot builds the lighter world and hands the realm no furniture sensors, no ragdoll and no craft', () => {
-  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout && hollow \? \{ pack: hollow\.pack, layout: \{ \.\.\.layout, floors: hollow\.floors \}, streets, plan, rooms: hollow\.rooms, transit, interiors \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
+  assert.match(CREATE, /buildWorld\(gpu\.renderer, options\.seed, pack && layout && hollow \? \{ pack: hollow\.pack, layout: \{ \.\.\.layout, floors: hollow\.floors \}, streets, map: propMap, plan, rooms: hollow\.rooms, transit, interiors \} : null, lite \? LITE_WORLD : FULL_WORLD\)/)
   const sim = between(CREATE, 'simBoot = SimClient.create({', '})')
-  assert.match(sim, /furniture: lite \? NO_FURNITURE : world\.furniture/)
+  // The realm's sensors stand where the city's or the window's furniture does (world.sensors), not along the whole map
+  // a generated region's page draws.
+  assert.match(sim, /furniture: lite \? NO_FURNITURE : world\.sensors/)
   assert.match(sim, /ragdoll: options\.ragdoll !== false && !pack && !lite, craft: !lite,/)
   assert.match(ENGINE, /const NO_FURNITURE = Object\.freeze\(\{ lamps: \[\], trees: \[\], signals: \[\] \}\)/)
-  // The page keeps its own furniture for drawing, the pole index, the contact pulse, the dissolve and the ghost view.
-  assert.match(CREATE, /createGhost\(\{ boxes: world\.boxes, furniture: world\.furniture,/)
+  // The page keeps its own furniture for drawing, the pole index, the contact pulse and the dissolve; the ghost view
+  // draws the realm's (the window's in a generated region, as it did before the whole map was furnished).
+  assert.match(CREATE, /createGhost\(\{ boxes: world\.boxes, furniture: world\.sensors,/)
+  assert.match(ENGINE, /this\.poles = new PoleIndex\(p\.world\.furniture\)\n\s*const f = p\.world\.furniture\n/)
   assert.match(ENGINE, /new DissolveSet\(\{ lamps: f\.lamps\.length, trees: f\.trees\.length, signals: f\.signals\.length,/)
   // Without rig slots the rig meshes stay out of the scene and the ghost view; with them, the lit scene gets the
   // capsules only on ?rigs=capsules (the figures wear the rigs) and the ghost view gets the shapes either way.

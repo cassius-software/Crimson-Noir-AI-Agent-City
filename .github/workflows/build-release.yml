@@ -18,13 +18,17 @@
 #   - boots the disk image in QEMU with OVMF, through the self-test, the tutorial and the terminal's scripted run,
 #     until it logs POWER OFF and the machine stops;
 #   - boots the ISO to its self-test;
-#   - writes SHA256SUMS.
+#   - writes SHA256SUMS;
+#   - checks that every file it will publish is under 2 GiB, the most GitHub takes for one release asset
+#     (tools/verify/site_budget.mjs), so a file GitHub would refuse fails the bake before anything is published. The
+#     check comes from the workflow's own commit (a sparse checkout of github.sha), not from the commit baked: a tag
+#     baked again may predate the tool.
 # - Only the publish job may write. It checks the sums again and checks that the tag, if it exists, still names the
 #   commit that was baked. Then it creates the release, or brings an existing one's files up to date. A release's
 #   title and hand-written notes are kept: the media's description sits below a marker and only that part is refreshed.
-# - No third-party action runs here, only GitHub's own checkout and artifact actions. They are on their major
-#   versions; pin them to commit hashes if your policy asks for it. No cache is restored into a release build, and
-#   the checkout keeps no credentials.
+# - No third-party action runs here, only GitHub's own checkout, setup-node and artifact actions. They are on their
+#   major versions; pin them to commit hashes if your policy asks for it. No cache is restored into a release build,
+#   and neither checkout keeps credentials.
 # - A tag push runs the workflow as it is at the tagged commit, so such a tag must point at a commit that contains
 #   this file.
 # What breaks if it is removed? Releases carry no media; the image is still built by hand with tools/build-image.sh.
@@ -175,6 +179,23 @@ jobs:
           sha256sum crimson_noir_os.img crimson_noir_os.iso BOOTX64.EFI containment.nix containment.lock \
             NOTICE.txt LICENSE > SHA256SUMS
           cat SHA256SUMS
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # The check comes from the workflow's own commit: a dispatch for a tag that exists bakes that tag's commit, which
+      # may predate tools/verify/site_budget.mjs.
+      - name: The size check from this workflow's own commit (a tag baked again may predate it)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .size-check
+          sparse-checkout: tools/verify
+          persist-credentials: false
+
+      - name: Every file of the release is under 2 GiB, the most GitHub takes for one release asset
+        run: node .size-check/tools/verify/site_budget.mjs assets "$RUNNER_TEMP/media"
 
       - uses: actions/upload-artifact@v4
         with:

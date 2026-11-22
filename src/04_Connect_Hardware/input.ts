@@ -35,7 +35,7 @@ const ACTION_KEYS: Record<string, Action> = {
   BracketRight: 'timeForward',
   BracketLeft: 'timeBack',
   KeyG: 'ghost',
-  /** Matrix mode (01_Initialize_World/matrixMode.ts): falling code on every surface, people and cars passing through each other. */
+  /** Rain mode (01_Initialize_World/matrixMode.ts): falling code on every surface, people and cars passing through each other. */
   KeyM: 'matrix',
   /** A ping where the head looks (08_Swarm/ping.ts); also the middle mouse button and a pad's right shoulder. */
   KeyQ: 'ping',

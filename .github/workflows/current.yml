@@ -3,24 +3,28 @@
 # Auxiliary tooling of Crimson Noir OS / Agent City, open source under the MIT License (LICENSES/MIT.txt).
 # Why does this file exist? It keeps every download current with main, as web.yml keeps the web copy: each time ci
 # passes on main, it builds every target of tools/build/matrix.mjs from that commit (the Windows x64 app through
-# windows-app.yml, the other eight through build-matrix.yml: Windows on Arm, Linux x64 and arm64, macOS, Android, iOS,
-# and Crimson Noir OS's UEFI media for x86-64 and aarch64), both called here with the commit as their input, and
+# windows-app.yml, the other nine through build-matrix.yml: Windows on Arm, Linux x64 and arm64, macOS, Android, iOS,
+# and Crimson Noir OS's UEFI media for x86-64, aarch64 and riscv64), both called here with the commit as their input, and
 # tools/build/current.mjs puts the files on one GitHub pre-release, "Crimson Noir: Agent City, current build", tag
 # `current`, replacing what the last green commit left there.
 # - The gates: ci on that very commit (the page's tests and build, the browser smoke, the Rust workspace on CPU and a
 #   software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap, the Kani harnesses), which is what
 #   starts this workflow; then each job uploads only after its own checks, and each UEFI job only after baking its
 #   media a second time from a clean build, comparing the bytes and booting the image in QEMU (self-test, tutorial,
-#   terminal, power-off) and the ISO. A target whose job failed keeps the files of the last commit it built, as long as
-#   the release still holds those very bytes; the notes and current.json on the release say which commit each file
-#   comes from, and the run is red (the iOS build is best effort, as in build-matrix.yml, and never turns it red).
+#   terminal, power-off) and the ISO; every file it downloads is checked under GitHub's 2 GiB for one release asset
+#   (tools/verify/site_budget.mjs) before anything is published. A target whose job failed keeps the files of the last
+#   commit it built, as long as the release still holds those very bytes; the notes and current.json on the release
+#   say which commit each file comes from, and the run is red (the iOS build is best effort, as in build-matrix.yml,
+#   and never turns it red).
 # - It never steps back: it builds only a commit on main that ci passed on, and publishes it only while it is still on
 #   main and at least as new as what the release holds (asked again after the build); when GitHub cannot answer either
 #   question, or the release's record cannot be read, it writes nothing and the run is red. One run at a time, and one
 #   waiting: a run that comes while another waits takes its place, and whichever run starts builds the newest commit
 #   on main that ci passed on, so during a burst of merges the release follows the last green commit, as the web copy
-#   does. "Re-run failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then
-#   holds the newest green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
+#   does. The ci run that started a run counts by GitHub's answer for that very run, asked for by its id: the list of
+#   ci's runs can trail a run that has just ended, and once left a green commit unbuilt behind a green run. "Re-run
+#   failed jobs" keeps an earlier attempt's pick, so such a re-run turns red unless the release then holds the newest
+#   green commit: retry a failed run with Run workflow (or "Re-run all jobs") instead.
 # - It makes no numbered release. Its only tags are `current`, which it puts at each commit it publishes, and a
 #   stand-in, `current-next`, for a few seconds when GitHub refuses to move `current` (tools/build/current.mjs says
 #   why); when GitHub refuses the stand-in too, `current` stays where it was and the notes say so. The release is a
@@ -114,6 +118,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           EVENT: ${{ github.event_name }}
           TESTED: ${{ github.event.workflow_run.head_sha }}
+          STARTED_BY: ${{ github.event.workflow_run.id }}
+          STARTED_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
           PR_HEAD: ${{ github.event.pull_request.head.sha }}
           FORCE: ${{ inputs.force }}
         run: |
@@ -128,7 +134,10 @@ jobs:
               [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::run it on main: the current build follows main alone"; exit 1; }
               args=(--sha "$GITHUB_SHA" --strict)
               if [ "$FORCE" = true ]; then args+=(--force); fi ;;
-            *) args=(--sha "$TESTED") ;;
+            # The ci run that started this run: asked for by its id, so its commit counts as green even while ci's
+            # list of runs does not show it yet (the job's condition above has already said it passed on main). By
+            # its attempt too: a run that is run again keeps its id, and the attempt that ended is the one that passed.
+            *) args=(--sha "$TESTED" --tested "$STARTED_BY" --attempt "$STARTED_ATTEMPT") ;;
           esac
           node tools/build/current.mjs pick "${args[@]}" | tee -a "$GITHUB_OUTPUT"
 
@@ -144,7 +153,7 @@ jobs:
     with:
       ref: ${{ needs.pick.outputs.sha }}
 
-  # The other eight targets, each on its own runner, as build-matrix.yml builds them (the UEFI jobs bake twice and
+  # The other nine targets, each on its own runner, as build-matrix.yml builds them (the UEFI jobs bake twice and
   # boot in QEMU before they upload). The same ceiling as above for its release job, which runs on a v* tag alone.
   matrix:
     needs: pick
@@ -188,6 +197,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: media
+      # A run whose builds all failed may download nothing: the folder is made, so the check finds no file and the next
+      # step runs as it did before there was a check.
+      - name: Every file to publish is under 2 GiB, the most GitHub takes for one release asset
+        run: |
+          mkdir -p media
+          node tools/verify/site_budget.mjs assets media
       - name: Publish to the current release (uploads, deletions, SHA256SUMS, current.json, the tag, the notes)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -235,6 +250,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: media
+      # A run whose builds all failed may download nothing: the folder is made, so the check finds no file and the next
+      # step runs as it did before there was a check.
+      - name: Every file to publish is under 2 GiB, the most GitHub takes for one release asset
+        run: |
+          mkdir -p media
+          node tools/verify/site_budget.mjs assets media
       - name: What a publish would do (nothing is written)
         env:
           GH_TOKEN: ${{ github.token }}

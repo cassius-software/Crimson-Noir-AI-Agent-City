@@ -119,10 +119,11 @@ test('wiring: the view loop lives in present() after view 0, one clear before th
   const resize = between(src, '  resize(): void {', '  /** A view record')
   assert.match(resize, /if \(this\.views\.length > 1\) this\.layout\(\)/)
   assert.match(resize, /this\.marked = false/)
-  // World: the sky follows another camera; update() is as it was.
+  // World: the sky and a region's street furniture (its tiles and their fold, the lit lamps dimmed as their poles fold)
+  // follow another camera; update() is as it was.
   const world = read('../01_Initialize_World/world.ts')
   assert.match(world, /follow\(camera: PerspectiveCamera\): void/)
-  assert.match(world, /const follow = \(other: PerspectiveCamera\) => \{ sky\.position\.copy\(other\.position\) \}/)
+  assert.match(world, /const follow = \(other: PerspectiveCamera\) => \{\n\s*sky\.position\.copy\(other\.position\)\n\s*showProps\(other\.position\.x, other\.position\.z\)\n\s*dimBeyondReach\(other\.position\.x, other\.position\.z\)\n\s*\}/)
   assert.match(world, /sky\.position\.copy\(camera\.position\)/, 'update() still centres it on the world camera')
 })
 

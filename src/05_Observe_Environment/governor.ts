@@ -70,6 +70,14 @@ export interface QualityKnobs {
    *  clustered lighting at all. At the city's lamp density (eight a block) 32 lamps reach about 45 m, 384 about 155 m;
    *  the ground's painted pools stand in beyond. */
   lampLights: number
+  /**
+   * How far from the eye a generated region's street furniture is drawn, m (world.ts: the whole map's lamps, trees and
+   * signal poles in 160 m tiles, region/propTiles.ts): a tile with ground within it is shown, and each prop folds down
+   * to its foot over the last PROP_FOLD metres, so the edge is never a line of poles popping up; a new reach is glided
+   * to (world.ts REACH_GLIDE), so a tier step's band grows or folds too. Tiles are meshes the frustum culls whole and
+   * the reach a uniform, so a change never recompiles. The city's own furniture is always drawn.
+   */
+  propReach: number
 }
 
 const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
@@ -81,11 +89,11 @@ const frozen = (k: QualityKnobs): QualityKnobs => Object.freeze(k)
  *  procedural texture resolution (256² → 192² → 128² → 64²). Ultra (and Peak above it) adds the golden-hour sun shafts
  *  and ambient occlusion. */
 export const TIERS: readonly QualityKnobs[] = Object.freeze([
-  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32 }),
-  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64 }),
-  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128 }),
-  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 160, shadowRadius: 2, shadowTaps: 8, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192 }),
-  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 2.5, shadowTaps: 12, post: true, volumetrics: true, aoTaps: 12, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256 }),
+  frozen({ label: 'Minimal', renderScale: 0.65, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 0.2, lodDistance: 12, nearRadius: 10, maxDistance: 110, textureSize: 64, lampLights: 32, propReach: 220 }),
+  frozen({ label: 'Low', renderScale: 0.75, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.4, lodDistance: 18, nearRadius: 14, maxDistance: 180, textureSize: 128, lampLights: 64, propReach: 260 }),
+  frozen({ label: 'Medium', renderScale: 0.85, shadows: true, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.65, lodDistance: 24, nearRadius: 18, maxDistance: 300, textureSize: 192, lampLights: 128, propReach: 320 }),
+  frozen({ label: 'High', renderScale: 1, shadows: true, shadowMapSize: 2048, shadowDistance: 160, shadowRadius: 2, shadowTaps: 8, post: true, volumetrics: false, aoTaps: 0, crowdDensity: 0.85, lodDistance: 30, nearRadius: 22, maxDistance: 450, textureSize: 256, lampLights: 192, propReach: 400 }),
+  frozen({ label: 'Ultra', renderScale: 1, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 2.5, shadowTaps: 12, post: true, volumetrics: true, aoTaps: 12, crowdDensity: 1, lodDistance: 45, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 256, propReach: 480 }),
 ])
 
 /**
@@ -97,7 +105,7 @@ export const TIERS: readonly QualityKnobs[] = Object.freeze([
  * lottery out to there (15 % to 80 m, as Lite first shipped) left a street two people wide and the rest appearing from
  * nothing at 14 m. The drawn count stays a step under Minimal's by the table's own rule (governor.test.ts).
  */
-export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 1, lodDistance: 8, nearRadius: 6, maxDistance: 45, textureSize: 64, lampLights: 0 })
+export const LITE: QualityKnobs = frozen({ label: 'Lite', renderScale: 0.5, shadows: false, shadowMapSize: 1024, shadowDistance: 120, shadowRadius: 1.5, shadowTaps: 5, post: false, volumetrics: false, aoTaps: 0, crowdDensity: 1, lodDistance: 8, nearRadius: 6, maxDistance: 45, textureSize: 64, lampLights: 0, propReach: 160 })
 /** Lite's tier index: the lowest a manual choice may pin, and the automatic floor of a lite profile (tierRange). */
 export const LITE_TIER = -1
 
@@ -124,7 +132,7 @@ export function liteCrowd(k: QualityKnobs): QualityKnobs {
  * everyone is drawn anyway. Reached automatically only on a Peak range (tierRange) and on the GPU's own timings
  * (Governor.gpuSample).
  */
-export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, aoTaps: 16, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384 })
+export const PEAK: QualityKnobs = frozen({ label: 'Peak', renderScale: 1.25, shadows: true, shadowMapSize: 4096, shadowDistance: 240, shadowRadius: 3, shadowTaps: 16, post: true, volumetrics: true, aoTaps: 16, crowdDensity: 1, lodDistance: 90, nearRadius: 30, maxDistance: 700, textureSize: 256, lampLights: 384, propReach: 520 })
 /** Peak's tier index: the highest a manual choice may pin, and the automatic ceiling of a Peak range (tierRange). */
 export const PEAK_TIER = TIERS.length
 

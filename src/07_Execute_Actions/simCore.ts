@@ -218,7 +218,7 @@ export class SimCore {
   /** This realm's own clock (the sum of accepted dt): harness time limits never trust the page's clock. */
   #simTime = 0
   #blindUntil = -1
-  /** Matrix mode (the `matrix` command): the crowd's physics mask keeps the static world alone. */
+  /** Rain mode (the `matrix` command): the crowd's physics mask keeps the static world alone. */
   #matrixMode = false
   #panic: string | null = null
   #sanctuaryOn = true

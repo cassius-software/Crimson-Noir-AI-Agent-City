@@ -34,7 +34,7 @@ import { texture } from 'three/tsl'
 import { SunShadowNode } from 'three/addons/lights/SunShadowNode.js'
 import type { SunLight } from 'three/addons/lights/SunLight.js'
 
-// Vite's `?raw` import, for Node: the world, the crowd, the fleet and the rigs take matrix mode, whose WGSL comes that way.
+// Vite's `?raw` import, for Node: the world, the crowd, the fleet and the rigs take rain mode, whose WGSL comes that way.
 registerHooks({
   load(url, context, nextLoad) {
     if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)
@@ -48,7 +48,7 @@ const { SHADOW_TAPS, SUN_SHADOW } = await import('../01_Initialize_World/sunShad
 const { workplaces } = await import('../01_Initialize_World/interiors.ts')
 const { buildLakefrontPack } = await import('../01_Initialize_World/lakefrontPack.ts')
 const { RegionPlaces, hollowLots, layoutOf, regionStart } = await import('../01_Initialize_World/region/regionWorld.ts')
-const { streetGridOf } = await import('../01_Initialize_World/region/streets.ts')
+const { mapStreetGrid, streetGridOf } = await import('../01_Initialize_World/region/streets.ts')
 const { regionPlacement } = await import('../01_Initialize_World/region/placement.ts')
 const { validatePack } = await import('../01_Initialize_World/region/pack.ts')
 const { CrowdView } = await import('../03_Spawn_Agents/crowd.ts')
@@ -303,7 +303,7 @@ function buildScene(label: string, renderer: WebGPURenderer, scene: Scene, camer
   return out
 }
 
-/** The lakefront metropolis as engine.ts builds it: its street window round the start, and the rooms on its lots. */
+/** The lakefront metropolis as engine.ts builds it: its street window round the start, its whole map's street furniture (folded by distance), and the rooms on its lots. */
 function lakefront(renderer: WebGPURenderer) {
   const pack = buildLakefrontPack(SEED)
   const layout = layoutOf(pack)
@@ -313,7 +313,7 @@ function lakefront(renderer: WebGPURenderer) {
   const streets = streetGridOf(pack, layout.offset, start)
   assert.ok(streets, 'the metropolis has a street window')
   const hollow = hollowLots(pack, layout, placed.workplaces)
-  return buildWorld(renderer, SEED, { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, plan: hollow.plan, rooms: hollow.rooms })
+  return buildWorld(renderer, SEED, { pack: hollow.pack, layout: { ...layout, floors: hollow.floors }, streets, map: mapStreetGrid(pack, layout.offset), plan: hollow.plan, rooms: hollow.rooms })
 }
 
 /** The region every build carries (vite.config.ts regionPack, App.tsx loadRegion), walked with ?region=on: no window, no lots. */
@@ -393,6 +393,58 @@ test('a region\'s tiles share one facade material, and every tile\'s shadow pass
     const { value: [s], logged } = buildShadow(renderer, world.scene, sun, tile)
     assert.deepEqual(logged, [], `${tile.name}: three logged nothing while building its shadow pass`)
     assert.equal(surfaceCalls(s.fragment), 1, `${tile.name}: its shadow pass reads rain mode once`)
+  }
+})
+
+test('a generated region\'s street furniture: every tile of a kind builds the same shaders whatever it holds, placed by its own attribute, its normal turned with it', () => {
+  // three builds an InstancedMesh's shader for each mesh (its cache key holds the mesh's id) and sizes its matrices into
+  // the code: hundreds of tiles as instanced meshes would compile while the visitor walks. As plain meshes over
+  // instanced geometry every tile of a kind is the same code, so one pipeline, compiled before the first frame.
+  const renderer = offlineRenderer()
+  const world = lakefront(renderer)
+  for (const name of ['StreetLamps', 'StreetTrees', 'TrafficSignals']) {
+    const all = world.scene.children.filter((o): o is Mesh => o.name.startsWith(`${name} `))
+    assert.ok(all.length > 20, `${name}: ${all.length} tiles`)
+    const counts = all.map((m) => (m.geometry as Mesh['geometry'] & { instanceCount: number }).instanceCount)
+    const few = all[counts.indexOf(Math.min(...counts))], many = all[counts.indexOf(Math.max(...counts))]
+    assert.ok(Math.max(...counts) > Math.min(...counts), `${name}: tiles of ${Math.min(...counts)} to ${Math.max(...counts)} props`)
+    assert.equal(new Set(all.map((m) => m.material)).size, 1, `${name}: one material`)
+    assert.equal(new Set(all.map(drawKey)).size, 1, `${name}: one draw key, whatever the count`)
+    // three's render-object key adds the mesh's id for an instanced mesh, or one drawn more than once by its count.
+    for (const m of all) assert.ok(!(m as Mesh & { isInstancedMesh?: boolean }).isInstancedMesh && !((m as Mesh & { count?: number }).count! > 1), `${m.name}: keyed by its material and its attributes alone`)
+    // A first build of the material primes the nodes it shares with every later one (three keeps some of a node's choices
+    // from its first build), so the tiles are compared on later builds, as the renderer reuses the first.
+    caught(() => build(renderer, world.scene, world.camera, many, many.material as Material))
+    const a = caught(() => build(renderer, world.scene, world.camera, few, few.material as Material))
+    const b = caught(() => build(renderer, world.scene, world.camera, many, many.material as Material))
+    assert.deepEqual([a.logged, b.logged], [[], []], `${name}: three logged nothing`)
+    // The same code (each build of this offline builder numbers its temporaries on and may declare the uniforms in another
+    // order, even for one mesh, so both are read past).
+    const lines = (wgsl: string) => wgsl.replace(/node(Var|Uniform|Varying|Buffer)\d+/g, 'node$1').split('\n').map((l) => l.trim()).sort().join('\n')
+    assert.equal(lines(a.value.vertex), lines(b.value.vertex), `${name}: the same vertex stage for ${Math.min(...counts)} props and ${Math.max(...counts)}`)
+    assert.equal(lines(a.value.fragment), lines(b.value.fragment), `${name}: the same fragment stage`)
+    assert.match(a.value.vertex, /\bplace\b/, `${name}: placed by its own instance attribute`)
+    assert.doesNotMatch(a.value.vertex, /instanceMatrix|array<\s*mat4x4<f32>/, `${name}: no instance matrices`)
+    // The geometry's normal turns with the yaw, as three's instancing turns it, before anything reads it: so the lit
+    // normal, rain mode's plane (matrixSurface reads the world geometry normal) and the shadow's normal bias all see the
+    // prop as it stands.
+    const turnBy = /(nodeVar\d+) = cos\( place\.z \);/.exec(a.value.vertex)?.[1]
+    assert.ok(turnBy, `${name}: the yaw's cosine from the instance's place`)
+    const turned = a.value.vertex.search(new RegExp(`normalLocal = vec3<f32>\\( \\( \\( ${turnBy} \\* normalLocal\\.x \\)`))
+    assert.ok(turned > 0, `${name}: the geometry's normal is turned by the yaw`)
+    assert.ok(a.value.vertex.indexOf('varyings.v_normalViewGeometry =') > turned, `${name}: and leaves the vertex stage turned`)
+    assert.match(a.value.fragment, /matrixSurface\( v_positionWorld, normalWorldGeometry,/, `${name}: rain mode's plane from that normal`)
+    const sa = buildShadow(renderer, world.scene, world.sun, few), sb = buildShadow(renderer, world.scene, world.sun, many)
+    assert.deepEqual([sa.logged, sb.logged], [[], []])
+    assert.equal(lines(sa.value[0].vertex), lines(sb.value[0].vertex), `${name}: the same shadow pass`)
+  }
+  // The city's are the instanced meshes they always were: no placement and no fold of their own.
+  const city = buildWorld(renderer, SEED)
+  for (const name of ['StreetLamps', 'StreetTrees', 'TrafficSignals']) {
+    const m = city.scene.children.find((o): o is InstancedMesh => o.name === name)!
+    assert.ok(m.isInstancedMesh, `city ${name}: instanced`)
+    const vertex = build(renderer, city.scene, city.camera, m, m.material as Material).vertex
+    assert.doesNotMatch(vertex, /\bplace\b|smoothstep/, `city ${name}: placed by its instance matrices, never folded`)
   }
 })
 

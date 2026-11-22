@@ -57,7 +57,9 @@ const web = (await import(PWA)) as {
   webPage(html: string, build?: string): string
   worker(cache: string, build: string): string
   buildWord(html: string, icons?: readonly Uint8Array[]): string
-  build(o: { from: string; out: string }): { out: string; cache: string; build: string; files: string[] }
+  STAMP: string
+  stampText(o: { commit: unknown; version: string; build: string; cache: string; ci?: unknown; run?: unknown }): string
+  build(o: { from: string; out: string; commit?: string; ci?: string; run?: string }): { out: string; cache: string; build: string; files: string[] }
 }
 
 const SOURCE = readFileSync(new URL('../index.html', import.meta.url), 'utf8')
@@ -891,6 +893,68 @@ test('the build word covers everything published, the worker included, and build
     writeFileSync(join(dir, 'index.html'), SOURCE.replace(dog, '<script id="another">'))
     assert.throws(() => web.build({ from: dir, out }), /the boot watchdog must end within/, 'no watchdog at all')
   } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('build.json names the commit a published copy comes from: written only when the build is told one, beside the page and outside the build word, never cached, and a page load of it is the file', async () => {
+  const commit = 'c0ffee0123456789abcdef0123456789abcdef01'
+  const ci = 'https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/actions/runs/1'
+  const run = 'https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/actions/runs/2'
+  const dir = mkdtempSync(join(tmpdir(), 'agent-city-stamp-'))
+  try {
+    writeFileSync(join(dir, 'index.html'), SOURCE)
+    const [plain, stamped] = [join(dir, 'plain'), join(dir, 'stamped')]
+    const a = web.build({ from: dir, out: plain })
+    assert.ok(!existsSync(join(plain, web.STAMP)) && !a.files.includes(web.STAMP), 'no commit given, no stamp (a build on a desk)')
+    const b = web.build({ from: dir, out: stamped, commit, ci, run })
+    assert.ok(b.files.includes(web.STAMP))
+    assert.deepEqual(JSON.parse(readFileSync(join(stamped, web.STAMP), 'utf8')), { schema: 1, commit, version: BRAND.version, build: b.build, cache: b.cache, ci, run })
+    assert.equal(readFileSync(join(stamped, web.STAMP), 'utf8'), web.stampText({ commit, version: BRAND.version, build: b.build, cache: b.cache, ci, run }), 'the same build, the same bytes')
+    // The stamp changes nothing else: the same build word and cache name, and every other file byte for byte, so a
+    // phone downloads nothing again because a commit was named, and two commits with one page are one build.
+    assert.deepEqual([b.build, b.cache], [a.build, a.cache])
+    for (const f of a.files) assert.ok(readFileSync(join(plain, f)).equals(readFileSync(join(stamped, f))), f)
+    assert.deepEqual(readdirSync(stamped).sort(), [...readdirSync(plain), web.STAMP].sort(), 'one file more')
+    const other = web.build({ from: dir, out: join(dir, 'other'), commit: commit.replace('c0ffee', 'decade') })
+    assert.equal(other.build, a.build, 'another commit, the same page: the same build word')
+    assert.equal(JSON.parse(readFileSync(join(dir, 'other', web.STAMP), 'utf8')).ci, '', 'a run by hand names no ci run')
+    assert.equal(readFileSync(join(stamped, web.PROBE), 'utf8'), `${b.cache}\n`, 'build.txt says the same cache name as the stamp')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+  // Only a full commit id and https addresses are written: the file is read by a tool that compares commits.
+  const good = { commit, version: '1.0.0', build: '0123456789ab', cache: 'agent-city-1.0.0-0123456789ab' }
+  for (const bad of ['', 'main', commit.slice(0, 7), commit.toUpperCase(), `${commit}0`, ` ${commit}`, undefined, null, 7]) {
+    assert.throws(() => web.stampText({ ...good, commit: bad }), /the build's commit must be a full commit id \(40 hex digits\)/, String(bad))
+  }
+  for (const bad of ['http://plain', 'javascript:alert(1)', 'https://a b', 'https://a"b', 'runs/1']) {
+    assert.throws(() => web.stampText({ ...good, ci: bad }), /the build's ci address must be an https address/, bad)
+    assert.throws(() => web.stampText({ ...good, run: bad }), /the build's run address must be an https address/, bad)
+  }
+  assert.equal(web.STAMP, 'build.json')
+  assert.ok(!web.CACHED.includes(web.STAMP), 'the worker never keeps it')
+  // The worker leaves it to the network, as a file or as a page load; nothing else by that name's beginning.
+  const w = runWorker({ [CACHE]: { 'index.html': 'the city', 'build.jsonx': 'kept' } }, publishing(CACHE, () => html('never asked for')))
+  assert.equal(await w.request(`${SCOPE}${web.STAMP}`), null)
+  assert.equal(await w.request(`${SCOPE}${web.STAMP}`, { mode: 'navigate' }), null, 'a page load of build.json is the file, not the city')
+  assert.equal(await w.request(`${SCOPE}${web.STAMP}?now=1`), null, 'with a query string too')
+  assert.deepEqual(urls(w), [], 'the browser fetches it itself')
+  assert.equal(await (await w.request(`${SCOPE}build.jsonx`))?.text(), 'kept', 'only that one file')
+  assert.equal(await (await w.request(SCOPE, { mode: 'navigate' }))?.text(), 'the city')
+  // The page and the worker never ask for it: a launch still costs the host build.txt alone.
+  const sw = web.worker(CACHE, '0123456789ab')
+  assert.equal(sw.split(web.STAMP).length - 1, 1, 'named once in the worker, where it is left to the network')
+  assert.ok(!SOURCE.includes(web.STAMP) && !web.HEAD.includes(web.STAMP), 'the page does not name it')
+})
+
+test('the web workflow tells the build which commit it is: the one pick chose, the ci run that passed on it and its own run', () => {
+  const yml = readFileSync(new URL('../.github/workflows/web.yml', import.meta.url), 'utf8')
+  const build = (yml.split(/^ {2}build:$/m)[1] ?? '').split(/^ {2}[a-z-]+:$/m)[0]
+  assert.match(build, /\n {8}env:\n {10}BUILD_COMMIT: \$\{\{ needs\.pick\.outputs\.sha \}\}\n {10}BUILD_CI: \$\{\{ needs\.pick\.outputs\.ci \}\}\n {10}BUILD_RUN: \$\{\{ github\.server_url \}\}\/\$\{\{ github\.repository \}\}\/actions\/runs\/\$\{\{ github\.run_id \}\}\n {8}run: npm run build:web\n/)
+  assert.equal(yml.split('BUILD_COMMIT').length - 1, 1, 'set where the page is built, and nowhere else')
+  // The commit that is checked out is the commit that is named.
+  assert.match(build, /- uses: actions\/checkout@v4\n {8}with:\n {10}ref: \$\{\{ needs\.pick\.outputs\.sha \}\}\n/)
+  // tools/web/pwa.mjs reads the three from the environment (npm run passes no arguments on), an empty one as none.
+  const pwa = readFileSync(new URL('../tools/web/pwa.mjs', import.meta.url), 'utf8')
+  assert.match(pwa, /commit: arg\('commit'\) \?\? env\('BUILD_COMMIT'\), ci: arg\('ci'\) \?\? env\('BUILD_CI'\), run: arg\('run'\) \?\? env\('BUILD_RUN'\),/)
+  assert.match(pwa, /const env = \(name\) => process\.env\[name\] \|\| undefined/)
 })
 
 test('the site\'s model folder is left to the network: no model in the worker\'s cache, and models/LICENSE is the licence, not the city', async () => {

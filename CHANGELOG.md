@@ -76,6 +76,122 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
     device.
 
 
+- **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
+  repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
+  (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0
+  for five crates of the Tauri stack by name; nothing share-alike or non-commercial), no text file holds a name from
+  the policy's list of other owners' names, every picture, icon and packed data file has a recorded origin, and
+  every directory under `third_party/` carries its licence text and notices. `src/licenceGate.test.ts` runs it with
+  the tests, and ci's Rust job gains `crate-licences`, which reads each crate's licence from the registry with
+  `cargo metadata` and fails when the committed list differs (run here: 550 crates of 6 workspaces, 0 wrong). It is
+  not legal advice: it refuses the mistakes a machine can see. Its first run found, and this change fixes: two
+  screenshots of Crimson Noir OS that still showed the terminal's earlier name, which held a film franchise's mark
+  (retaken from this commit's image in QEMU), two notes that spelled that mark, and rain mode still called by a
+  film's name in a heading and two sentences of the manual, one entry here and the comments of 22 source files (no
+  identifier, label or behaviour changed). Found and not fixed here, recorded in `docs/ip-audit.md` §8: the app packages carry no
+  notices for the Rust crates linked into them (the next change generates that file); the boot file of the
+  published release tagged `stable-beta` still contains the terminal's earlier name; and where the cover picture
+  came from is unrecorded, which the gate prints as an open question on every run. Not checked by this: clearance
+  of names in the trademark registers, and anything a lawyer has to read.
+- **A check that the web copy and every download come from one commit, and the fault that let them part.** On
+  21 November 2026 the web copy, the downloads and main stood at three commits for close to five hours while every
+  run was green. Two causes. The `current` workflow picked its commit from the list of ci's runs that passed, and
+  that list trailed the run that had just ended by some seconds, so a run built nothing for a commit ci had passed on
+  and ended green: it now asks GitHub for the ci run that started it, by its id and its attempt
+  (`tools/build/current.mjs` `choose`, `pick --tested --attempt`), and builds that commit when GitHub's answer for
+  the run says ci, finished and passed on main in this repository. When the answer says anything else, the newest
+  commit the list shows is built all the same, with a warning, and the run is red, not green, when that builds
+  nothing. The other cause was the web workflow publishing a tested commit only while it was main's tip: on a day of
+  merges the tip is seldom the commit a ci run just passed on, so the copy waited for a later run that might fail or
+  be hours away. `web.yml` now takes its commit from the same tool (`current.mjs web-pick`): the newest commit on
+  main that ci passed on, the tip or not, asked again just before the deploy (`web-confirm`), where a copy that a
+  newer green commit has overtaken stops, so the copy never steps back. A run by hand publishes that same commit;
+  with "tip" ticked it publishes main as it is, as a run by hand did before.
+  The web copy now says which commit it is: each publish by `web.yml` puts `build.json` beside the page (commit,
+  version, the build's name, the ci run and the publishing run; `tools/web/pwa.mjs`), outside the page, the worker's
+  copy and the build's name, so the same page is still the same build byte for byte. A new workflow, `sync`
+  (`.github/workflows/sync.yml`, `tools/build/sync.mjs`), runs after each run of web or current on main, every hour
+  and by hand, with read access alone, and turns red when the web copy's `build.json`, the release's `current.json`,
+  any required target, the tag `current`, a recorded file's size or SHA-256, or the disk GUID inside a UEFI disk
+  image (which `build-image.sh` derives from the commit) does not name the newest commit on main that ci passed on,
+  unless something is still on its way to mend it (a publisher's run that has not ended, its files replaced one by
+  one among that; a publish minutes old; or, for what has never been published at all, such as a copy from before
+  copies were stamped or a target new to the build matrix, ci still running on a newer commit, since that arrives
+  with the first publish of a commit that has it). A publisher's run that ended having
+  built nothing is its answer, so the look that run's end starts is red at once. Main's newest green commit, the web
+  copy or the release unread after three tries is red too; a disk image unread is a warning. It mends nothing by
+  itself: its red lines say which workflow to run by hand. A unit test now holds the product's version equal wherever it is typed again
+  (`package.json`, `src/brand.ts`, `src-tauri/Cargo.toml`, both lock files) and Crimson Noir OS's own version equal
+  across its crates and containment files. Shown by unit tests against stand-ins for GitHub and the site (the day's
+  three states among them, and a look in the middle of a publish), by the disk GUID of the image published for
+  `ad3b3b9`, read from the release, being the one that commit derives, and by the pull request's own `sync` run,
+  which read the real site and release and said what was so: the web copy unstamped with a web run not ended, the
+  downloads a commit behind with a current run not ended, both disk images read. Not yet seen: the `sync` workflow on
+  main, a publish that carries `build.json`, and the `web` and `current` workflows started by a ci run under the new
+  rule (a pull request cannot start them); the first web copy published after this change is the first with a stamp,
+  and until then the check reports the web copy as unstamped, waiting while ci runs on the merge.
+- **Crimson Noir OS boots on riscv64 (`uefi-riscv64`), the build matrix's tenth target.** Rust has no riscv64 UEFI
+  target and its linker writes no RISC-V PE file, so the boot crate is built for the bare-metal target
+  `riscv64gc-unknown-none-elf`, linked position-independent at address 0 (`crimson_noir_os/boot/riscv64.ld`) and
+  written out flat behind a PE32+ header laid out by hand in `boot/src/arch/riscv64.rs` (machine 0x5064, subsystem 10,
+  no relocation directory). The firmware relocates nothing, so the entry applies the image's own relative relocations
+  before any Rust runs, and returns the firmware's load error if it meets a kind it cannot place. After
+  ExitBootServices the serial line is the SBI console (its Debug Console extension, or the legacy console calls where
+  that is missing), the clock the `time` CSR, and the image's own trap vector (`stvec`) sends every exception to the
+  fault screen with its cause, value and return address. The keyboard is the serial console, as on aarch64; the
+  decoder the two machines share moved to `arch/serial_keys.rs`. Everything above the machine layer is shared, and
+  the compute self-test reaches the other two images' fingerprint (0x83765bab). `build-image.sh` takes the target
+  (`BOOTRISCV64.EFI` on the ESP; the media's identity names the architecture, so the other two media's are unchanged)
+  and refuses a file with no PE header; `boot_test.py --arch riscv64` boots QEMU's RISC-V `virt` machine with edk2, a
+  ramfb screen and the serial line on a socket it types into; build-matrix.yml's third UEFI job bakes the media twice,
+  compares the bytes, and boots the disk image through the tutorial and the terminal to power-off and the ISO to the
+  self-test; the rolling `current` pre-release takes `crimson_noir_os-riscv64.img`, `.iso` and `BOOTRISCV64.EFI`
+  with the other targets' files; and the `sync` check asks the riscv64 image which commit it is, as it does the
+  other two. Checked in QEMU here: the riscv64 disk image through the whole boot test
+  (`SELFTEST PASS`, the tutorial passed, `golden` matched, powered off), the ISO to the self-test, a second clean bake
+  byte for byte, a forced breakpoint and a forced bad load on the fault screen, the terminal's 640 by 360 picture
+  pixel for pixel the x86-64 image's, and the x86-64 and aarch64 images through the same boot test after the change
+  (the x86-64 application's bytes are the ones main builds). An independent review of this change found five small
+  faults, fixed with it and changing no byte of the image: the linker script reached a hosted riscv64 build too (the
+  workspace's tests on a RISC-V Linux machine would not have linked); on OpenSBI each log line ends CR CR LF, which
+  the source now says and `boot_test.py` folds when it prints the log; `boot_test.py` left its work folder, with the
+  firmware's variable store, behind on every run; the `sync` check would have been red from the merge until the
+  first publish of the new target (see the entry above); and three places still counted nine targets. Not booted on
+  RISC-V hardware, where the screen needs a firmware that offers the graphics output protocol; a riscv64 build of
+  the page's desktop app is not part of this.
+- **CI refuses a web copy or a release file too big to publish.** The new `tools/verify/site_budget.mjs` has two
+  commands, each printing one line per check with the size and the limit and exiting 1 with the folder or file named.
+  `site <dir>` sums every file of the web copy, at any depth, and fails above 950,000,000 bytes (GitHub Pages
+  publishes no site over 1 GB), naming the five largest files, and when anything there cannot be measured its line
+  says the copy was not measured, with no size and no verdict, since a total short of a file is no total; `assets
+  <file or folder>...` fails any file of 2 GiB (2,147,483,648 bytes) or more, which GitHub refuses as a release asset.
+  `web.yml` runs `site dist-web` after the site's model and the speech pack are placed and before the Pages upload.
+  `assets` runs last before each upload of a file a release carries: in `build-matrix.yml` on each target's
+  `out/<target>/`, in `windows-app.yml` on its installer, `.msi` and bare `.exe` folders, in `build-release.yml` on
+  the baked media (its bake job now sets up Node, with GitHub's own `actions/setup-node`), and in `current.yml` on
+  every artifact it downloads, in its publish job and its dry run. In `build-release.yml`, `build-matrix.yml` and
+  `windows-app.yml` the tool is read from a sparse checkout of the workflow's own commit (`github.sha`, in
+  `.size-check/`), not from the commit the job bakes or builds: a dispatch for a tag that exists bakes that tag's
+  commit, and `current.yml` may have the other two build an older commit ci passed on, either of which may predate the
+  tool (every release tag so far does). A size is what `fs.stat` says the file holds (a sparse file at its full
+  length); a symbolic link is followed and counts at the size of what it names, and a link to nothing, to itself or
+  back into a folder that holds it fails by name (a link whose target is there but cannot be read gives the system's
+  reason, never "does not exist"). The limits are constants: the command line takes no flag and the tool reads no
+  environment variable, so no workflow can move a limit or skip a check. `tools/build/macAudit.mjs` now takes its
+  `ASSET_LIMIT` from the new tool, so 2 GiB has one source, and keeps its own check of the `.dmg` and the zip;
+  `MAX_BYTES`, the page's own budget in `tools/verify/page_dist.mjs`, is unchanged. `build-matrix.yml` also runs on a
+  pull request that changes the tool. Tests: `siteBudget.test.ts` (9) pins both numbers and macAudit's limit as the
+  same one; passes and fails each check by name at its edges, by size alone and through the command line over sparse
+  files (the copy at exactly 950,000,000 bytes passes and one byte more fails; a file one byte under 2 GiB passes and
+  one of exactly 2 GiB fails); measures links (and still checks when the tool is run through a link to it, rather than
+  exit 0 unseen); refuses a flag; and reads the five workflows: each of the six steps checks the files its job then
+  uploads (or, in the dry run, plans), with no condition (no `if:`, first key or not, no `continue-on-error`, no `||`
+  after the command, its run line pinned whole) and reads the tool from the workflow's own commit; and shows those
+  rules refuse each such skip, and a check read from the commit a job bakes or builds. A web copy built in the
+  container on 21 November 2026 (`npm run build:web`) measured 12,416,491 bytes, and 453,986,789 with sparse stand-ins
+  of the site model and the speech pack at their pinned sizes beside their real manifests and licence files. Not
+  verified: the steps on CI until CI runs them; GitHub's own limits can change.
+
 - **Nightglass, the console's own explicit graphics interface (slice 1 of 3).** A new air-gapped folder,
   `src/07_Execute_Actions/terminal/nightglass/`, holds a low-level GPU interface of the product's own, with its own
   names throughout and its specification in `docs/nightglass.md`: an instance lists adapters; a device opens with
@@ -2441,6 +2557,20 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Changed
 
+- **The first walk explains each stage as to a five-year-old, with the five W's.** Each card's plain line is now
+  written for a five-year-old (it was for an eight-year-old), and its button answers **who, what, when, where and why**
+  one at a time, naming the next one (Who?, What?, When?, Where?, Why?), in place of five ever-deeper whys
+  (`src/09_Cognition/firstWalk.ts` `eli5Of`, `fiveWsOf`, `FIVE_WS`; `FirstWalk.tsx`). Every answer keeps to what the
+  city does: the shops and the homes are named only on a map that has them, the console's language is called Crimson
+  Noir Script in full, and the cinema-camera, GGX and microphone details are left out as too deep for the card.
+  Sloane's spoken line on the talk stage now says she may ask a few questions to be sure what you mean (her goal
+  questions are a few, not always five). `firstWalk.test.ts` pins the five W's in order, each answer screened and free of
+  "five whys", and the `walk` browser smoke presses the button five times and reads the five answers. Sloane's goal
+  questions drop the "5-Whys" name where a player sees it: her copyable brief heads them **Questions asked** (it said
+  **Why**) and signs itself "the concierge's goal questions", and the README and MANUAL describe them as up to five short
+  questions (what, which time, where, how), which is what they always were (`intent.ts`; the class keeps its name,
+  `FiveWhys`). The quiet watch's lines are described as a question and then the how.
+
 - **Pedestrians no longer stare at you.** Until now everyone within about four and a half metres of you on foot turned
   their head and chest to your eye. Now a person looks at you only while you are talking to them: a recruit standing
   by at your side (the crowd kernel reports them interviewing and no rally sends them elsewhere), or the person a
@@ -2513,6 +2643,51 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   the fifteen starts of the three tested seeds a start's window holds one to four workplaces, one or two shops and up
   to two homes. Unverified on a real phone or GPU (the pictures are software
   WebGPU).
+
+- **Lakefront Metro's lamps, trees and signal poles stand along every street of the map, and the lamps nearest you
+  light wherever you walk.** They stood along the 640 m street window round the start alone, so the rest of the
+  2.56 km map had bare streets, dark after sunset. Now the street furniture is the whole map's (`streets.ts`
+  `windowFurniture` over `mapStreetGrid`: 45,844 props on seed 1337's metropolis, where its start's window had 2,696),
+  cut into 160 m tiles (`region/propTiles.ts`), and the page draws the tiles within a new quality knob's reach of you
+  (`governor.ts` `propReach`: 160 m on Lite, 220, 260, 320, 400 and 480 m from Minimal to Ultra, 520 m on Peak; a
+  uniform and shown or hidden meshes, so a tier change never recompiles). Each prop folds down to its foot over the
+  reach's last 40 m (`propTiles.ts` `PROP_FOLD`, `propKeep`), so a tile appears and goes holding only points on the
+  ground and the props grow up out of the street as you near them; when the tier changes the reach glides to the new
+  one at 40 m a second of the realm's clock (`world.ts` `REACH_GLIDE`, a step counting at most a quarter second), so
+  the band between the two grows or folds rather than popping. In split screen each viewport draws the tiles round its
+  own head (`World.follow`). A lit lamp's real light and its painted pool fade with its pole past the reach of the
+  view being drawn (`dimBeyondReach`, `regionWorld.ts` `paintedGlow`), so no light lies under a lamp that view does
+  not draw. A tile is one plain mesh of each kind over instanced geometry that places its own instances
+  (`placeInTiles`: foot, yaw and size per instance; the geometry's normal turned with the yaw as three's instancing
+  turns it, so lighting, rain mode's code planes and the shadow's normal bias see the prop as it stands), because
+  three builds an instanced mesh's shader for each mesh and a map has 256 tiles: every tile of a kind is the same
+  code, one pipeline built before the first frame (`shadowShaders.test.ts`). Each tile is culled by the camera and by
+  each shadow cascade as one sphere, and its matrices are never recomposed. At seed 1337's start Lite's reach holds 8
+  tiles, 24 meshes (about 15 drawn after the camera's culling, where the window drew its props in 3) and 1,475 props
+  (about 950 in view) where the window drew 2,696; on seeds 1337, 7 and 42, wherever the visitor stands, Lite's reach
+  holds at most nine tiles and under nine tenths of the props the start's window drew, and Peak's under five
+  windows' worth (47 tiles at the start, about 51 meshes drawn), of which the frustum draws a part. The lit lamps are
+  chosen from the map's lamps in 40 m cells (`cityLights.ts` `LampIndex`), the same lamps in the same order as a sort
+  of every head (400 choices from 80 places tested, ties among them; a focus beyond some 43,000 km of the map takes
+  the sort itself), about seventeen times faster on 23,000 lamps (0.29 ms against 4.9 ms a choice here); a lite boot,
+  which lights no lamp, builds no index. The physics realm's pole sensors and the ghost view keep the window's
+  furniture (`World.sensors`); the pole index, the contact pulse and the code dissolve read the map's, the dissolve
+  re-uploading only the tiles a change touches. The painted pools stay the window's lamps' (each pool whole inside
+  the picture). A tree's size now comes from where it stands (`streets.ts` `treeScale`), so a tree is the same size in
+  the window and the map. The city's furniture is as it was. Before the pull request an independent review found
+  seven faults (rain mode's planes on turned props, a tier step popping a band of props, real lamp light without its
+  pole in a far split-screen view, map lamps' pools cut at the painted picture's edge, a far focus stalling the lamp
+  index, cost figures measured against the wrong window, a test that could not fail); each is fixed with a test that
+  fails without the fix. New tests: `propTiles.test.ts` (12: the tiling, the reach, `propKeep`, the window's props
+  being the map's, the cost of every tier's reach on three seeds, the world's tiles, the reach's glide, follow, the
+  lamp lights and painted pools round each view, the dissolve, a surveyed region with no window and the city
+  unchanged), `LampIndex` against `nearestLamps` in `cityLights.test.ts` (3, far foci among them), every tile of a
+  kind building one shader with its normal turned in `shadowShaders.test.ts`, and `propReach` in `governor.test.ts`.
+  `dist/index.html` grows by 7,948 bytes, from 12,369,342 to 12,377,290; the limit in `tools/verify/page_dist.mjs`
+  is unchanged. Boot builds about 46,000 more props: in Node here the metropolis's world took about 25 to 95 ms longer
+  to build and the pole index 40 ms. Not there yet: the painted night light is still the window's, so beyond it the
+  ground under the lamps has no painted pool (Lite, which lights no real lamp, shows glowing lamp heads over unpainted
+  ground there), and the people and cars still live in the window. Unverified on a real phone or GPU.
 
 - **The first walk's machine card says which brain Sloane is using.** Its Sloane row read "Ready to plan" whatever
   answered; it now reads the brain readout (`src/09_Cognition/brainReadout.ts` `readBrain`, from memory) where the row
@@ -3384,10 +3559,10 @@ built by the two release workflows on that tag.
 
 ### Added
 
-- **Matrix mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
+- **Rain mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
   page's three.js node materials (`src/01_Initialize_World/matrixMesh.wgsl`); one global state word (time, mode,
   floating origin) packed into the materials' uniform and the crowd's parameters; toggled with the M key or `rain on`
-  in the console. In matrix mode pedestrians drop to the static-world collision bit, so people and cars pass through
+  in the console. In rain mode pedestrians drop to the static-world collision bit, so people and cars pass through
   each other while the ground and lots still hold; the floating origin snaps the camera to whole metres. Lakefront
   meshes take the mode through the region path. Unverified from the cloud (no GPU): the shaders compiling and their
   look on a real device.

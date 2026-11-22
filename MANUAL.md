@@ -324,14 +324,19 @@ head of the pole, over the asphalt, the sidewalk, the people, the cars and the f
 lamp. How many are lit is the quality tier's (Autoscaling): 32 on Minimal, 64 on Low, 128 on Medium, 192 on High, 256
 on Ultra and 384 on Peak, the nearest first, which at the city's eight lamps a block reaches about 45 m around you on
 Minimal and 155 m on Peak; beyond the farthest lit lamp the ground shows the painted pools it always did, and a lamp is
-lit by its light or by its pool, never both. The same lamps light a region's street window (the lakefront metropolis),
-and beyond their reach its ground is lit by paint too, from a picture rather than from the grid: the window seen from
+lit by its light or by its pool, never both. The same lamps light Lakefront Metro, whose lamps stand along every street
+of its map, so the lit ones are the nearest to you wherever you walk (chosen from the lamps in 40 m cells,
+`cityLights.ts` `LampIndex`, the same lamps a sort of all 23,000 would choose). Its ground beyond their reach is lit by
+paint too inside its street window, from a picture rather than from the grid: the window seen from
 above, a texel a metre, baked once at boot from what stands there (`01_Initialize_World/region/paintedLight.ts`) and
 read by the lawn, the pavement, the asphalt and the road markings with one texture sample. It holds the pool under
 every lamp's head (the spread of a point of light at the head's height: half at 4.5 m, an eighth at 10 m, gone at
 16 m, so a crossing between eight lamps is lit and the middle of a block is not black), the light every glazed ground
 floor spills on the ground before it (shopfronts, and the glass round every room, shop and home, out to 10 m), and the
-lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. Every indoor workplace
+lit floor inside every room, shop and home. A street the map left out has no lamps and no pool. In Lakefront Metro a
+lamp's light, real or painted, goes with its pole: past the prop reach (Autoscaling) the pole folds into the street and
+its light and pool fade with it, round each split-screen viewport's own head, so no light lies under a lamp that is not
+drawn. Every indoor workplace
 (the city's sixteen glass-walled ground floors, and a region's) has four ceiling fixtures under a white tile ceiling, a
 luminaire panel over each, on by day and by night. The
 lights are clustered: a compute pass sorts them into a grid of view cells once a frame and each pixel reads the few
@@ -689,9 +694,15 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   window's sidewalks (crowd.wgsl takes the window's corner and, per street segment, whether a sidewalk runs along it and
   whether cars use it, so nobody walks a dropped street or waits at a crosswalk over a pedestrian street), while the
   fleet is seated on rings laid over the window's whole cells (disjoint rectangles whose every side is a car street,
-  the zero-jam rule of `tracks.ts` kept) and the lamps, trees and signal poles stand along the window's streets. Every
+  the zero-jam rule of `tracks.ts` kept). The lamps, trees and signal poles stand along every street of the whole map
+  (some 46,000 on Lakefront Metro: `region/streets.ts` `windowFurniture` over `mapStreetGrid`), cut into 160 m tiles
+  (`region/propTiles.ts`), and the page draws the tiles within the tier's prop reach of you (Autoscaling: 160 m on Lite
+  to 520 m on Peak), each prop growing up out of the street over the reach's last 40 m (`propTiles.ts` `PROP_FOLD`) so
+  no pole pops into view; when the tier changes, the reach glides to the new one at 40 m a second (`world.ts`
+  `REACH_GLIDE`), so a tier's extra band grows up out of the street or folds back into it rather than appearing at
+  once; in split screen each viewport draws the tiles round its own head. Every
   street cars use is two lanes, one each way; a bridge's shore walls are cut for its width. Beyond the window the
-  streets are still quiet: no people, cars or lamps there yet, though the places stand there (next).
+  streets are still quiet: no people or cars there yet, though the places and the street furniture stand there (next).
   **Its places are the whole map's** (`region/placement.ts`): the sixteen indoor workplaces, five shops and seven homes
   are shared out over all five regions, every region given a shop, at least one home and at least two workplaces of
   the kinds that suit it (Lakefront Metropolis the executive console deck, the clearing floor, the server vault and
@@ -708,11 +719,12 @@ beside it. The page inflates the pack itself (the browser's own gzip stream); no
   metropolis's visitor stands a few blocks from The Spire, under 300 m on every tested seed). `?place=<slug>` chooses the
   region for one visit, ahead of the onboarding's answer. The HUD's street line leads with the region you stand in
   ("The East Bluffs · street & cross street") and changes as you walk from one into the next. Not there yet: the
-  people, the cars, the lamps and the painted light still live only in the street window round the start, so a place
+  people, the cars and the painted light still live only in the street window round the start, so a place
   outside it stands on an empty street and has nobody at work in it, and nobody from the crowd can be walked out to
   it; after dark a shop or home there is unlit inside (the painted light covers the window and its margin only, and
-  paints no floor on a lot its edge runs through), while a workplace's own ceiling lights still come on wherever the
-  tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
+  paints no floor on a lot its edge runs through), and the street there is lit only by the real lamp light round you
+  (none on Lite, where the lamp heads glow over ground with no painted pools), while a workplace's own ceiling lights still come on
+  wherever the tier lights lamps. On the fifteen starts of the three tested seeds a start's window holds one to four of the
   workplaces, one or two shops and up to two homes. A window that travels with the visitor is the next step.
   The window has its **transit map** too (`region/transit.ts`, pure: the page and the
   physics worker build it from the same seed, window, craft boxes and bounds): an elevated train loop on the 9 m deck
@@ -786,7 +798,7 @@ npm run build:pilot   # dist-pilot/index.html: the same single offline file, ope
   - the craft (the elevated loop, the corridors, the racetrack and the VTOL pads need a street window: Lakefront
     Metro has them over its window, the surveyed region gets none);
   - room acoustics (a region's walls live in the physics worker, so every voice there is dry);
-  - traffic signals, street lamps and trees (the surveyed region has none; a street window has them along its streets);
+  - traffic signals, street lamps and trees (the surveyed region has none; Lakefront Metro has them along every street of its map);
   - terrain (the region is flat: no ravines, no bluffs);
   - elevated roads and bridges (the expressway runs at street level, and you can wade the rivers);
   - varied landmarks;
@@ -811,7 +823,7 @@ away; everything else dims behind the code. `G` again, or `ghost off`, fades it 
   `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen) and on
   a lite profile, whose boot never compiles the chain (`?lite=0` brings it back; see Autoscaling).
 
-## Matrix mode
+## Rain mode
 
 `M`, or `rain on` in the console, turns every surface of the city into falling green code, drawn in world space by
 the surfaces' own materials (`01_Initialize_World/matrixMesh.wgsl`, bound by `matrixMode.ts`): a roof takes its
@@ -819,10 +831,10 @@ columns from its (x, z), a wall from its own plane, so the code sits on the faca
 props, the cars and the people and moves with them as the camera moves. The sky is never touched: it is drawn as
 ever. `M` again, or `rain off`, restores every surface at once.
 
-- **One global state.** Both pipelines read one word, `global_state` = (time, matrix mode, floating origin x, z),
+- **One global state.** Both pipelines read one word, `global_state` = (time, rain mode, floating origin x, z),
   defined once (`01_Initialize_World/globalState.ts`): the materials' uniform, and the crowd's `Params.global`
   (`03_Spawn_Agents/crowd.wgsl`), so the drawing and the simulation cannot disagree about the mode.
-- **Physics.** In matrix mode every pedestrian's physics mask drops to the static world's layer alone
+- **Physics.** In rain mode every pedestrian's physics mask drops to the static world's layer alone
   (`crowd.wgsl physicsMaskFor`): the ground still holds them at street level and the lots and the city's edge still
   keep them out of the buildings, while the other pedestrians and the cars pass through them with no push, no
   stagger and no step back. The First-Law sensing is untouched: a car still sees whoever is in its path, and the
@@ -1249,7 +1261,8 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   labels. Hints are plain letters, numbers, positions and arrows: no platform names, logos or button symbols.
 - **Tell Sloane a goal.** From the chip, say what you want in plain words ("make it night and less
   crowded", "it feels laggy", "optimize the metro schedule and run a 24-agent warehouse robotics drill").
-  Sloane asks up to five short "why" questions with quick replies, then shows a brief: the steps it can apply
+  Sloane asks up to five short questions with quick replies (what, which time, where, how: "What time of day would
+  suit you?", "Anywhere in particular?", "On foot, or by car?"), then shows a brief: the steps it can apply
   now (clock, quality, sound) are done at once; a goal about work sends a team, one sub-agent per isolated
   Crimson Noir Script lane (`08_Swarm/lanes.ts`, under the lane limits, holding move and a workplace task and nothing
   more), each placed at the desk its words name (the warehouse, the robotics lab, metro operations, the
@@ -1316,7 +1329,7 @@ reading order. The rects tile the canvas exactly, in whole pixels.
   model as for any other.
 - **Sloane's first five minutes.** A visitor who has just walked in from the onboarding is watched quietly
   (`09_Cognition/tutorial.ts`, fed by `07_Execute_Actions/onboarding/useMentor.ts`): when they have done nothing
-  for thirty seconds, Sloane says one line in the card, in the shape of a why and then a how ("Ever wonder what's
+  for thirty seconds, Sloane says one line in the card, a question and then the how ("Ever wonder what's
   behind you? Hold the mouse button down and drag…"), then settles back into the chip. Opening the wardrobe counts
   as having found it. One line at a time, at least
   forty-five seconds apart, in a fixed order (looking around, walking to The Spire, talking to someone, the M key,
@@ -1351,7 +1364,7 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   get into a car; at the wheel a new line is spoken (and told to a screen reader beside the strip) and the strip's
   dot pulses until you tap it. Open, it shows
   Sloane's line cut to as many lines as the band holds (two to six) over the stage's button, and **More** unfolds the
-  whole line, what the stage is and the whys (Less folds them back). A finger dragged across the short card's words
+  whole line, what the stage is and the five W's (Less folds them back). A finger dragged across the short card's words
   turns the view, as the first stage asks. Folding is not closing: the strip has no close either, and the walk still
   ends only at the console. Open, it stands under Sloane's chip and above the captions and a
   shop's chip; where that band is short of 7 rem it ends above the buttons, over those chips; and where even that is
@@ -1362,10 +1375,12 @@ the exit program run); `?boot=tty` never shows it (there is no city to walk).
   it stays there until the screen changes size. At the wheel sideways the card steps aside (Sloane still says its
   lines) and comes back when you get out. It names the stage (1 of
   6), says the one thing to do in your device's own words (the keys, the pad's buttons by their layout, or the touch
-  controls and the Menu), tells you what it is in a line an eight-year-old follows, and unfolds **five whys** one at a
-  time when you press **Why?**, each one deeper than the last and each one true of the city as it runs (the 24 fps,
-  180-degree-shutter cinema camera; GGX; the First Law under every wheel; the sixteen workplaces; the closed
-  business-casual wardrobe; the console's words, the four laws of the Ring-0 kernel and the bounded Crimson Noir Script VM).
+  controls and the Menu), tells you what it is in words a five-year-old follows, and answers the **five W's** one at
+  a time: its button names the next one (**Who?**, then **What?**, **When?**, **Where?** and **Why?**), and each
+  answer is just as plain and true of the city as it runs (you, a person on the street and not a floating camera;
+  Sloane, the city's concierge; the First Law under every wheel and a parked car that waits for a driver; the sixteen
+  workplaces; the closed business-casual wardrobe; the console at the top of the screen, its own language and the four
+  laws of the Ring-0 kernel).
   The first card also reads your machine in three rows: the device (a phone, a laptop or desktop, a workstation) and
   its graphics, as the engine sized the city for at boot; the picture tier the city runs at now (it follows the
   quality governor), with a bar from Lite to Peak; and Sloane as the brain readout has her: *Thinking on this device*
@@ -4075,7 +4090,9 @@ are no toasts and no settings menu, and the console's `quality` command is the o
 - **Tiers:** there are seven: Lite (tier -1, reached automatically only on a lite profile, or pinned by hand), Minimal
   to Ultra, and Peak (tier 5, reached automatically only on a big GPU that reports its own timings, below, or pinned
   by hand). They scale render resolution, shadows (their map, their reach and their softness: Sun shadows), post-processing, the lit street lamps (the
-  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), and the crowd's LOD
+  nearest to you after dark: 32 on Minimal to 384 on Peak, none on Lite; Night lighting), how far Lakefront Metro's
+  lamps, trees and signal poles are drawn (160 m on Lite, 220, 260, 320, 400 and 480 m from Minimal to Ultra, 520 m on
+  Peak; the city's are always drawn), and the crowd's LOD
   distance, near radius, draw distance and **density**. Density is a stable per-agent hash, so the same people stay
   visible.
 - **Stepping down:** when FPS stays below 60 for more than 2 s (with 5 % vsync tolerance, so a clean
@@ -4592,7 +4609,7 @@ Every source file opens with "Why does this file exist? / What breaks if it is r
 | 03_Spawn_Agents | `crowd.wgsl` (with `crowdWay.wgsl`, the room and lot routing, or `crowdWayLite.wgsl`, the light kernel's straight lines), `crowdCompute.ts`, `crowdSensor.ts`, `crowdSim.ts`, `crowdCull.ts`, `crowd.ts`, `skills.ts`, `look.ts`, `ragdoll.ts`, `ragdollRig.ts` | GPU pedestrians, their hazard sensing and their summons (in the physics worker), the contract and layouts both sides share, culling/LOD/density and indirect InstancedMesh rendering, the dissolve amounts and the look words (on the page); every pedestrian's skills, the recruitment rules and the rally rule both realms run; the closed wardrobe and the packed look word; the active ragdoll's balance machine, pool and Rapier body (wired by `07_Execute_Actions/ragdollRealm.ts`; `COLLISION.ragdoll: true`, and `collision.test.ts` keeps that the one road to it) |
 | 04_Connect_Hardware | `input.ts`, `hal.ts`, `dualsense.ts`, `lineLink.ts`, `gamepad.ts`, `seats.ts`, `peripheralPolicy.ts`, `jointState.ts`, `urdf.ts`, `actuatorFit.ts`, `robotLink.ts`, `TouchControls.tsx` | Keyboard/mouse/touch/gamepad (the ping among the actions), the hardware bus and its drivers (the HAL/1 door of the joint bridge among them); the seating plan for four local players and the per-seat pad intent; the default-deny gate for actuating peripherals (`docs/hal-peripherals-spec.md`), wired through the joint bridge: the joint vocabulary and its judges, the URDF reader, the step-response fit and round-trip meter, and the page's robot bridge (three doors, the gate, the lease, the calibration; `docs/joint-bridge-spec.md`) |
 | 05_Observe_Environment | `telemetry.ts`, `governor.ts`, `profile.ts`, `lookStore.ts` | SIPOC X snapshot (the dissolve, the pings, the drawing switch, the players, the session and the captions among its optional fields), frame statistics, quality governor (and its hold while the model in this page works), the visitor's name and look |
-| 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the 5-Whys intent engine |
+| 06_Make_Decisions | `traffic.ts`, `tracks.ts`, `trackDriver.ts`, `routingWasm.ts`, `routing.wasm.ts` (generated from `native/routing`), `intent.ts` | The track arithmetic as WebAssembly, with `tracks.ts` its reference; AI drivers: the street-hopping driver and the track follower, sharing one reaction check and hazard episode; the fixed track network (the car rings, the train loop, the drone corridors, the plane racetrack, the headway seats, the box hold); the goal-question intent engine |
 | 07_Execute_Actions | `engine.ts`, `simClient.ts`, `simProtocol.ts`, `physics.worker.ts`, `simHost.ts`, `simCore.ts`, `physics.ts`, `vehicles.ts`, `car.ts`, `carRig.ts`, `fleetView.ts`, `trackFleet.ts`, `ragdollRealm.ts`, `articulated.ts`, `jointRealm.ts`, `jointBridge.ts`, `rigView.ts`, `sanctuary.ts`, `player.ts`, `head.ts`, `controls.ts`, `viewports.ts`, `quality.ts`, `audio.ts`, `acoustics.ts`, `captions.ts`, `postfx.ts`, `cinema.ts`, `shutter.ts`, `volumetrics.ts`, `ghost.ts`, `contact.ts`, `dissolve.ts`, `netView.ts`, `operator.ts`, `harness.ts`, `spatial.ts`, `Hud.tsx`, `BootVeil.tsx`, `Concierge.tsx`, `Customizer.tsx`, `glyphs.ts`, `terminal/` (`Terminal.tsx`, `bridge.ts`, `consoleBridge.ts`, `commands.ts`, `repl.ts`) | Frame loop; the physics realm (worker entry, its message door, the simulation core, Rapier world, fleet on its tracks, the car rules the page and the room share (the rig, the substep, the exit point, the fleet's plan), the scheduled craft and their pose stream, the balance machine over the pedestrians near the operator and its rig stream, the robots' bodies (a servo chain built from a manifest, the pool of them with their twin filter and modes, the shared joint buffer the page reads them from), sanctuary, up to four avatars) and the page's end of it (client, protocol, fleet drawing, rig drawing, first-person heads, per-seat controls, the split-screen arithmetic); quality applier, soundscape (with its speech voice, rooms, peer voices and the sound-event stream), room acoustics, the caption track, post chain, the cinema camera (24 fps pacer, 180° shutter, ND and film response), sun shafts, ghost view, the passage envelope and the code dissolve's envelope, the network ghosts, operator facade and physics harnesses (the spatial sweep's plan among them), HUD, boot veil, concierge, the wardrobe card, control glyphs, console (with R0, its stack machine) |
 | 08_Swarm | `recruitment.ts`, `taskRouter.ts`, `memory.ts`, `ping.ts` | The swarm's hash-chained memory and weight ledger; the operator's voice: on-device continuous speech recognition, the request parser, the main-thread proximity match, the request to the physics worker, the rally request, and the console and `recruit()` fallback; the task gateway that binds skill-bound work to the tethered swarm; the swarm's episodic memory (IndexedDB, by world seed and pedestrian); the ping's pick, board and rally plan |
 | 09_Cognition | `localCompute.ts`, `claudeApi.ts`, `router.ts`, `pageMind.ts`, `modelFit.ts`, `prefixCache.ts`, `kvPager.wasm.ts` (generated from `native/kv-pager-wasm`), `localSpeech.ts`, `inPage.ts`, `inPagePlan.ts`, `inPageCaps.ts`, `gguf.ts`, `modelStore.ts`, `modelStore.worker.ts`, `siteModel.ts`, `wllamaRuntime.ts` | The prompt-prefix page table over kv-pager as WebAssembly; the operator's model providers and voice: the router (`claude` through a gateway on this machine with the operator's key; `ollama` and `llamacpp` on this machine) and its one maker for the city and the console alone (`pageMind.ts`), the local client in both wire formats and the Claude client, the system prompt opening with the 14A core and then the tethered people's skills and memories, the streamed answer, the speech client for a speech server on this machine, the audio for the soundscape, the cut when the tether breaks, and every failure as one sentence; auto's sizing of Ollama's model by the GPUs' memory; the model in this page (`inpage`): its device policy, what the browser offers, the GGUF header check, the file kept in the page's storage (copied by a worker of its own), the one model the web copy serves beside the page (its pin, its manifest and its download, checked as it streams), and the one adapter over wllama |
@@ -4871,6 +4888,7 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 | `ios-ipa` | an arm64 `.ipa`, unsigned (`tauri ios build --no-sign`: Xcode's archive with code signing off, `Payload/*.app` zipped) | macOS with Xcode | built by the workflow (best effort: its failure does not fail the run); not run on a device. It cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid developer account for TestFlight or the App Store). The home-screen web copy (below) needs none of that |
 | `uefi-x64` | `BOOTX64.EFI`, and `crimson_noir_os.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted in QEMU with OVMF by the workflow; the release media still come from `build-release.yml`, which does the same before it publishes |
 | `uefi-arm64` | `BOOTAA64.EFI`, and `crimson_noir_os-aarch64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's Arm `virt` machine with edk2 (AAVMF): the self-test with the x86-64 image's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on Arm hardware. The keyboard is the serial console (below) |
+| `uefi-riscv64` | `BOOTRISCV64.EFI`, and `crimson_noir_os-riscv64.img` and `.iso` where `sh`, mtools, sgdisk and xorriso are installed | anywhere cargo is | built, baked a second time and compared, and booted by the workflow on QEMU's RISC-V `virt` machine with edk2 over OpenSBI: the self-test with the build's fingerprint, the tutorial, the terminal typed over the serial line, power-off. Not booted on a RISC-V machine. The keyboard is the serial console, and the firmware must offer a framebuffer (below) |
 
 - **Flags.** `--list` prints the table with what this machine can build; `--targets a,b` names targets (one it cannot
   build, or that fails, exits 1), `--targets all` builds every target it can and skips the rest with a note,
@@ -4878,15 +4896,31 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   commands and builds nothing; `--out <dir>` (default `out/matrix`) is where each target's files land, in
   `<dir>/<id>/`, with `<dir>/matrix.json` saying what was built, skipped or failed and why; `--skip-page` keeps the
   `dist/` already there. On Windows: `npm run build:matrix -- --targets windows-x64,windows-arm64`.
-- **Crimson Noir OS on aarch64.** The bootable image is one system on two machines: `crimson_noir_os/boot/src/arch.rs`
-  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard) or `arch/aarch64.rs`
+- **Crimson Noir OS on aarch64.** The bootable image is one system on three machines: `crimson_noir_os/boot/src/arch.rs`
+  picks the machine layer, `arch/x86_64.rs` (COM1, the TSC, a GDT and IDT, the PS/2 keyboard), `arch/aarch64.rs`
   (the UART the firmware's ACPI SPCR table names, a PL011 or an SBSA generic UART; the generic timer; the image's own
-  exception vectors at EL1 or EL2, every exception to the fault screen), and everything else is shared. An Arm machine
+  exception vectors at EL1 or EL2, every exception to the fault screen) or `arch/riscv64.rs` (next), and everything
+  else is shared. An Arm machine
   has no PS/2 controller and the image has no USB stack, so on aarch64 the keyboard is the serial console: type into
   the serial line (a terminal's arrows and Page Up/Down work). Boot it at home with
   `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-arm64/crimson_noir_os-aarch64.img --arch aarch64
   --wait "SELFTEST PASS"` (QEMU's `virt` machine, a Cortex-A72, edk2's AAVMF firmware and a ramfb screen). A machine
   whose firmware publishes no SPCR table, or whose console UART is a 16550, boots with no log and no keys.
+- **Crimson Noir OS on riscv64.** Rust has no riscv64 UEFI target and its linker writes no RISC-V PE file, so this
+  image is built for the bare-metal target `riscv64gc-unknown-none-elf` (a 64-bit RISC-V processor with the usual
+  extensions, floating point among them), linked position-independent at address 0 by the image's own linker script
+  (`boot/riscv64.ld`) and written out flat by the same linker behind a PE32+ header laid out by hand in
+  `arch/riscv64.rs`. A firmware loads that file as any UEFI application and relocates nothing, so the image's entry
+  applies its own relocations before any Rust runs, and returns the firmware's load error if it meets one it cannot
+  place. After the firmware lets go, the log and the keys go through the SBI console (the supervisor interface under
+  every RISC-V UEFI firmware: its Debug Console extension, or the older console calls), the clock is the `time`
+  register, and the image's own trap vector sends every exception to the fault screen. The keyboard is the serial
+  console, as on aarch64, through the same decoder. Boot it at home with
+  `python3 crimson_noir_os/tools/boot_test.py out/matrix/uefi-riscv64/crimson_noir_os-riscv64.img --arch riscv64
+  --wait "SELFTEST PASS"` (QEMU's `virt` machine, QEMU's own OpenSBI, edk2 from Debian's `qemu-efi-riscv64`, and a
+  ramfb screen). What it needs from a real machine, and what has not been tried: a UEFI firmware (edk2 or U-Boot's;
+  only edk2 has loaded it) that offers a framebuffer (GOP), which many RISC-V boards do not, and there the image stops
+  with its "no graphics output" message; a processor with floating point; and nothing here has run on RISC-V hardware.
 - **What is not made, and why.** Signing and notarization: there is no Apple Developer or Windows code-signing
   account, so SmartScreen, Gatekeeper and iOS each ask or refuse as described above. A `linux-arm64` build on an x64
   machine, or any iOS or macOS build off a Mac. A static ELF of the app: the Linux shell links WebKitGTK and GTK, which
@@ -4903,11 +4937,27 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
   the runner, and checks the `.app`, its `.dmg` and its zip, both slices, their libraries, their lowest macOS, their
   symbols and how each slice was built (`tools/build/macAudit.mjs`; The macOS app's model); nothing starts the built
   app there. Each job publishes its files as the artifact `matrix-<id>` and its report;
-  a summary job lays the nine targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
+  a summary job lays the ten targets out in the run's summary, naming `windows-x64` as `windows-app.yml`'s. On a `v*`
   tag the files go onto the tag's release after `build-release.yml` has created it (the same wait as `windows-app.yml`),
   all but the x86-64 media, which `build-release.yml` publishes under the same names; `build-release.yml` dispatches
   this workflow for a tag it makes itself. `current.yml` calls it with each commit on main that ci passes, for the
   current build (below). Only GitHub's own actions run in it.
+- **Sizes GitHub takes.** GitHub refuses a release asset of 2 GiB or more, and GitHub Pages publishes no site over 1
+  GB, so every workflow that uploads checks first with `tools/verify/site_budget.mjs`, which prints one line per check
+  with the size and the limit and fails the run with the file or folder named: each job here on `out/<id>/`, last
+  before its upload; `windows-app.yml` on its installer, `.msi` and bare `.exe`; `build-release.yml` on the baked
+  media; `current.yml` on every file it downloads, before it publishes (The current build); and `web.yml` on the whole
+  web copy, the site's model and the speech pack included, which must be at most 950,000,000 bytes (On an iPhone). A
+  size is what the file system says the file holds; a symbolic link counts at the size of what it names, and one that
+  names nothing fails (one whose target is there but cannot be read gives the system's reason). A web copy with
+  anything in it that cannot be measured fails by name, and its line says it was not measured rather than giving a
+  short total. No flag or environment variable moves a limit. The tool always comes from the workflow's own commit:
+  where a job bakes or builds another commit (`build-release.yml` baking a tag that exists again, or the jobs here and
+  `windows-app.yml` building the commit `current.yml` passes them), it is read from a sparse checkout of the
+  workflow's commit in `.size-check/`, so a commit older than the tool is still checked. A web copy built in the
+  container on 21 November 2026 measured 12,416,491 bytes without its model and speech pack, and 453,986,789 with
+  stand-ins of both at their exact sizes. Not verified: the steps on CI until CI runs them; GitHub's own limits can
+  change.
 - **Which browser engine each app gets.** WebView2 (Chromium) on Windows, WebKitGTK on Linux, WKWebView on macOS and
   iOS, the Android System WebView. The city needs WebGPU from it: Windows has it; the others are untested on a device,
   and where an engine lacks it the app shows the recovery card, which names the app's own web view (WebView2,
@@ -4917,8 +4967,8 @@ under the same Node), because Gradle and Xcode call the Tauri CLI back with the 
 ## The current build
 
 Every download follows `main`, as the web copy does. Each time ci passes on a commit on main, the `current` workflow
-(`.github/workflows/current.yml`) builds all nine targets of the build matrix from that commit, the Windows x64 app
-through `windows-app.yml` and the other eight through `build-matrix.yml` (both called with the commit), and
+(`.github/workflows/current.yml`) builds all ten targets of the build matrix from that commit, the Windows x64 app
+through `windows-app.yml` and the other nine through `build-matrix.yml` (both called with the commit), and
 `tools/build/current.mjs` puts the files on one GitHub pre-release, **Crimson Noir: Agent City, current build**, under
 the tag `current`: <https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/releases/tag/current>. The next green
 commit replaces them the same way. It is not a numbered release: the latest numbered release keeps its "Latest" label,
@@ -4930,8 +4980,9 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   macOS `.dmg` and zipped `.app`, the Android `.apk` (with the `.apk.idsig` apksigner writes beside it, its v4
   signature for streaming installs; a phone does not need it), the iOS `.ipa`, Crimson Noir OS's x86-64 media
   (`BOOTX64.EFI`, `crimson_noir_os.img`, `crimson_noir_os.iso`, with `containment.nix`, `containment.lock`,
-  `NOTICE.txt` and `LICENSE`, as a numbered release carries them) and its aarch64 media (`BOOTAA64.EFI`,
-  `crimson_noir_os-aarch64.img` and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
+  `NOTICE.txt` and `LICENSE`, as a numbered release carries them), its aarch64 media (`BOOTAA64.EFI`,
+  `crimson_noir_os-aarch64.img` and `.iso`) and its riscv64 media (`BOOTRISCV64.EFI`, `crimson_noir_os-riscv64.img`
+  and `.iso`), then `SHA256SUMS` over every built file and `current.json`, which records
   the commit, run and time that made each target's files. The notes list every file with its commit. The apps' file
   names carry the version in `package.json` at the commit they were built from (`1.0.0-stable-beta` today; the `.rpm`
   as `1.0.0-0.stable.beta`); the zipped `.app`, the OS media and their notices carry none. The commit, and each
@@ -4943,7 +4994,8 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   harnesses) is what starts the workflow. Each job uploads only after its own checks, and each UEFI job only after
   baking its media a second time from a clean build, comparing the bytes, and booting the disk image in QEMU through
   the self-test, the tutorial and the terminal to power-off, and the ISO to its self-test. Nothing is signed, as in the
-  build matrix above.
+  build matrix above. Before the publish (and its dry run), every downloaded file is checked under GitHub's 2 GiB for
+  one release asset (The build matrix, Sizes GitHub takes).
 - **When a build fails.** The other targets are still published. The one that failed keeps the files of the last
   commit it built, as long as the release still holds those very bytes, and the notes and `current.json` say which
   commit that was; the run is red so it is seen. The iOS build is best effort, as in the build matrix, and never turns
@@ -4951,9 +5003,15 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
 - **It never steps back.** Only a commit on main that ci passed on is built, and it is published only while it is
   still on main and at least as new as what the release holds (asked again after the build). When the release's
   record cannot be read, or GitHub cannot say whether a commit is on main or compare it with the release's, nothing is
-  written and the run is red. One run at a time, and one waiting: a run that comes while another waits takes its
-  place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of merges the
-  release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
+  written and the run is red. The ci run that starts a run counts by GitHub's answer for that very run, asked for by
+  its id and its attempt (a run that is run again keeps its id, and the attempt that ended is the one that passed),
+  because the list of ci's runs can trail a run that has just ended: on 21 November 2026 it did, and a run ended
+  green having built nothing for a commit ci had just passed on. A run that GitHub does not show as ci, finished and
+  passed on main in this repository is never taken on the workflow's word: the newest commit ci's list shows is
+  built all the same, with a warning, and when that builds nothing the run is red, because the commit that run
+  passed on may have been passed over. One run at a time, and one waiting: a run that comes while another waits
+  takes its place, and whichever run starts builds the newest commit on main that ci passed on, so during a burst of
+  merges the release follows the last green commit. The one exception is "Re-run failed jobs", which keeps the commit an earlier
   attempt picked: such a re-run turns red unless the release then holds the newest green commit (or GitHub says it
   holds a newer one), and red too when GitHub cannot answer, so someone runs the workflow by hand.
 - **The record.** `current.json` goes up first under the name `current.next.json`, and that copy is deleted once
@@ -4963,9 +5021,10 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
   record, or its files were deleted by hand) gets an empty `current.json` before any file. A commit counts as
   published only when the release holds exactly what its record says, `SHA256SUMS` lists those files, and the notes
   name the commit and that publish's time; otherwise the next run builds it again.
-- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI` and the
-  four notices. The UEFI media are reproducible only for one commit, because each `.img` and `.iso` carries its
-  commit's time and GUIDs, so those four files are uploaded again with every commit, as are the apps.
+- **Uploads.** A file whose bytes did not change is not uploaded again: usually `BOOTX64.EFI`, `BOOTAA64.EFI`,
+  `BOOTRISCV64.EFI` and the four notices. The UEFI media are reproducible only for one commit, because each `.img`
+  and `.iso` carries its commit's time and GUIDs, so those six files are uploaded again with every commit, as are the
+  apps.
 - **The tag.** `current` is put at the commit before any file is written. GitHub is reported (not yet seen here) to
   let the workflow's own token move a tag only when no workflow file changed between the two commits, and to let it
   make one at a commit whose workflow files match main's tip; so when a move is refused, the release is set on a
@@ -4981,6 +5040,37 @@ numbered releases are still cut by hand from a pushed tag (`build-release.yml`),
 - **By hand.** Actions › current › Run workflow, on main, only when an automatic run failed: it builds the newest
   commit on main that ci passed on, and with "force" even when the release already holds that commit. Retry a failed
   run this way (or with "Re-run all jobs"), not with "Re-run failed jobs".
+- **In step with the web copy.** The web copy and the downloads are published by two workflows, each after the same
+  green ci, and either can skip, wait or fail without the other. The `sync` workflow (`.github/workflows/sync.yml`,
+  `tools/build/sync.mjs`) looks at what is published and turns red when it does not all come from one commit, the
+  newest on main that ci passed on. It reads the web copy's `build.json` (the commit it was built from, below) and
+  `build.txt`, asked for past every cache; `current.json` (the commit of the publish and of each target's files) and
+  whether a staged record is still there; where the tag `current` points; each recorded file's size and SHA-256 as
+  GitHub holds it; and the first two sectors of each UEFI disk image, whose disk GUID
+  `crimson_noir_os/tools/build-image.sh` derives from the commit it bakes, so the image itself says which commit it
+  is. Behind is not red while something can still mend it: ci passed less than ten minutes ago and no run of that
+  publisher begun since has ended (a publisher's own run is its answer, so the look that run's end starts sees a
+  run that built nothing at once); a run of the publisher has not ended (GitHub gives a run's creation alone, so a
+  run counts while it is younger than its jobs' limits and three hours of waiting for runners: 3 hours 35 minutes
+  for web, 5 hours 25 minutes for current); the web copy was published less than fifteen minutes ago, by a web run
+  whose deploy step ran (GitHub Pages may serve the copy before for ten); or the thing has never been published at
+  all (a copy from before copies were stamped, a target new to the build matrix) and ci is still running on a newer
+  commit, since it arrives with the first publish of a commit that has it. While a
+  current run has not ended, a file that is not yet the one the record names is behind too, not broken: a publish
+  moves the tag, then replaces each file under its own name, and writes the record last. Otherwise each thing that
+  is behind is one red line with the commit it is at and what to do, and when main's newest green commit, the web
+  copy or the release could not be read (each read of GitHub and of the site is made three times) the run is red as
+  well, since "could not look" is not "in step". Warnings, not red: the iOS build, best effort everywhere; a disk
+  image whose first sectors could not be read (its size and SHA-256 are still held against the record); and the tag
+  where the last publish left it because GitHub refused to move it (the record says so, and the next publish tries
+  again). When the runs cannot be listed, nothing counts as on its way, and that is said. The run's summary is a
+  table of every published thing and its commit.
+  It runs after each run of web or current on main, every hour (GitHub may start a scheduled run late), and by hand
+  (Actions > sync > Run workflow); it only reads, with read access alone. It mends nothing by itself: a red run says
+  which publisher to run by hand. Both publishers follow one rule, the newest commit on main that ci passed on,
+  main's tip or not (`tools/build/current.mjs`: `pick` for the downloads, `web-pick` for the web copy), so a commit
+  ci failed on at the tip holds neither of them back. Not yet seen: the workflow on main (its first runs are this
+  change's own pull request, which only reports).
 - **On a pull request** that touches the workflow, its tool, `windows-app.yml` or `build-matrix.yml`, it builds
   everything the same way and runs the publish step as a dry run with read-only access: the run's summary shows the
   notes it would write, and the log what it would upload, keep and delete.
@@ -5048,21 +5138,32 @@ by `tools/web/pwa.mjs`:
 Serve the folder over https, open the address in Safari, then Share > Add to Home Screen: the city opens full screen
 from its icon, with the touch controls (Controls). Two ways to serve it:
 - **GitHub Pages (a public address).** Once, in GitHub: the repository's Settings > Pages > Source: GitHub Actions.
-  From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the commit ci
-  tested, and only while it is still main's tip, so during a burst of merges it publishes once, after the last one's
-  ci passes, and never a commit ci has not passed. Actions > web > Run workflow publishes main by hand, without
-  waiting for ci. The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
+  From then on `.github/workflows/web.yml` publishes main by itself each time ci passes on main: the newest commit
+  on main that ci passed on, whether or not main has moved on since (`tools/build/current.mjs web-pick`, the rule
+  the downloads follow; until 22 November 2026 only main's tip was published, and on a day of merges the copy stood
+  still for hours behind commits ci had passed). Just before the deploy it asks again (`web-confirm`): when ci has
+  since passed on a newer commit, that commit's own run publishes it and this one stops, so the copy never steps
+  back and never shows a commit ci has not passed. Actions > web > Run workflow, on main, publishes the same
+  commit by hand; with "tip" ticked it publishes main as it is, without waiting for ci, for the day ci itself is
+  what is broken. Each publish puts `build.json` beside the page: the commit the copy is built from, the version, the
+  build's name as `build.txt` gives it, the ci run that passed on that commit (empty for a run by hand with "tip")
+  and the run that published it. The page and its worker never read it and the worker never keeps it (it always comes from the
+  network), and it is no part of the build's name, so the same page is the same build whatever it says; a build made
+  on your own machine has none. It is what the `sync` workflow reads to tell whether the web copy and the downloads
+  come from one commit (The current build, In step with the web copy). The city is at `https://cassius-software.github.io/Crimson-Noir-AI-Agent-City/`, for anyone with
   the address (the repository and its releases are public already). GitHub serves the files and runs nothing. Each
   publish also puts the site's model in `models/` beside the page (A model in this page, The site's model): fetched
   from Hugging Face at its pinned revision, kept in the workflow's cache by its pin, and checked against the pin's
   size and SHA-256 before every upload; a file that fails the check fails the publish and leaves the copy already up.
-  After the deploy the workflow reads the served manifest and the model's size as the site reports it, as a note
-  only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about 250 full downloads).
-  Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the model's two files
-  from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin, the runtime's
-  module from the installed dependency and the vocabulary from the repository, each checked against the pin's size
-  and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and notices of both
-  beside them; a file that fails the check fails the publish.
+  Then the whole copy, the model and the speech pack included, is summed (`tools/verify/site_budget.mjs site
+  dist-web`): a copy over 950,000,000 bytes (a margin under the 1 GB GitHub Pages publishes for a site) fails the
+  publish the same way. After the deploy the workflow reads the served manifest and the model's size as the site
+  reports it, as a note only, and never downloads the model (GitHub Pages has a soft limit of 100 GB a month, about
+  250 full downloads). Each publish puts the speech pack in `speech/` the same way (The microphone pill, Words): the
+  model's two files from the npm registry's tarball of the pinned package, kept in the workflow's cache by the pin,
+  the runtime's module from the installed dependency and the vocabulary from the repository, each checked against the
+  pin's size and SHA-256 before every upload (`tools/web/speechPack.mjs`), with a manifest and the licences and
+  notices of both beside them; a file that fails the check fails the publish.
 - **Your own devices only (Tailscale).** Tailscale on the PC and on the iPhone, with HTTPS certificates turned on for
   the tailnet (Tailscale's admin console, DNS: MagicDNS and HTTPS Certificates). On the PC, after
   `npm run build:web`: `tailscale serve --bg <full path of dist-web>`. The iPhone opens
@@ -5605,6 +5706,19 @@ entry and build) is proprietary, copyright (c) 2026 Julian Cassius Subban, all r
 `docs/`, the container build, the publish script and the Nix flake) is open source under MIT (`LICENSES/MIT.txt`); the game
 mechanics are offered under the ORC License (`NOTICE.md`). Every source file opens with its licence header, and
 `node tools/license/headers.mjs check` (CI's `license-headers` check) fails on a file without one.
+
+**The licence gate.** `node tools/license/gate.mjs` holds the repository to `tools/license/policy.json`, and
+`src/licenceGate.test.ts` runs it with every test run. It fails on four things a machine can see: a Rust crate, in
+any of the six lockfiles, that the committed list (`tools/license/crates.json`) does not name or names under a
+licence the policy does not allow (the permissive family, and MPL-2.0 for five crates by name); a name from the
+policy's list of other owners' names in any text file; a picture, icon or packed data file with no entry saying
+where it came from and whose it is; and a directory under `third_party/` without its licence text and notices. It
+also prints what the policy marks as open, a question only the owner can answer; today that is where the cover
+picture came from. CI's Rust job adds `crate-licences` (`node tools/license/gate.mjs crates --check`), which reads
+every crate's licence from the registry with `cargo metadata` and fails when the committed list differs. After a
+lockfile changes, `node tools/license/gate.mjs crates --write` rewrites the list, and its diff shows what the change
+brought in. The gate is not legal advice: it proves the files match the policy, not that the policy is enough.
+`docs/ip-audit.md` (§8) records what its first run found and what is left for the owner and a lawyer.
 
 ## Browser support and what is verified
 

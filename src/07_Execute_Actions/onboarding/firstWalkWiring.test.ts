@@ -436,7 +436,11 @@ test('the card has no close, no skip and no key that puts it away; every stage h
   assert.doesNotMatch(src, /onClose|onSkip|Escape|data-walk-close|data-walk-skip/, 'no way out but the console')
   assert.doesNotMatch(src, /<button[^>]*>\s*(?:Close|Skip|Dismiss|Later|Not now)\b/i)
   assert.match(src, /data-walk-show/)
-  assert.match(src, /data-walk-why/)
+  // The five W's, one at a time: the button names the next one (Who? What? When? Where? Why?), and each answer shows its W.
+  assert.match(src, /data-walk-w=\{card\.ws\[ws\]!\.w\}>\{card\.ws\[ws\]!\.w\}\?<\/button>/)
+  assert.match(src, /\{w\.w\}\?<\/span> \{w\.answer\}/)
+  assert.match(src, /\{card\.eli5\}/)
+  assert.doesNotMatch(src, /data-walk-why|card\.whys|eli8|And why\?/, 'the five W\'s, not five whys')
   assert.doesNotMatch(src, /data-walk-run|data-walk-line-button|onType|onRun/, 'no program on the card any more')
   assert.match(src, /data-walk=\{card\.stage\}/)
   assert.match(src, /aria-live="polite"/)
