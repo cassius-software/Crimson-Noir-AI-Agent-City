@@ -21,7 +21,10 @@ import type { Fault, FaultCode } from './fault.ts'
 import { createInstance } from './instance.ts'
 import type { ImageDims, LensModule, Stage } from './lens.ts'
 
-/** The limits of the specification: WebGPU's defaults, but for stageUniforms, which leaves one to the inline constants. */
+/**
+ * The limits of the specification: within WebGPU's defaults, below them for sets (3, not 4), bindings (16, not 1000) and
+ * stageUniforms (11, not 12), the fourth set and one uniform binding of each stage being the GPU back end's own block.
+ */
 export const LIMITS: Limits = Object.freeze({
   imageSize: 8192, imageLayers: 256, sets: 3, bindings: 16, uniformRange: 65536, storageRange: 134217728, offsetAlign: 256,
   stageUniforms: 11, stageStorage: 8, stageImages: 16, stageSamplers: 16, stageStorageImages: 4, dynamicUniforms: 8, dynamicStorage: 4,

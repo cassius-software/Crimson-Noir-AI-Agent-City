@@ -177,11 +177,13 @@ function logic(): LensModule {
 function geometry(): LensModule {
   const b = lens('compute')
   const { a, i, n, v, w, g } = unknowns(b)
-  b.dot(v, w); b.cross(v, w); b.reflect(v, w); b.normalize(v); b.length(v); b.transpose(g); b.mul(g, v); b.mul(g, g); b.mul(v, g); b.mul(g, a)
+  b.dot(v, w); b.cross(v, w); b.reflect(v, w); b.normalize(v); b.length(v)
+  const tg = b.transpose(g)
+  b.mul(g, v); b.mul(g, g); b.mul(v, g); b.mul(g, a)
   const m = b.make('f32x4', v, a); b.make('f32x3', a); b.make('m2', b.make('f32x2', a, a), b.make('f32x2', a, a))
   b.pick(m, 'zyx'); b.pick(m, 'w'); b.lane(v, n); b.lane(v, i); b.column(g, 2)
   const bv = b.lt(v, w)
-  b.any(bv); b.all(bv); b.any(b.lt(a, a)); b.choose(b.lt(a, a), v, w); b.choose(bv, v, w); b.choose(b.lt(a, a), g, g)
+  b.any(bv); b.all(bv); b.any(b.lt(a, a)); b.choose(b.lt(a, a), v, w); b.choose(bv, v, w); b.choose(b.lt(a, a), g, tg)
   return b.finish()
 }
 
@@ -282,6 +284,23 @@ function raw(): LensModule {
 }
 
 /**
+ * Raw words with arrays of fixed length: in the fixed part (of two-word vectors, and of grids) and inside the final
+ * array's element, each read at a constant index and at a value-held one.
+ */
+function rawFixed(): LensModule {
+  const b = lens('compute')
+  const a = b.storage(0, 0, { n: 'u32', pair: arrayOf('f32x2', 3), gs: arrayOf('m2', 2), items: arrayOf({ q: arrayOf('i32', 2), w: 'u32' }) })
+  const o = b.storage(0, 1, { f: arrayOf('f32x2', 2), g: 'm2', k: arrayOf('i32', 2) }, { writable: true })
+  const n = b.read(a, 'n')
+  b.write(o, ['f', 0], b.read(a, 'pair', 2))
+  b.write(o, ['f', 1], b.read(a, 'pair', n))
+  b.write(o, ['g'], b.read(a, 'gs', 1))
+  b.write(o, ['k', 0], b.read(a, 'items', n, 'q', 1))
+  b.write(o, ['k', 1], b.read(a, 'items', 1, 'q', n))
+  return b.finish()
+}
+
+/**
  * Images in a compute module: texel of a 2d image (i32 position, u32 level), a 2d-array one (u32 position, i32 layer
  * and level), a depth one and an integer array one; extent of a level (an i32 below 0) and of a storage image; sample
  * at an explicit level, without and with a layer; put to an rgba8 image at an i32 position and an r32u one at a u32.
@@ -375,7 +394,7 @@ function depthOnly(): LensModule {
 /** The modules this file lowers by name; the properties and the coverage table read them all. */
 const CORPUS: { readonly [name: string]: () => LensModule } = {
   small, literals, families, widths, minmax, casts, arithmetic, logic, geometry, control, unreachable, blocks, entry, hidden, allHelpers,
-  raw, images, vertex, sure, fragment, depthOnly,
+  raw, rawFixed, images, vertex, sure, fragment, depthOnly,
 }
 
 /**
@@ -927,7 +946,7 @@ test('geometry, building and picking: value-held lanes clamped into the vector, 
     'let v35: vec3<f32> = select(v6, v5, v34);',
     'let v36: vec3<f32> = select(v6, v5, v29);',
     'let v37: bool = v0 < v0;',
-    'let v38: mat3x3<f32> = mat3x3<f32>(select(v8[0u], v8[0u], v37), select(v8[1u], v8[1u], v37), select(v8[2u], v8[2u], v37));',
+    'let v38: mat3x3<f32> = mat3x3<f32>(select(v14[0u], v8[0u], v37), select(v14[1u], v8[1u], v37), select(v14[2u], v8[2u], v37));',
   ))
 })
 
@@ -1260,6 +1279,37 @@ test('raw words: inline loads and stores at clamped words, zero and no store whe
   assert.equal(out.code.split('arrayLength(&r').length - 1, 4)
 })
 
+test('raw words: an array of fixed length, in the fixed part or inside the final array\'s element, at its stride, a constant index folded in', () => {
+  const m = rawFixed()
+  // Words: n 0; pair 2 to 7 (stride 2); gs 8 to 15 (stride 4); items from 16, stride 3, q at 0 and 1 of each.
+  assert.equal(body(wgsl(m)), lines(
+    'let v0: u32 = r0[0u];',
+    'let v1: vec2<f32> = vec2<f32>(bitcast<f32>(r0[6u]), bitcast<f32>(r0[7u]));',
+    'r1.f0[0u] = v1;',
+    'let ng_j0: u32 = min(v0, 2u);',
+    'let ng_w1: u32 = (ng_j0 * 2u) + 2u;',
+    'let v2: vec2<f32> = vec2<f32>(bitcast<f32>(r0[ng_w1]), bitcast<f32>(r0[ng_w1 + 1u]));',
+    'r1.f0[1u] = v2;',
+    'let v3: mat2x2<f32> = mat2x2<f32>(bitcast<f32>(r0[12u]), bitcast<f32>(r0[13u]), bitcast<f32>(r0[14u]), bitcast<f32>(r0[15u]));',
+    'r1.f1 = v3;',
+    'let ng_len2: u32 = arrayLength(&r0);',
+    'let ng_n3: u32 = select(0u, (ng_len2 - 16u) / 3u, ng_len2 >= 16u);',
+    'let ng_j4: u32 = min(v0, max(ng_n3, 1u) - 1u);',
+    'let ng_w5: u32 = min((ng_j4 * 3u) + 17u, ng_len2 - 1u);',
+    'let ng_t6: i32 = bitcast<i32>(r0[ng_w5]);',
+    'let v4: i32 = select(i32(), ng_t6, ng_n3 != 0u);',
+    'r1.f2[0u] = v4;',
+    'let ng_len7: u32 = arrayLength(&r0);',
+    'let ng_n8: u32 = select(0u, (ng_len7 - 16u) / 3u, ng_len7 >= 16u);',
+    'let ng_j9: u32 = min(1u, max(ng_n8, 1u) - 1u);',
+    'let ng_j10: u32 = min(v0, 1u);',
+    'let ng_w11: u32 = min(((ng_j9 * 3u) + ng_j10) + 16u, ng_len7 - 1u);',
+    'let ng_t12: i32 = bitcast<i32>(r0[ng_w11]);',
+    'let v5: i32 = select(i32(), ng_t12, ng_n8 != 0u);',
+    'r1.f2[1u] = v5;',
+  ))
+})
+
 test('images: texel tested and clamped, put inside only, extent of a clamped level, sample through the coordinate and level helpers', () => {
   const m = images()
   const out = toWgsl(m, optionsFor(m))
@@ -1480,6 +1530,40 @@ test('the vertex entry: limit selects for vertex-rate inputs, the position NaN u
   assert.equal(wgsl(m, { vertexRate: 0b1111111111011010, live: 3 }), wgsl(m, { vertexRate: 0, live: 3 }))
 })
 
+test('flat ports are @interpolate(flat) on both sides, f32 ones included; other f32 ports and the live value are interpolated', () => {
+  const v = lens('vertex')
+  v.out(v.output(0, 'f32', { flat: true }), v.cast(v.builtin('vertex-index'), 'f32'))
+  v.out(v.output(1, 'f32x2'), v.make('f32x2', v.f32(1), v.f32(2)))
+  v.out(v.output(2, 'u32', { flat: true }), v.builtin('vertex-index'))
+  v.if(v.gt(v.builtin('vertex-index'), v.u32(2)), () => v.position(v.make('f32x4', v.f32(0), v.f32(0), v.f32(0), v.f32(1))))
+  const vm = v.finish()
+  const vcode = wgsl(vm, { live: 3 })
+  assert.ok(vcode.includes(lines(
+    'struct NgVOut {',
+    '  @builtin(position) @invariant pos: vec4<f32>,',
+    '  @location(0) @interpolate(flat) o0: f32,',
+    '  @location(1) o1: vec2<f32>,',
+    '  @location(2) @interpolate(flat) o2: u32,',
+    '  @location(3) live: f32,',
+    '}',
+  )), vcode)
+  const f = lens('fragment')
+  const a = f.input(0, 'f32', { flat: true })
+  const c = f.input(1, 'f32x2')
+  f.input(2, 'u32', { flat: true })
+  f.out(f.output(0, 'f32x4'), f.make('f32x4', a, f.pick(c, 'x'), f.pick(c, 'y'), a))
+  const fm = f.finish()
+  const fcode = wgsl(fm, { outputs: ['f32'], live: 3 })
+  assert.ok(fcode.includes(lines(
+    'struct NgFIn {',
+    '  @location(0) @interpolate(flat) i0: f32,',
+    '  @location(1) i1: vec2<f32>,',
+    '  @location(2) @interpolate(flat) i2: u32,',
+    '  @location(3) live: f32,',
+    '}',
+  )), fcode)
+})
+
 test('a vertex module that always writes its position adds nothing for it', () => {
   assert.equal(lowered('sure'), lines(
     'struct B0 {',
@@ -1535,6 +1619,7 @@ test('the fragment entry: the uniformity directive, fine derivatives, discard an
     'var<private> ng_o3: u32;',
     'var<private> ng_o5: vec4<f32>;',
     'var<private> ng_gone: bool;',
+    'var<private> ng_sampled: vec4<f32>;',
     '',
     'fn ng_nanx2(x: vec2<f32>) -> vec2<bool> {',
     '  return (bitcast<vec2<u32>>(x) & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x7f800000u);',
@@ -1553,10 +1638,25 @@ test('the fragment entry: the uniformity directive, fine derivatives, discard an
     '  return select(select(x, big, m > vec2<u32>(0x4b800000u)), vec2<f32>(0.0), m > vec2<u32>(0x7f800000u));',
     '}',
     '',
+    'fn ng_rate(x: vec2<f32>) -> vec2<f32> {',
+    '  let u: vec2<u32> = bitcast<vec2<u32>>(x);',
+    '  let big: vec2<f32> = bitcast<vec2<f32>>((u & vec2<u32>(0x80000000u)) | vec2<u32>(0x53800000u));',
+    '  return select(x, big, (u & vec2<u32>(0x7fffffffu)) > vec2<u32>(0x53800000u));',
+    '}',
+    '',
     'fn ng_body() {',
     '  let v0: vec2<f32> = ng_i0;',
     '  let v1: u32 = ng_i1;',
-    '  let v2: vec4<f32> = textureSample(r0, r1, ng_uv(v0));',
+    '  let ng_t0: vec2<f32> = dpdxFine(v0);',
+    '  let ng_t1: vec2<f32> = dpdyFine(v0);',
+    '  let ng_t2: bool = any(ng_nanx2(ng_t0) | ng_nanx2(ng_t1));',
+    '  let ng_t3: vec2<f32> = ng_uv(v0);',
+    '  if (ng_t2) {',
+    '    ng_sampled = textureSampleLevel(r0, r1, ng_t3, -1.0);',
+    '  } else {',
+    '    ng_sampled = textureSampleGrad(r0, r1, ng_t3, ng_rate(ng_t0), ng_rate(ng_t1));',
+    '  }',
+    '  let v2: vec4<f32> = ng_sampled;',
     '  let v3: vec2<f32> = dpdxFine(v0);',
     '  let v4: f32 = v0.y;',
     '  let v5: f32 = dpdyFine(v4);',
@@ -1570,17 +1670,17 @@ test('the fragment entry: the uniformity directive, fine derivatives, discard an
     '  }',
     '  let v10: f32 = v3.x;',
     '  let v11: f32 = v10 + v5;',
-    '  let ng_len0: u32 = arrayLength(&r2);',
-    '  let ng_n1: u32 = select(0u, ng_len0 - 1u, ng_len0 >= 1u);',
-    '  let ng_j2: u32 = min(v1, max(ng_n1, 1u) - 1u);',
-    '  let ng_w3: u32 = min(ng_j2 + 1u, ng_len0 - 1u);',
-    '  if ((ng_n1 != 0u) & !ng_gone) {',
-    '    r2[ng_w3] = bitcast<u32>(v11);',
+    '  let ng_len4: u32 = arrayLength(&r2);',
+    '  let ng_n5: u32 = select(0u, ng_len4 - 1u, ng_len4 >= 1u);',
+    '  let ng_j6: u32 = min(v1, max(ng_n5, 1u) - 1u);',
+    '  let ng_w7: u32 = min(ng_j6 + 1u, ng_len4 - 1u);',
+    '  if ((ng_n5 != 0u) & !ng_gone) {',
+    '    r2[ng_w7] = bitcast<u32>(v11);',
     '  }',
     '  let v12: vec2<f32> = v7.xy;',
     '  let v13: vec2<u32> = ng_f2ux2(v12);',
-    '  let ng_t4: bool = all(v13 < textureDimensions(r3));',
-    '  if (ng_t4 & !ng_gone) {',
+    '  let ng_t8: bool = all(v13 < textureDimensions(r3));',
+    '  if (ng_t8 & !ng_gone) {',
     '    textureStore(r3, v13, v6);',
     '  }',
     '  let v14: f32 = v2.x;',
@@ -1630,6 +1730,37 @@ test('the fragment entry: the uniformity directive, fine derivatives, discard an
   assert.equal(out.entry, 'ng_fragment')
   assert.equal(out.directive, true)
   assert.deepEqual(out.raw, [2])
+})
+
+test('an implicit-level sample takes its rates from the raw coordinate: level -1 where one is NaN, textureSampleGrad elsewhere, the layer clamped', () => {
+  const b = lens('fragment')
+  const uv = b.input(0, 'f32x2')
+  const k = b.input(1, 'i32', { flat: true })
+  const img = b.image(0, 0, { dims: '2d-array' })
+  const smp = b.sampler(0, 1)
+  b.out(b.output(0, 'f32x4'), b.sample(img, smp, uv, { layer: k }))
+  const m = b.finish()
+  const out = toWgsl(m, optionsFor(m, { outputs: ['f32'] }))
+  assert.equal(body(out.code), lines(
+    'let v0: vec2<f32> = ng_i0;',
+    'let v1: i32 = ng_i1;',
+    'let ng_t0: vec2<f32> = dpdxFine(v0);',
+    'let ng_t1: vec2<f32> = dpdyFine(v0);',
+    'let ng_t2: bool = any(ng_nanx2(ng_t0) | ng_nanx2(ng_t1));',
+    'let ng_t3: vec2<f32> = ng_uv(v0);',
+    'let ng_t4: u32 = select(bitcast<u32>(v1), 0u, v1 < 0i);',
+    'let ng_t5: u32 = textureNumLayers(r0);',
+    'let ng_t6: u32 = min(ng_t4, ng_t5 - 1u);',
+    'if (ng_t2) {',
+    '  ng_sampled = textureSampleLevel(r0, r1, ng_t3, ng_t6, -1.0);',
+    '} else {',
+    '  ng_sampled = textureSampleGrad(r0, r1, ng_t3, ng_t6, ng_rate(ng_t0), ng_rate(ng_t1));',
+    '}',
+    'let v2: vec4<f32> = ng_sampled;',
+    'ng_o0 = v2;',
+  ))
+  assert.ok(out.directive && out.code.includes('\nvar<private> ng_sampled: vec4<f32>;\n'))
+  assert.equal(fnNames(out.code).join(' '), 'ng_nanx2 ng_uv ng_rate ng_body ng_fragment')
 })
 
 test('a depth-only pipeline\'s fragment module is the empty module with the live test', () => {
@@ -1944,6 +2075,9 @@ const POSITION_CASES: readonly [string, boolean, (b: LensBuilder, p: Val, c: () 
   ['only in a loop', false, (b, p) => b.loop(() => { b.position(p); b.break() })],
   ['after an if that returns', false, (b, p, c) => { b.if(c(), () => b.return()); b.position(p) }],
   ['after a loop that holds a return', false, (b, p, c) => { b.loop(() => { b.if(c(), () => b.return()); b.break() }); b.position(p) }],
+  ['after an if that holds a loop that returns', false, (b, p, c) => { b.if(c(), () => b.loop(() => b.return())); b.position(p) }],
+  ['after an if whose nested if returns in its else branch', false, (b, p, c) => { b.if(c(), () => b.if(c(), () => b.add(p, p), () => b.return())); b.position(p) }],
+  ['after an if that returns in its else branch', false, (b, p, c) => { b.if(c(), () => b.add(p, p), () => b.return()); b.position(p) }],
   ['never', false, (b, p) => { b.add(p, p) }],
 ]
 
@@ -2084,6 +2218,55 @@ test('bounds: 16 ports each way, both builtins, the position, the live value and
   properties('16 vertex ports', vm, vc, Infinity)
   properties('16 fragment ports', fm, fc, Infinity)
   properties('16 fragment ports, the live value', fl, flc, Infinity, { live: 15 })
+})
+
+test('the live value counts front-facing however deep the body reads it: in a loop, in an else branch, in a nested if', () => {
+  // 15 inputs, front-facing read only where `read` puts it, and the live value: 17 values between the stages.
+  const facingIn = (read: (f: LensBuilder, use: () => void) => void): LensModule => {
+    const f = lens('fragment')
+    const ins = Array.from({ length: 15 }, (_, s) => f.input(s, 'f32'))
+    const o = f.output(0, 'f32')
+    read(f, () => f.out(o, f.choose(f.builtin('front-facing'), ins[0], ins[1])))
+    return f.finish()
+  }
+  const cond = (f: LensBuilder): Val => f.gt(f.pick(f.builtin('frag-coord'), 'x'), f.f32(2))
+  const cases: [string, (f: LensBuilder, use: () => void) => void][] = [
+    ['in a loop', (f, use) => f.loop(() => { use(); f.break() })],
+    ['in an else branch', (f, use) => f.if(cond(f), () => f.discard(), use)],
+    ['in a loop in an if', (f, use) => f.if(cond(f), () => f.loop(() => { use(); f.break() }))],
+    ['in the else branch of a nested if', (f, use) => f.if(cond(f), () => f.if(cond(f), () => f.discard(), use))],
+  ]
+  for (const [name, read] of cases) {
+    const m = facingIn(read)
+    refused(() => toWgsl(m, optionsFor(m, { live: 15 })), 'lens', /^wgsl: options: the live value would make 17 values passed between the stages \(15 inputs, front-facing and the live value\), and a pipeline passes at most 16$/, name)
+    // Without the live value, 15 inputs and front-facing are 16: the module lowers, front-facing among its inputs.
+    assert.ok(wgsl(m).includes('  @builtin(front_facing) ff: bool,\n'), name)
+  }
+})
+
+test('ng_gone is declared wherever the body holds a discard: in a loop, in an else branch, nested', () => {
+  const discardIn = (place: (f: LensBuilder, c: () => Val) => void): LensModule => {
+    const f = lens('fragment')
+    const x = f.input(0, 'f32')
+    const o = f.storage(0, 0, { n: 'f32' }, { writable: true })
+    place(f, () => f.gt(x, f.f32(0)))
+    f.write(o, ['n'], x)
+    f.out(f.output(0, 'f32'), x)
+    return f.finish()
+  }
+  const cases: [string, (f: LensBuilder, c: () => Val) => void][] = [
+    ['in a loop', (f, c) => f.loop(() => { f.if(c(), () => f.discard()); f.break() })],
+    ['in an else branch', (f, c) => f.if(c(), () => f.out(f.output(1, 'f32'), f.f32(1)), () => f.discard())],
+    ['in a loop in an else branch', (f, c) => f.if(c(), () => f.out(f.output(1, 'f32'), f.f32(1)), () => f.loop(() => { f.discard(); f.break() }))],
+  ]
+  for (const [name, place] of cases) {
+    const m = discardIn(place)
+    const code = wgsl(m, { outputs: ['f32', 'f32'] })
+    assert.ok(code.includes('\nvar<private> ng_gone: bool;\n'), `${name}: ng_gone declared`)
+    assert.ok(code.includes('    ng_gone = true;\n') || code.includes('      ng_gone = true;\n'), `${name}: ng_gone set where it discards`)
+    // The write after it is guarded by ng_gone.
+    assert.ok(code.includes('  if (!ng_gone) {\n    r0.f0 = v'), `${name}: the write is guarded\n${code}`)
+  }
 })
 
 // ---------------------------------------------------------------------------------------------------

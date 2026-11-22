@@ -62,7 +62,8 @@
  * - helper-stores: stores from lanes demoted by discard take place (WGSL says a helper stores nothing; a platform may
  *   still let a demoted invocation's stores through, which the lowering's ng_gone guards against). A lane that starts
  *   as a helper (it covers no sample) stores nothing in either mode: the lowering cannot tell it, and WGSL defines it.
- * - sample-nan: textureSample and textureSampleLevel with a NaN coordinate or level give poison.
+ * - sample-nan: textureSample, textureSampleLevel and textureSampleGrad with a NaN coordinate or level, or a rate given
+ *   to textureSampleGrad that is not finite, give poison.
  * - derivatives: the fine and plain derivatives are coarse, the coarse ones fine.
  * Poison is 0x5a5a5a5a in every scalar kind (as an f32, about 1.5e16), and true for a bool.
  */
@@ -3230,8 +3231,9 @@ class Compiler {
       }
       case 'textureLoad': return this.textureLoad(raw, pos)
       case 'textureStore': return this.textureStore(raw, pos)
-      case 'textureSample':
-      case 'textureSampleLevel': return this.textureSample(name === 'textureSampleLevel', raw, pos)
+      case 'textureSample': return this.textureSample('implicit', raw, pos)
+      case 'textureSampleLevel': return this.textureSample('level', raw, pos)
+      case 'textureSampleGrad': return this.textureSample('grad', raw, pos)
       default: {
         const deriv = /^(dpdx|dpdy|fwidth)(Fine|Coarse)?$/.exec(name)
         if (deriv === null) return refuse(pos, `${name} is not a function in the subset`)
@@ -3363,18 +3365,26 @@ class Compiler {
     }, false)
   }
 
-  textureSample(explicit: boolean, raw: readonly Ex[], pos: Pos): Ex {
-    const name = explicit ? 'textureSampleLevel' : 'textureSample'
+  /**
+   * textureSample (the level from the quad's fine differences of the coordinate), textureSampleLevel (the level given)
+   * and textureSampleGrad (the level from the rates given, as the GPU's own level arithmetic takes them): each through
+   * texture.ts's sample. Under sample-nan a NaN coordinate or level, or a rate that is not finite, gives poison.
+   */
+  textureSample(how: 'implicit' | 'level' | 'grad', raw: readonly Ex[], pos: Pos): Ex {
+    const name = how === 'level' ? 'textureSampleLevel' : how === 'grad' ? 'textureSampleGrad' : 'textureSample'
     const h = this.handleArg(raw[0], ['tex'], name, pos)
     const t = raw[0].ty as Extract<Ty, { k: 'tex' }>
     if (t.sample !== 'f32') refuse(pos, `${name} reads a texture_2d<f32> or texture_2d_array<f32> in the subset, not a ${typeName(t)}`)
     const s = this.handleArg(raw[1], ['sampler'], name, pos)
     const arrayed = t.dim === '2d_array'
-    if (raw.length !== 3 + (arrayed ? 1 : 0) + (explicit ? 1 : 0)) refuse(pos, `${name} of a ${typeName(t)} takes the wrong number of arguments`)
+    const after = 3 + (arrayed ? 1 : 0)
+    if (raw.length !== after + (how === 'level' ? 1 : how === 'grad' ? 2 : 0)) refuse(pos, `${name} of a ${typeName(t)} takes the wrong number of arguments`)
     const uv = this.conv(this.loaded(raw[2]), vecTy(2, 'f32')).ev
     const layer = arrayed ? this.intArg(raw[3], name, pos).ev : null
-    const level = explicit ? this.conv(this.loaded(raw[arrayed ? 4 : 3]), SCALARS.f32).ev : null
-    if (!explicit) (this.fn as FnInfo).uses.add('derivative')
+    const level = how === 'level' ? this.conv(this.loaded(raw[after]), SCALARS.f32).ev : null
+    const gx = how === 'grad' ? this.conv(this.loaded(raw[after]), vecTy(2, 'f32')).ev : null
+    const gy = how === 'grad' ? this.conv(this.loaded(raw[after + 1]), vecTy(2, 'f32')).ev : null
+    if (how === 'implicit') (this.fn as FnInfo).uses.add('derivative')
     const ty = vecTy(4, 'f32')
     return this.valueEx(ty, pos, (m) => {
       const img = this.image(h)
@@ -3383,11 +3393,17 @@ class Compiler {
       const c = uv(m)
       const ly = layer === null ? null : layer(m)
       const out: Lanes = new Array<Val>(m.length)
+      const w = img.store.levelWidth(img.view.levels.base)
+      const hgt = img.store.levelHeight(img.view.levels.base)
       let lods: number[] | null = null
+      let rates: Lanes | null = null
       if (level !== null) lods = (level(m) as number[]).slice()
-      else if (this.quadLanes(m, name)) {
-        const w = img.store.levelWidth(img.view.levels.base)
-        const hgt = img.store.levelHeight(img.view.levels.base)
+      else if (gx !== null && gy !== null) {
+        const ax = gx(m)
+        const ay = gy(m)
+        rates = ax.map((r, l) => (m[l] === 0 ? r : [...(r as number[]), ...(ay[l] as number[])]))
+        lods = rates.map((r, l) => (m[l] === 0 ? 0 : lodFromRates(...(r as [number, number, number, number]), w, hgt)))
+      } else if (this.quadLanes(m, name)) {
         const fine = !this.n.derivatives
         const us = c.map((v) => (v as number[])[0])
         const vs = c.map((v) => (v as number[])[1])
@@ -3397,7 +3413,8 @@ class Compiler {
       for (let l = 0; l < m.length; l++) {
         if (m[l] === 0) continue
         const [u, v] = c[l] as number[]
-        if (lods === null || (this.n.sampleNan && (Number.isNaN(u) || Number.isNaN(v) || Number.isNaN(lods[l])))) {
+        const wild = rates !== null && (rates[l] as number[]).some((x) => !Number.isFinite(x))
+        if (lods === null || (this.n.sampleNan && (Number.isNaN(u) || Number.isNaN(v) || Number.isNaN(lods[l]) || wild))) {
           out[l] = poisonOf(ty)
           continue
         }
@@ -3506,7 +3523,7 @@ const INT1: { readonly [name: string]: (x: number, signed: boolean) => number } 
 const BUILTIN_NAMES = new Set([...Object.keys(FLOAT1), ...Object.keys(INT1), 'abs', 'sign', 'atan2', 'pow', 'step', 'min', 'max', 'clamp', 'fma', 'mix', 'smoothstep',
   'select', 'any', 'all', 'dot', 'cross', 'length', 'normalize', 'distance', 'reflect', 'determinant', 'transpose', 'extractBits', 'insertBits', 'arrayLength',
   'workgroupBarrier', 'storageBarrier', 'textureDimensions', 'textureNumLevels', 'textureNumLayers', 'textureLoad', 'textureStore', 'textureSample',
-  'textureSampleLevel', 'dpdx', 'dpdy', 'fwidth', 'dpdxFine', 'dpdyFine', 'fwidthFine', 'dpdxCoarse', 'dpdyCoarse', 'fwidthCoarse'])
+  'textureSampleLevel', 'textureSampleGrad', 'dpdx', 'dpdy', 'fwidth', 'dpdxFine', 'dpdyFine', 'fwidthFine', 'dpdxCoarse', 'dpdyCoarse', 'fwidthCoarse'])
 
 // ---------------------------------------------------------------------------------------------------
 // Running a module: resources, waves and the three stages
@@ -4888,6 +4905,30 @@ test('quads: implicit-level textureSample takes its level from the quad\'s fine 
   assert.ok(lod > 1 && lod < 2, 'the quad reads between levels 1 and 2')
 })
 
+test('quads: textureSampleGrad takes its level from the rates it is given, as lodFromRates computes it; a rate not finite is poison under sample-nan', () => {
+  const store = imageOf('rgba8', 8, 8, (x, y, _k, q) => ((x * 29 + y * 7 + q * 90) % 256) / 255, 1, 4)
+  const src = `
+    @group(1) @binding(0) var t: texture_2d<f32>;
+    @group(1) @binding(6) var s: sampler;
+    @fragment fn f(@location(0) v: vec4<f32>) -> @location(0) vec4<f32> {
+      if (v.x > 0.5) { return textureSampleGrad(t, s, vec2<f32>(0.3, 0.6), vec2<f32>(v.y, 0.0), vec2<f32>(0.0, v.z)); }
+      return vec4<f32>(-1.0);
+    }`
+  const res = { '1:0': { store, view: viewOf(store) }, '1:6': { sampler: LINEAR } }
+  // Rates per lane: lane 3 takes none (it stays out of the branch, which needs no uniformity), lane 2 an infinity.
+  const rates = [[0.3, 0.05], [0.01, 0.2], [Infinity, 0.1], [0.5, 0.5]]
+  const quad = quadAt(0, 0, (l) => [l === 3 ? 0 : 1, rates[l][0], rates[l][1], 0])
+  const want = (l: number): number[] => {
+    const out = [0, 0, 0, 0]
+    sample(store, viewOf(store), LINEAR, f32(0.3), f32(0.6), 0, lodFromRates(f32(rates[l][0]), 0, 0, f32(rates[l][1]), 8, 8), out)
+    return out
+  }
+  const got = new Program(src, EXACT_RUN).fragment(quad, res).map((o) => o.locations[0])
+  assert.deepEqual(got, [want(0), want(1), want(2), [-1, -1, -1, -1]])
+  const odd = new Program(src, only('sample-nan')).fragment(quad, res).map((o) => o.locations[0])
+  assert.deepEqual(odd, [want(0), want(1), [P, P, P, P], [-1, -1, -1, -1]])
+})
+
 test('vertex and fragment stage values: builtins, locations, structs, frag_depth, front_facing, and entry points by name', () => {
   const src = `
     struct VIn { @builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32, @location(0) p: vec2<f32>, @location(1) @interpolate(flat) k: u32 }
@@ -5959,10 +6000,11 @@ function opStep(g: Gen): void {
       const x = want(g, t)
       approxOp(g, b.atan2(y, x), 'A12', 'atan2', [y, x])
     } else if (s === 7) {
-      // A positive literal base and an exponent literal with no zero are the native call alone.
+      // A positive literal base and an exponent literal with no zero are the native call alone; a zero of either sign
+      // in either (pow's edges: exactly 1, or a zero or an infinity) keeps the helper.
       const plain = g.r(3) === 0
-      const base = plain ? g.lit(t, Array.from({ length: lensWidthOf(t) }, () => g.fnum(choice(g, [0.5, 2, 3, 10, 0.1, 1.5, 7].map((x) => fb(f32(x))))))) : want(g, t)
-      const ex = plain ? g.lit(t, Array.from({ length: lensWidthOf(t) }, () => g.fnum(choice(g, [0.5, 2, -1, 3, -2.5, 1.5, 10].map((x) => fb(f32(x))))))) : want(g, t)
+      const base = plain ? g.lit(t, Array.from({ length: lensWidthOf(t) }, () => g.fnum(choice(g, [0.5, 2, 3, 10, 0.1, 1.5, 7, 0, -0].map((x) => fb(f32(x))))))) : want(g, t)
+      const ex = plain ? g.lit(t, Array.from({ length: lensWidthOf(t) }, () => g.fnum(choice(g, [0.5, 2, -1, 3, -2.5, 1.5, 10, 0, -0].map((x) => fb(f32(x))))))) : want(g, t)
       approxOp(g, b.pow(base, ex), 'A12', 'pow', [base, ex])
     } else {
       const vt = choice(g, F_TYPES.filter((u) => u !== 'f32'))
@@ -6557,6 +6599,10 @@ const FAMILIES: readonly Family[] = [
       const u3 = g.e(b.read(uni, 'g'), [])
       const u2 = g.e(b.read(uni, 'h'), [])
       for (const m of [m2, m3, m4, u3, u2]) all(g, m, g.e(b.transpose(m), [m]), g.e(b.column(m, 1), [m]))
+      // A grid chosen whole, column by column, between two different grids: the first where the condition holds.
+      const c = g.e(b.gt(g.inv, g.lit('u32', [3])), [g.inv])
+      const t4 = g.e(b.transpose(m4), [m4])
+      for (const [p, q] of [[m2, u2], [m3, u3], [m4, t4]] as const) all(g, g.e(b.choose(c, p, q), [c, p, q]), g.e(b.choose(c, q, p), [c, p, q]))
       for (const [p, q] of [[m2, u2], [m3, u3], [m4, m4]] as const) {
         approxAll(g, b.mul(p, q), 'A9', 'mul', [p, q])
         approxAll(g, b.add(p, q), 'A9', 'add', [p, q])
@@ -6566,6 +6612,44 @@ const FAMILIES: readonly Family[] = [
         approxAll(g, b.mul(p, col), 'A9', 'mul', [p, col])
         approxAll(g, b.mul(col, p), 'A9', 'mul', [col, p])
       }
+    },
+  },
+  {
+    // What the lowering knows of a value decides which NaN tests it leaves out. A value known never to be NaN that may
+    // be infinite (min or max beside a literal) is taken through fract and the roundings (fract of an infinity is NaN)
+    // into min, max and clamp, and into the library functions whose native call is left bare only for a finite operand;
+    // and pow of literals at its zero edges, which a native call leaves to the accuracy rules.
+    name: 'values known never NaN but maybe infinite, through fract, the roundings and the library; pow of literal zeros',
+    // Two lanes of each invocation take every special value between them (x), beside two others (y and z).
+    inv: Math.ceil(F_SPECIAL.length / 2 / 4) * 4,
+    word: (k, inv, j) => (k === 'f32' ? F_SPECIAL[(Math.max(inv, 0) * 2 + (j % 2) + [0, 17, 31][Math.floor(j / 2) % 3]) % F_SPECIAL.length] : iWords(k === 'i32' ? I_SPECIAL : U_SPECIAL, Math.max(inv, 0), j)),
+    body: (g, f) => {
+      const b = g.b
+      // pow first, so its records come before the output's room runs out.
+      for (const [a, e] of [[2, 0], [2, -0], [0.5, 0], [0, 2], [-0, 3], [0, -2], [-0, -3], [0, 0], [-0, 0.5]]) {
+        const la = g.lit('f32', [a])
+        const le = g.lit('f32', [e])
+        approxAll(g, b.pow(la, le), 'A12', 'pow', [la, le])
+      }
+      const va = g.lit('f32x2', [2, 0])
+      const ve = g.lit('f32x2', [0, 3])
+      approxAll(g, b.pow(va, ve), 'A12', 'pow', [va, ve])
+      const hi = g.lit('f32', [1])
+      const lo = g.lit('f32', [-1.5])
+      for (let j = 0; j < 2; j++) {
+        const [x, y, z] = [f[j], f[j + 2], f[j + 4]]
+        for (const sure of [g.e(b.max(x, hi), [x]), g.e(b.min(lo, x), [x])]) {
+          const chain: LensVal[] = [sure]
+          for (const fn of ['floor', 'ceil', 'trunc', 'round'] as const) chain.push(g.e(b.unary(fn, sure), [sure]))
+          for (const v of [...chain]) chain.push(g.e(b.unary('fract', v), [v]))
+          for (const v of chain) {
+            all(g, v, g.e(b.min(v, y), [v, y]), g.e(b.max(v, y), [v, y]), g.e(b.min(y, v), [v, y]), g.e(b.clamp(v, y, z), [v, y, z]), g.e(b.clamp(y, v, z), [v, y, z]))
+            for (const fn of ['exp', 'exp2', 'sin', 'cos', 'tan', 'atan'] as const) approxAll(g, b.unary(fn, v), 'A12', fn, [v])
+          }
+        }
+      }
+      // Every record found room in the output: under the 1024 of each type buildFamily's first build allows.
+      assert.ok(g.used.every((n) => n < 1024), `the family's records fit the output: ${g.used.join(', ')}`)
     },
   },
 ]
@@ -6625,8 +6709,8 @@ test('differential: the families pin what they are for (the loop cap, clamped re
 // - FRAGMENT MODULES, per 2 x 2 quad: helper lanes from the start, discard, derivatives, samples, writes and puts after
 //   discard, colour outputs shaped to their attachments, the live test. E values bit for bit; a derivative is A16
 //   (the fine difference, or in adversarial mode the coarse one) and an implicit-level sample A8 (the sample at the
-//   fine level of detail, or in adversarial mode the coarse one), open when a lane's coordinate is not finite or past
-//   2^24, since the GPU differentiates the coordinate ng_uv hands it and the reference the raw one. A quad whose live
+//   fine level of detail, or in adversarial mode the coarse one), coordinates not finite or past 2^24 included, since
+//   the lowering takes the rates from the raw coordinate, as the reference does. A quad whose live
 //   value is not exactly zero lies in a triangle the reference never draws: all four lanes are discarded and nothing
 //   changes.
 
@@ -6724,12 +6808,17 @@ const IMG_WORDS = 24
 const IMG_RECS = 10
 const IMG_INV = 8
 
-/** The layouts a raw source block takes: a fixed part (or none) and a final array of a value or a struct. */
+/**
+ * The layouts a raw source block takes: a fixed part (or none) and a final array of a value or a struct, with arrays of
+ * fixed length in the fixed part and inside the final array's element (of one word, of two, and of grids).
+ */
 const RAW_SOURCES: readonly Parameters<LensBuilder['storage']>[2][] = [
   { n: 'u32', xs: arrayOf('f32x3') },
   { head: 'm2', items: arrayOf({ a: 'i32', v: 'f32x2', g: 'm3' }) },
   { xs: arrayOf('u32') },
   { pad: 'f32x2', k: 'i32', ws: arrayOf({ w: 'u32x2' }) },
+  { pair: arrayOf('f32x2', 3), xs: arrayOf({ q: arrayOf('i32', 2), w: 'u32' }) },
+  { n: 'u32', gs: arrayOf('m2', 2), ys: arrayOf({ k: arrayOf('u32x2', 3), g: arrayOf('m3', 2) }) },
 ]
 
 /** The record fields of the raw output block's final array. */
@@ -6778,7 +6867,9 @@ function imageModule(seed: number): ImageBuilt {
       else if ('struct' in t) walk(t.struct, () => [...prefix(), f.name])
       else {
         const e = t.array
-        const at = (): PathStep[] => [...prefix(), f.name, r(4) === 0 ? r(3) : int()]
+        // A constant index into an array of fixed length lies inside it (the verifier refuses one outside).
+        const len = t.len
+        const at = (): PathStep[] => [...prefix(), f.name, r(4) === 0 ? r(len === 0 ? 3 : len) : int()]
         if (typeof e === 'string') leaves.push({ path: at, t: e })
         else if ('struct' in e) walk(e.struct, at)
       }
@@ -7045,12 +7136,16 @@ function vertexModule(seed: number): VertexBuilt {
   const pos = p.scoped(() => b.position(p.want('f32x4')))
   const c = (): LensVal => b.gt(p.want('u32'), p.want('u32'))
   write()
-  switch (r(6)) {
+  // The position written at the top level, in both branches, in one, after a return (directly in a branch, in a loop
+  // in a branch, or in the else branch of a nested if), only in a loop, or never.
+  switch (r(8)) {
     case 0: pos(); break
     case 1: b.if(c(), pos, pos); break
     case 2: b.if(c(), pos); break
     case 3: b.if(c(), () => b.return()); pos(); break
     case 4: b.loop(() => { pos(); b.break() }); break
+    case 5: b.if(c(), () => b.loop(() => b.return())); pos(); break
+    case 6: b.if(c(), p.scoped(() => b.if(c(), p.scoped(write), () => b.return()))); pos(); break
     default: break
   }
   steps(r(4))
@@ -7159,8 +7254,32 @@ function vertexCase(seed: number): { built: VertexBuilt; rate: number; live: num
   return { built, rate, live, options: stageOptions(m, { vertexRate: rate, live }), r }
 }
 
+/**
+ * Holds that the locations a lowered entry hands on (vertex) or takes (fragment) are flat exactly where their ports
+ * are, f32 ports included, and that the live value is interpolated. Neither run interpolates (each lane is handed its
+ * location values), so the interface is checked as printed: an f32 port without @interpolate(flat) would be
+ * interpolated across the triangle where the reference takes the first vertex's value.
+ */
+function interpolation(p: Program, stage: 'vertex' | 'fragment', ports: readonly Port[], live: number | null, what: string): string[] {
+  const f = p.entry(stage)
+  const bad: string[] = []
+  const seen = new Set<number>()
+  for (const s of stage === 'vertex' ? f.outputs : f.inputs) {
+    if (!('location' in s.io)) continue
+    const at = s.io.location
+    seen.add(at)
+    const port = ports.find((q) => q.slot === at)
+    if (port === undefined && at !== live) bad.push(`${what}: location ${at} is neither a port nor the live value`)
+    const flat = port !== undefined && port.flat === true
+    if (s.io.flat !== flat) bad.push(`${what}: location ${at} is ${s.io.flat ? '' : 'not '}flat, and its ${port === undefined ? 'live value is interpolated' : `port is ${flat ? '' : 'not '}flat`}`)
+  }
+  for (const q of ports) if (!seen.has(q.slot)) bad.push(`${what}: port ${q.slot} has no location`)
+  if (live !== null && !seen.has(live)) bad.push(`${what}: the live value at ${live} has no location`)
+  return bad
+}
+
 /** Runs one seed's vertex module over its draws both ways in one mode; returns the messages of what differs. */
-function vertexRun(seed: number, mode: RunOptions, count: { vertices: number; words: number; unpositioned: number; zeroed: number }): string[] {
+function vertexRun(seed: number, mode: RunOptions, count: { vertices: number; words: number; unpositioned: number; zeroed: number; flat: number }): string[] {
   const { built, rate, live, options, r } = vertexCase(seed)
   const m = built.m
   const code = toWgsl(m, options).code
@@ -7168,7 +7287,8 @@ function vertexRun(seed: number, mode: RunOptions, count: { vertices: number; wo
   const uni = new Map<number, Uint8Array>()
   if (built.uni >= 0) uni.set(built.uni, wordsOf(Array.from({ length: 8 }, (_, i) => wordOf(r, i === 1 ? 'u32' : 'f32'))))
   const { program, bindings } = bindReference(m, uni, new Map(), new Map())
-  const bad: string[] = []
+  const bad: string[] = interpolation(lowered, 'vertex', m.outputs, live, `vertex seed ${seed} ${mode.mode}`)
+  count.flat += m.outputs.filter((q) => q.flat === true && kindOf(q.type) === 'f32').length
   for (let k = 0; k < 4; k++) {
     const d = drawOf(r, m, rate)
     const hidden = hiddenOf(m, d, rate)
@@ -7248,13 +7368,13 @@ function vertexRun(seed: number, mode: RunOptions, count: { vertices: number; wo
 test('differential: vertex modules per vertex, the limit selects against soft.ts\'s attribute rule, positions and the live value', (t) => {
   const SEEDS = 120
   const failures: string[] = []
-  const count = { vertices: 0, words: 0, unpositioned: 0, zeroed: 0 }
+  const count = { vertices: 0, words: 0, unpositioned: 0, zeroed: 0, flat: 0 }
   for (let seed = 1; seed <= SEEDS; seed++) {
     for (const mode of [EXACT_RUN, STAGE_ADVERSARIAL]) failures.push(...vertexRun(seed, mode, count))
   }
-  t.diagnostic(`${SEEDS} modules, two modes: ${count.vertices} vertices, ${count.words} output words bit for bit, ${count.unpositioned} unpositioned, ${count.zeroed} attributes the reference reads as zero`)
+  t.diagnostic(`${SEEDS} modules, two modes: ${count.vertices} vertices, ${count.words} output words bit for bit, ${count.unpositioned} unpositioned, ${count.zeroed} attributes the reference reads as zero, ${count.flat} flat f32 outputs`)
   assert.deepEqual(failures.slice(0, 12), [])
-  assert.ok(count.unpositioned > 200 && count.zeroed > 500, `${count.unpositioned} unpositioned, ${count.zeroed} zeroed`)
+  assert.ok(count.unpositioned > 200 && count.zeroed > 500 && count.flat > 20, `${count.unpositioned} unpositioned, ${count.zeroed} zeroed, ${count.flat} flat f32 outputs`)
 })
 
 // ---------------------------------------------------------------------------------------------------
@@ -7272,8 +7392,11 @@ interface FragBuilt {
   readonly out: number
   readonly img: number
   readonly smp: number
-  /** The class of each word a lane writes (by j), and of each output port (by slot). */
-  readonly writes: readonly (FragCls & { readonly c: number })[]
+  /**
+   * The class of each word a lane writes (by j), with the component it takes and the scalar kind of the value written
+   * (an f32's NaN equals any NaN; an integer's word is held bit for bit), and the class of each output port (by slot).
+   */
+  readonly writes: readonly (FragCls & { readonly c: number; readonly kind: LensScalar })[]
   readonly outs: ReadonlyMap<number, FragCls>
   /** The f32 input ports a derivative or a sample may read: slot and type. */
   readonly smooth: readonly Port[]
@@ -7292,7 +7415,9 @@ function fragmentModule(seed: number): FragBuilt {
     smooth.push({ slot, type: t })
     vals.push(p.keep(v))
   }
-  if (r(2) === 0) p.keep(b.input(6, 'i32x2', { flat: true }))
+  const extra = r(4)
+  if (extra < 2) p.keep(b.input(6, 'i32x2', { flat: true }))
+  else if (extra === 2) p.keep(b.input(6, (['f32', 'f32x3'] as const)[r(2)], { flat: true }))
   const uv = vals[0]
   const fc = b.builtin('frag-coord')
   const facing = r(2) === 0 ? b.builtin('front-facing') : null
@@ -7307,7 +7432,7 @@ function fragmentModule(seed: number): FragBuilt {
   p.keep(py)
   const lane = b.add(b.and(px, b.u32(1)), b.mul(b.and(py, b.u32(1)), b.u32(2)))
   const at = (j: number): LensVal => b.add(b.mul(b.add(b.mul(id, b.u32(4)), lane), b.u32(FRAG_WORDS)), b.u32(j))
-  const writes: (FragCls & { c: number })[] = []
+  const writes: (FragCls & { c: number; kind: LensScalar })[] = []
   const outs = new Map<number, FragCls>()
   const special: { v: LensVal; cls: FragCls }[] = []
   // Derivatives and implicit samples at the top level, before anything that holds a return.
@@ -7334,21 +7459,27 @@ function fragmentModule(seed: number): FragBuilt {
   const discard = (): void => {
     // E conditions only: a float comparison with a NaN is A14, so the coordinate is compared as the i32 it casts to.
     const c = facing !== null && r(3) === 0 ? b.not(facing) : r(2) === 0 ? b.eq(lane, b.u32(r(4))) : b.lt(b.cast(b.pick(uv, 'x'), 'i32'), b.i32(r(6) - 2))
-    b.if(c, () => b.discard())
+    // In the branch of an if, in its else branch, or in a loop: wherever it sits, the module declares ng_gone.
+    const where = r(4)
+    if (where === 0) b.if(b.not(c), () => undefined, () => b.discard())
+    else if (where === 1) b.loop(() => { b.if(c, () => b.discard()); b.break() })
+    else b.if(c, () => b.discard())
   }
   if (r(3) !== 0) discard()
   // Writes: E values, or a component of a derivative or a sample, each word of the lane's own.
   for (let j = 0; j < FRAG_WORDS; j++) {
-    writes.push({ k: 'E', c: 0 })
+    // A word left unwritten keeps its canary, compared as a u32.
+    writes.push({ k: 'E', c: 0, kind: 'u32' })
     if (r(5) === 0) continue
     if (special.length > 0 && r(3) === 0) {
       const s = special[r(special.length)]
       const c = r(lensWidthOf(s.v.t))
-      writes[j] = { ...s.cls, c }
+      writes[j] = { ...s.cls, c, kind: 'f32' }
       b.write(out, ['xs', at(j)], b.bits(lensWidthOf(s.v.t) === 1 ? s.v : b.pick(s.v, 'xyzw'[c]), 'u32'))
     } else {
       const t = (['u32', 'f32', 'i32'] as const)[r(3)]
       const v = p.want(t)
+      writes[j] = { k: 'E', c: 0, kind: t }
       b.write(out, ['xs', at(j)], t === 'u32' ? v : b.bits(v, 'u32'))
     }
     if (r(4) === 0) discard()
@@ -7422,10 +7553,11 @@ function packInputs(program: LensProgram, quad: QuadIn): Float64Array {
 
 /**
  * The values an approximated value may take in lane l: the reference's (fine), and in adversarial mode the coarse
- * difference or the sample at the coarse level of detail; null when nothing is compared (A8 with a lane's coordinate
- * not finite or past 2^24).
+ * difference or the sample at the coarse level of detail. A coordinate not finite or past 2^24 is compared too: the
+ * lowering takes the rates from the raw coordinate, as the reference does, so a NaN rate reads lodMin and an infinite
+ * one lodMax there as well.
  */
-function fragAlternatives(cls: FragCls, quad: QuadIn, l: number, img: ImageBinding, smp: SamplerState, adversarial: boolean): number[][] | null {
+function fragAlternatives(cls: FragCls, quad: QuadIn, l: number, img: ImageBinding, smp: SamplerState, adversarial: boolean): number[][] {
   if (cls.k === 'E') return []
   const comps = (slot: number, lanes: string): number[][] => [0, 1, 2, 3].map((k) => lanes.split('').map((ch) => (quad.locations[k].get(slot) as readonly number[])['xyzw'.indexOf(ch)]))
   if (cls.k === 'A16') {
@@ -7438,7 +7570,6 @@ function fragAlternatives(cls: FragCls, quad: QuadIn, l: number, img: ImageBindi
     return adversarial ? [coarse] : []
   }
   const uv = comps(cls.slot, 'xy')
-  if (uv.some((c) => c.some((x) => !(Math.abs(x) <= 2 ** 24)))) return null
   if (!adversarial) return []
   const w = img.store.levelWidth(img.view.levels.base)
   const h = img.store.levelHeight(img.view.levels.base)
@@ -7446,6 +7577,11 @@ function fragAlternatives(cls: FragCls, quad: QuadIn, l: number, img: ImageBindi
   const rgba = [0, 0, 0, 0]
   sample(img.store, img.view, smp, uv[l][0], uv[l][1], cls.layer ?? 0, lod, rgba)
   return [rgba.map(f32)]
+}
+
+/** Whether an implicit-level sample's quad holds a coordinate that is not finite or is past 2^24. */
+function wildCoordinate(cls: FragCls, quad: QuadIn): boolean {
+  return cls.k === 'A8' && quad.locations.some((loc) => (loc.get(cls.slot) as readonly number[]).slice(0, 2).some((x) => !(Math.abs(x) <= 2 ** 24)))
 }
 
 /** Whether a component is the reference's ('ref'), one of the alternatives ('alt'), or neither (null). */
@@ -7471,12 +7607,17 @@ function fragmentCase(seed: number): { built: FragBuilt; outputs: readonly ('f32
   return { built, outputs, live, options: stageOptions(m, { outputs, live }), r }
 }
 
-/** Runs one seed's fragment module over its quads both ways in one mode; returns the messages of what differs. */
-function fragmentRun(seed: number, mode: RunOptions, count: { lanes: number; words: number; dead: number; helpers: number; discarded: number; open: number; A16: number; A8: number }): string[] {
+type FragCount = { lanes: number; words: number; dead: number; helpers: number; discarded: number; wild: number; flat: number; A16: number; A8: number }
+
+/**
+ * Runs one seed's fragment module over its quads both ways in one mode; returns the messages of what differs. `edit`
+ * changes the lowered text before it runs, for the test that checks the comparison itself catches a lowering that slips.
+ */
+function fragmentRun(seed: number, mode: RunOptions, count: FragCount, edit: (code: string) => string = (c) => c): string[] {
   const { built, outputs, live, options, r } = fragmentCase(seed)
   const m = built.m
   const adversarial = mode.mode !== 'exact'
-  const code = toWgsl(m, options).code
+  const code = edit(toWgsl(m, options).code)
   const lowered = new Program(code, { budget: 1e8, ...mode })
   const imgBinding = seededImage(r, FLOAT_FORMATS[r(FLOAT_FORMATS.length)], (m.resources[built.img] as { dims: string }).dims === '2d-array', false, true)
   const smp = samplerOf(r)
@@ -7495,7 +7636,8 @@ function fragmentRun(seed: number, mode: RunOptions, count: { lanes: number; wor
   const samplers = new Map([[built.smp, smp]])
   const { program, bindings } = bindReference(m, refBlocks, refImages, samplers)
   const resources = evaluatorResources(m, gotBlocks, gotImages, samplers, new Uint8Array(WGSL_HIDDEN.size))
-  const bad: string[] = []
+  const bad: string[] = interpolation(lowered, 'fragment', m.inputs, live, `fragment seed ${seed} ${mode.mode}`)
+  count.flat += m.inputs.filter((q) => q.flat === true && kindOf(q.type) === 'f32').length
   const quads = Array.from({ length: FRAG_QUADS }, (_, q) => quadOf(r, built, q))
   for (let q = 0; q < FRAG_QUADS; q++) {
     const quad = quads[q]
@@ -7541,14 +7683,11 @@ function fragmentRun(seed: number, mode: RunOptions, count: { lanes: number; wor
           continue
         }
         const want = [0, 1, 2, 3].map((c) => (c < p.size ? res.outputs[l * program.outputWidth + p.offset + c] : c === 3 ? 1 : 0))
-        const alts = fragAlternatives(built.outs.get(p.slot) as FragCls, quad, l, imgBinding, smp, adversarial)
-        if (alts === null) {
-          count.open++
-          continue
-        }
-        const have = gv as number[]
         const cls = built.outs.get(p.slot) as FragCls
+        const alts = fragAlternatives(cls, quad, l, imgBinding, smp, adversarial)
+        const have = gv as number[]
         count.words += 4
+        if (wildCoordinate(cls, quad)) count.wild += p.size
         const ok = want.every((w, c) => {
           if (c >= p.size) return bitsOf(have[c], k) === bitsOf(w, k)
           const how = fragMatch(have[c], w, alts, c, k)
@@ -7559,24 +7698,22 @@ function fragmentRun(seed: number, mode: RunOptions, count: { lanes: number; wor
       }
     }
   }
-  // The words written: E bit for bit (an f32's NaN as any NaN), a derivative's or a sample's component by its class.
+  // The words written: E bit for bit (an f32's NaN as any NaN, an integer's word exactly), a derivative's or a sample's
+  // component by its class.
   const rw = words32(refBlocks.get(built.out) as Uint8Array)
   const gw = words32(gotBlocks.get(built.out) as Uint8Array)
   for (let i = 1; i < rw.length; i++) {
     const j = (i - 1) % FRAG_WORDS
     const l = Math.floor((i - 1) / FRAG_WORDS) % 4
     const q = Math.floor((i - 1) / (4 * FRAG_WORDS))
-    const cls = built.writes[j] ?? { k: 'E', c: 0 }
+    const cls = built.writes[j]
     count.words++
-    if (sameWord(gw[i], rw[i], true)) continue
+    if (sameWord(gw[i], rw[i], cls.kind === 'f32')) continue
     const alts = rw[i] === CANARY ? [] : fragAlternatives(cls, quads[q], l, imgBinding, smp, adversarial)
-    if (alts === null) {
-      count.open++
-      continue
-    }
+    if (rw[i] !== CANARY && wildCoordinate(cls, quads[q])) count.wild++
     if (alts.some((a) => bitsOf(bf(gw[i]), 'f32') === bitsOf(a[cls.c], 'f32'))) {
       if (cls.k !== 'E') count[cls.k]++
-    } else bad.push(`fragment seed ${seed} ${mode.mode}: quad ${q} lane ${l} word ${j} (${cls.k}): got ${hex(gw[i])}, the reference ${hex(rw[i])}`)
+    } else bad.push(`fragment seed ${seed} ${mode.mode}: quad ${q} lane ${l} word ${j} (${cls.k} ${cls.kind}): got ${hex(gw[i])}, the reference ${hex(rw[i])}`)
   }
   const a = (refImages.get(stIndex) as ImageBinding).store.bytes
   const g = (gotImages.get(stIndex) as ImageBinding).store.bytes
@@ -7590,11 +7727,87 @@ const sameBytes = (a: Uint8Array, b: Uint8Array): boolean => a.length === b.leng
 test('differential: fragment modules per quad: helpers, discard, derivatives (A16), samples (A8), writes, puts, outputs, the live test', (t) => {
   const SEEDS = 120
   const failures: string[] = []
-  const count = { lanes: 0, words: 0, dead: 0, helpers: 0, discarded: 0, open: 0, A16: 0, A8: 0 }
+  const count: FragCount = { lanes: 0, words: 0, dead: 0, helpers: 0, discarded: 0, wild: 0, flat: 0, A16: 0, A8: 0 }
   for (let seed = 1; seed <= SEEDS; seed++) {
     for (const mode of [EXACT_RUN, STAGE_ADVERSARIAL]) failures.push(...fragmentRun(seed, mode, count))
   }
-  t.diagnostic(`${SEEDS} modules, two modes: ${count.lanes} lanes shaded, ${count.words} words compared, ${count.A16} components the coarse difference (A16) and ${count.A8} the coarse level of detail (A8) gave, ${count.open} left open (A8), ${count.helpers} helper lanes, ${count.discarded} discarded, ${count.dead} quads the live test drops`)
+  t.diagnostic(`${SEEDS} modules, two modes: ${count.lanes} lanes shaded, ${count.words} words compared, ${count.A16} components the coarse difference (A16) and ${count.A8} the coarse level of detail (A8) gave, ${count.wild} components of a sample whose quad holds a coordinate not finite or past 2^24, ${count.flat} flat f32 inputs, ${count.helpers} helper lanes, ${count.discarded} discarded, ${count.dead} quads the live test drops`)
   assert.deepEqual(failures.slice(0, 12), [])
-  assert.ok(count.dead > 20 && count.discarded > 100 && count.helpers > 200 && count.A16 > 100 && count.A8 > 20, JSON.stringify(count))
+  assert.ok(count.dead > 20 && count.discarded > 100 && count.helpers > 200 && count.A16 > 100 && count.A8 > 20 && count.wild > 20 && count.flat > 20, JSON.stringify(count))
+})
+
+test('the fragment differential holds an integer word bit for bit: an i32 whose bits are a NaN as an f32 is not any NaN', () => {
+  // Each negative i32 literal of the lowered text is printed one lower, as a lowering that slipped would print it. The
+  // literals are small, so each word that carries one as an integer is a NaN pattern as an f32 on both sides: a
+  // comparison of every word as an f32 (any NaN equal to any NaN) would pass them all.
+  const lower = (code: string): string => code.replace(/(?<![\w.)\]])-(\d+)i\b/g, (_, n: string) => `-${Number(n) + 1}i`)
+  const count: FragCount = { lanes: 0, words: 0, dead: 0, helpers: 0, discarded: 0, wild: 0, flat: 0, A16: 0, A8: 0 }
+  let edited = 0
+  const caught: string[] = []
+  for (let seed = 1; seed <= 40; seed++) {
+    const { built, options } = fragmentCase(seed)
+    const code = toWgsl(built.m, options).code
+    if (lower(code) === code) continue
+    edited++
+    for (const f of fragmentRun(seed, EXACT_RUN, count, lower)) {
+      const w = /\(E (u32|i32)\): got (0x[0-9a-f]{8}), the reference (0x[0-9a-f]{8})$/.exec(f)
+      if (w !== null && isNanBits(Number(w[2])) && isNanBits(Number(w[3]))) caught.push(f)
+    }
+  }
+  assert.ok(edited > 20, `${edited} modules hold a negative i32 literal`)
+  assert.ok(caught.length > 20, `${caught.length} integer words caught whose bits are NaN patterns as f32 on both sides`)
+})
+
+test('an implicit-level sample takes its level from the raw coordinate\'s fine rates: a NaN one reads lodMin, an infinite one lodMax, as the reference', () => {
+  // Each texel's channels hold its level index (plus 8 on layer 1), so the level each lane read comes back. The quad's
+  // coordinate moves one texel of the first level per pixel; then one lane's component is made NaN, infinite, huge, or
+  // 0 (the value ng_uv hands the sampler for a NaN, which the rates must not see).
+  const W = 64
+  const store = imageOf('rgba16f', W, W, (_x, _y, k, q) => q + 8 * k, 2, 7)
+  const samplers: SamplerState[] = [
+    { mag: 'nearest', min: 'nearest', mip: 'nearest', wrap: ['repeat', 'repeat', 'clamp'], lodMin: 0, lodMax: 32 },
+    { mag: 'linear', min: 'nearest', mip: 'linear', wrap: ['clamp', 'mirror', 'clamp'], lodMin: 1.25, lodMax: 4.5 },
+  ]
+  const base = (l: number): number[] => [f32(0.1 + (l & 1) / W), f32(0.1 + (l >> 1) / W)]
+  const cases: [string, number, number, number][] = [
+    ['finite', 0, 0, 0.1], ['NaN u in lane 0', 0, 0, NaN], ['NaN v in lane 3', 3, 1, NaN], ['NaN u in lane 1', 1, 0, NaN],
+    ['0 u in lane 0', 0, 0, 0], ['+inf u in lane 1', 1, 0, Infinity], ['-inf v in lane 2', 2, 1, -Infinity], ['1e30 u in lane 0', 0, 0, 1e30],
+    ['2^24 + 2 v in lane 3', 3, 1, 2 ** 24 + 2], ['-3e7 u in lane 2', 2, 0, -3e7],
+  ]
+  const levels: { [what: string]: number[] } = {}
+  for (const arrayed of [false, true]) {
+    const b = lens('fragment')
+    const uv = b.input(0, 'f32x2')
+    const img = b.image(0, 0, { dims: arrayed ? '2d-array' : '2d' })
+    const smp = b.sampler(0, 1)
+    b.out(b.output(0, 'f32x4'), b.sample(img, smp, uv, arrayed ? { layer: b.i32(1) } : {}))
+    const m = b.finish()
+    const view: ViewRange = { levels: { base: 0, count: 7 }, layers: { base: 0, count: arrayed ? 2 : 1 } }
+    const code = toWgsl(m, stageOptions(m, { outputs: ['f32'] })).code
+    // Every freedom but the coarse derivatives (A16, compared by the differential): the lowering hands the sampler no
+    // NaN or infinity, so none of them may change a bit.
+    const runs = [new Program(code, EXACT_RUN), new Program(code, { mode: 'adversarial', except: ['derivatives'] })]
+    for (const [si, smpState] of samplers.entries()) {
+      const { program, bindings } = bindReference(m, new Map(), new Map([[img.res, { store, view }]]), new Map([[smp.res, smpState]]))
+      const resources = evaluatorResources(m, new Map(), new Map([[img.res, { store, view }]]), new Map([[smp.res, smpState]]), new Uint8Array(WGSL_HIDDEN.size))
+      for (const [what, lane, c, x] of cases) {
+        const uvs = [0, 1, 2, 3].map((l) => (l === lane ? base(l).map((y, k) => (k === c ? f32(x) : y)) : base(l)))
+        const inputs = new Float64Array(uvs.flat())
+        const pos = [0, 1, 2, 3].map((l) => [(l & 1) + 0.5, (l >> 1) + 0.5, 0.5, 1])
+        const res = program.run({ lanes: 4, inputs, builtins: { 'frag-coord': pos.flat() } }, bindings, 1e6)
+        const want = [0, 1, 2, 3].map((l) => Array.from(res.outputs.slice(4 * l, 4 * l + 4)))
+        if (!arrayed && si === 0) levels[what] = want.map((v) => v[0])
+        for (const [k, p] of runs.entries()) {
+          const got = p.fragment([0, 1, 2, 3].map((l) => ({ position: pos[l], front_facing: true, locations: { 0: uvs[l] } })), resources).map((o) => o.locations[0] as number[])
+          assert.deepEqual(got.map((v) => v.map((y) => hex(fb(y)))), want.map((v) => v.map((y) => hex(fb(y)))), `${arrayed ? '2d-array' : '2d'}, sampler ${si}, ${what}, ${k === 0 ? 'exact' : 'adversarial'}`)
+        }
+      }
+    }
+  }
+  // What the cases are for: a NaN rate reads lodMin (level 0) in every lane it reaches; the coordinate 0 ng_uv makes of
+  // a NaN would have read about three levels up; an infinite rate reads lodMax (the last level).
+  assert.deepEqual(levels['finite'], [0, 0, 0, 0])
+  assert.deepEqual(levels['NaN u in lane 0'], [0, 0, 0, 0])
+  assert.deepEqual(levels['0 u in lane 0'], [3, 3, 3, 0])
+  assert.deepEqual(levels['+inf u in lane 1'], [6, 6, 0, 6])
 })

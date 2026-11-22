@@ -321,20 +321,23 @@ rasterisation rules (**pinned**; the GPU back end's results are to be compared a
 
 ## Limits
 
-The reference renderer reports the WebGPU defaults but one, and the GPU back end is to report the same limits, so an app
-that runs on one runs on the other: images up to 8192 pixels and 256 layers, three binding sets of up to 16 bindings,
-64 KiB uniform and 128 MiB storage bindings at 256-byte offsets, 11 uniform bindings in a stage, 8 vertex buffers with
-16 attributes and strides up to 2048 bytes, 16 values between stages (a fragment lens that reads `front-facing` uses one
-of the `interStage` values, so its vertex lens passes at most 15), 8 colour attachments taking at most 32 bytes per
-sample together (`colorBytes`, counted slot by slot by `colorBytes()` in `formats.ts` with WebGPU's per-format costs and
-alignments: each format first rounds the count up to its channel bytes, then adds its texel bytes, 8 for the
-four-channel 8-bit formats; a render pipeline's colour outputs are held to it too), 128 bytes of inline constants, 256
-invocations per workgroup (256 x 256 x 64 at most along each axis), 65,535 workgroups per axis, 256 MiB buffers and
-allocations, 4096 allocations, 256-byte copy rows, and 64 KiB per `updateBuffer`. Its two heaps hold 1 GiB each unless
-`softBackend({ heap })` says otherwise. The one limit that is not WebGPU's default is `stageUniforms`, 11 where WebGPU's
-is 12: a stage sees at most 11 uniform bindings; the back end keeps one for the inline constants, as it keeps the fourth
-set. A device may ask for lower limits when it opens, except the two alignments (`offsetAlign`, `copyRowAlign`), which
-may only be raised to a multiple of the adapter's. Lens's own bounds are `LENS_LIMITS`.
+The reference renderer reports limits within WebGPU's defaults, so a device opened with the default limits gives them,
+and the GPU back end is to report the same limits, so an app that runs on one runs on the other: images up to 8192
+pixels and 256 layers, three binding sets of up to 16 bindings, 64 KiB uniform and 128 MiB storage bindings at 256-byte
+offsets, 11 uniform bindings in a stage, 8 vertex buffers with 16 attributes and strides up to 2048 bytes, 16 values
+between stages (a fragment lens that reads `front-facing` uses one of the `interStage` values, so its vertex lens passes
+at most 15), 8 colour attachments taking at most 32 bytes per sample together (`colorBytes`, counted slot by slot by
+`colorBytes()` in `formats.ts` with WebGPU's per-format costs and alignments: each format first rounds the count up to
+its channel bytes, then adds its texel bytes, 8 for the four-channel 8-bit formats; a render pipeline's colour outputs
+are held to it too), 128 bytes of inline constants, 256 invocations per workgroup (256 x 256 x 64 at most along each
+axis), 65,535 workgroups per axis, 256 MiB buffers and allocations, 4096 allocations, 256-byte copy rows, and 64 KiB per
+`updateBuffer`. Its two heaps hold 1 GiB each unless `softBackend({ heap })` says otherwise. Three limits are below
+WebGPU's defaults: `sets`, 3 where WebGPU's is 4, as the back end keeps the fourth set for its own block; `bindings`, 16
+where WebGPU's is 1000; and `stageUniforms`, 11 where WebGPU's is 12, as the back end keeps one uniform binding in each
+stage for that block, which carries the inline constants. The others are WebGPU's defaults where WebGPU has the limit,
+and Nightglass's own where it has none (the inline constants, allocations, copy rows and `updateBuffer`). A device may
+ask for lower limits when it opens, except the two alignments (`offsetAlign`, `copyRowAlign`), which may only be raised
+to a multiple of the adapter's. Lens's own bounds are `LENS_LIMITS`.
 
 ## Not yet
 

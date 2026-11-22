@@ -27,7 +27,10 @@
  * zero outside and never reaches outside; `put` writes nothing outside; `extent` clamps its level into the view;
  * `sample` hands the hardware a coordinate whose NaN reads 0 and whose size is held to 2^24, a layer clamped into the
  * view, and an explicit level whose NaN reads 0 and which is held to [-1, 33], so the sampler's own clamp gives the
- * pinned level. Filtering and the implicit level of detail are the GPU's (named in the ledger).
+ * pinned level. An implicit level takes the fine rates of the raw coordinate, as the reference does, never of the one
+ * the sampler is handed: where a rate is NaN the level is -1 (so lodMin), elsewhere the rates go to textureSampleGrad,
+ * each held to 2^40 (past which the level is lodMax anyway). Filtering and the GPU's level arithmetic from those rates
+ * are the GPU's (named in the ledger).
  *
  * STAGES. The vertex entry replaces each vertex-rate input by zero where the reference's attribute rule reads none,
  * from the limits in the hidden block (a wrapped element, a negative one, past the buffer); starts the position as NaN
@@ -302,7 +305,7 @@ type Known = typeof UNKNOWN | typeof SURE | typeof FINITE
 const FAMILIES = [
   'nan', 'truth', 'min', 'max', 'saturate', 'step', 'sign', 'floor', 'ceil', 'trunc', 'round', 'fract', 'f2i', 'f2u', 'u2f', 'i2f',
   'sqrt', 'rsqrt', 'exp', 'exp2', 'log', 'log2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'pow',
-  'length', 'normalize', 'uv', 'lvl',
+  'length', 'normalize', 'uv', 'lvl', 'rate',
 ] as const
 type Family = (typeof FAMILIES)[number]
 
@@ -316,11 +319,12 @@ const DEPENDS: { readonly [F in Family]?: readonly Family[] } = {
 const HIDDEN_FAMILIES: ReadonlySet<Family> = new Set<Family>(['sqrt', 'rsqrt', 'log', 'log2', 'sin', 'cos', 'tan', 'asin', 'acos', 'atan2', 'pow', 'length', 'normalize'])
 
 /** Families used at one width only (a coordinate pair, a level), whose helper's name carries no width. */
-const ONE_WIDTH: { readonly [F in Family]?: number } = { uv: 2, lvl: 1 }
+const ONE_WIDTH: { readonly [F in Family]?: number } = { uv: 2, lvl: 1, rate: 2 }
 
 /**
  * A helper's name: the family's for a scalar, with `x<n>` for a vector of n as Lens names its vectors (a bare width
- * would make `exp` of two lanes `ng_exp2`, the name of `exp2` of one). `uv` and `lvl` have one width and no suffix.
+ * would make `exp` of two lanes `ng_exp2`, the name of `exp2` of one). `uv`, `lvl` and `rate` have one width and no
+ * suffix.
  */
 const helperName = (f: Family, n: number): string => `ng_${f}${n === 1 || ONE_WIDTH[f] !== undefined ? '' : `x${n}`}`
 
@@ -612,6 +616,17 @@ function helperFn(f: Family, w: Width): Decl {
         letS('lo', B, bin('&', bin('>=', u, w.u('0x80000000u')), bin('>', id('m'), w.u('0x3f800000u')))),
         ret(sel(sel(sel(x, w.f('33.0'), id('hi')), w.f('-1.0'), id('lo')), w.f('0.0'), bin('>', id('m'), w.u('0x7f800000u')))),
       ])
+    case 'rate':
+      // A rate of change for textureSampleGrad, its size held to 2^40 (0x53800000) with its sign kept, on the bits. From
+      // 2^40 up the reference's level is past 40 (log2 of at least the rate times a size of 1 or more), so lodMax
+      // whatever the rate (lodMax <= 32), and a rate held at 2^40 keeps it there; the GPU then squares rates of at most
+      // 2^40 times the first level's size (at most 2^15 texels), which stays within f32. An infinity is held too, so
+      // no rate the GPU is handed is one its finite math leaves open. The caller hands it no NaN.
+      return fn(p1(T), T, [
+        uLet(),
+        letS('big', T, w.float(bin('|', bin('&', u, w.u('0x80000000u')), w.u('0x53800000u')))),
+        ret(sel(x, id('big'), bin('>', mag(u), w.u('0x53800000u')))),
+      ])
   }
 }
 
@@ -760,6 +775,8 @@ class Lowerer {
   private temps = 0
   /** A derivative or an implicit-level sample was lowered: the module needs the uniformity directive. */
   private derivs = false
+  /** Fragment: an implicit-level sample was lowered, through the private `ng_sampled` its two branches assign. */
+  private sampled = false
   /** Fragment: writes and puts are guarded by `!ng_gone` (the module holds a discard, or tests a live value). */
   private gone = false
   /** Vertex: `position` also clears `ng_live` (the module may leave its position unwritten, and live is carried). */
@@ -1174,23 +1191,41 @@ class Lowerer {
   /**
    * sample: the coordinate through ng_uv (texture.ts's NaN and size rules), the layer clamped into the view's layers
    * here rather than left to the platform, and an explicit level through ng_lvl for the sampler's own clamp to its
-   * level range. Filtering and the implicit level of detail are the GPU's (A7, A8).
+   * level range. An implicit level takes its rates from the raw coordinate, as interp.ts's lodFromRates does, not from
+   * the one ng_uv makes (which turns a NaN into 0, a finite rate the reference never sees): where a rate is NaN the
+   * reference's level is NaN, so lodMin, which textureSampleLevel at level -1 gives through the sampler's clamp;
+   * elsewhere textureSampleGrad takes the fine rates, each held to 2^40 by ng_rate. Neither call needs uniform control,
+   * so the branch may part the lanes of a quad. Filtering and the level arithmetic are the GPU's (A7, A8).
    */
   private sample(i: InstOf<'sample'>, out: Stmt[]): void {
     const r = id(`r${i.image}`)
     const args: Expr[] = [r, id(`r${i.sampler}`), call(this.helper('uv', 2), this.v(i.uv))]
-    if (i.layer !== undefined) {
-      const k = this.atLeastZero(i.layer, out)
-      const nk = this.let('u32', call('textureNumLayers', r), out)
-      args.push(this.let('u32', call('min', k, bin('-', nk, lit('1u'))), out))
-    }
     if (i.level === undefined) {
       this.derivs = true
-      this.def(i.id, call('textureSample', ...args), out)
+      this.sampled = true
+      const uv = this.v(i.uv)
+      const gx = this.let('vec2<f32>', call(DERIV.dx, uv), out)
+      const gy = this.let('vec2<f32>', call(DERIV.dy, uv), out)
+      const nan = this.helper('nan', 2)
+      const wild = this.let('bool', call('any', bin('|', call(nan, gx), call(nan, gy))), out)
+      args[2] = this.let('vec2<f32>', args[2], out)
+      if (i.layer !== undefined) args.push(this.layer(r, i.layer, out))
+      const rate = this.helper('rate', 2)
+      const to = (e: Expr): Stmt[] => [{ k: 'assign', lhs: id('ng_sampled'), e }]
+      out.push({ k: 'if', c: wild, then: to(call('textureSampleLevel', ...args, lit('-1.0'))), else: to(call('textureSampleGrad', ...args, call(rate, gx), call(rate, gy))) })
+      this.def(i.id, id('ng_sampled'), out)
       return
     }
+    if (i.layer !== undefined) args.push(this.layer(r, i.layer, out))
     args.push(call(this.helper('lvl', 1), this.v(i.level)))
     this.def(i.id, call('textureSampleLevel', ...args), out)
+  }
+
+  /** A sample's layer: a negative i32 taken to 0, then clamped into the view's layers. */
+  private layer(r: Expr, layer: number, out: Stmt[]): Expr {
+    const k = this.atLeastZero(layer, out)
+    const nk = this.let('u32', call('textureNumLayers', r), out)
+    return this.let('u32', call('min', k, bin('-', nk, lit('1u'))), out)
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -1469,6 +1504,7 @@ class Lowerer {
     if (m.stage === 'vertex') priv('ng_pos', 'vec4<f32>')
     if (this.liveOut) priv('ng_live', 'f32')
     if (this.gone) priv('ng_gone', 'bool')
+    if (this.sampled) priv('ng_sampled', 'vec4<f32>')
     for (const f of FAMILIES) {
       for (let n = 1; n <= 4; n++) if ((ONE_WIDTH[f] ?? n) === n && this.helpers.has(helperName(f, n))) decls.push(helperFn(f, new Width(n)))
     }

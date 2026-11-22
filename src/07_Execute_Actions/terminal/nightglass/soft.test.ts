@@ -13,10 +13,11 @@
  * pictures were compared against it.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import type {
   BindingEntry, BindingLayout, BindingSet, BindingWrite, Buffer, BufferUse, ColorAttachment, ColorOutput, CommandArena, CommandList,
-  DepthAttachment, DepthState, Device, Image, ImageInfo, ImageLayout, PipelineLayout, Queue, Rect, RenderPipeline, Scope, VertexBufferLayout, View,
+  DepthAttachment, DepthState, Device, Image, ImageInfo, ImageLayout, Limits, PipelineLayout, Queue, Rect, RenderPipeline, Scope, VertexBufferLayout, View,
 } from './api.ts'
 import { arrayOf, lens } from './builder.ts'
 import { isFault } from './fault.ts'
@@ -355,6 +356,31 @@ test('the back end reports one reference adapter: the spec limits, both features
   device.allocate({ size: 1 << 19, kind: KIND.device })
   refuses(() => device.allocate({ size: (1 << 19) + 4, kind: KIND.images }), 'memory', /heap 0 has 524288 bytes left/)
   device.destroy()
+})
+
+/**
+ * WebGPU's default limits, each under the name of the limit here that matches it (maxBindGroups is `sets`,
+ * maxBindingsPerBindGroup `bindings`, maxUniformBuffersPerShaderStage `stageUniforms`, and so on). The inline constants,
+ * allocations, copy rows and `updateBuffer` are Nightglass's own and have no WebGPU default.
+ */
+const WEBGPU_DEFAULTS: { readonly [K in keyof Limits]?: number } = {
+  imageSize: 8192, imageLayers: 256, sets: 4, bindings: 1000, uniformRange: 65536, storageRange: 134217728, offsetAlign: 256,
+  stageUniforms: 12, stageStorage: 8, stageImages: 16, stageSamplers: 16, stageStorageImages: 4, dynamicUniforms: 8, dynamicStorage: 4,
+  vertexBuffers: 8, vertexAttributes: 16, vertexStride: 2048, interStage: 16, colorAttachments: 8, colorBytes: 32,
+  groupInvocations: 256, groups: 65535, bufferSize: 268435456,
+}
+
+test('the spec\'s Limits section names every limit that is not WebGPU\'s default, with both numbers, and each lies within it', () => {
+  const spec = readFileSync(new URL('../../../../docs/nightglass.md', import.meta.url), 'utf8')
+  const from = spec.indexOf('\n## Limits\n')
+  const section = spec.slice(from, spec.indexOf('\n## ', from + 1)).replace(/\s+/g, ' ')
+  const limits = SOFT_LIMITS as unknown as { readonly [name: string]: number }
+  const differ = Object.entries(WEBGPU_DEFAULTS).filter(([k, v]) => limits[k] !== v)
+  const claimed = [...section.matchAll(/`(\w+)`, (\d+) where WebGPU's is (\d+)/g)].map((m) => `${m[1]} ${m[2]} ${m[3]}`)
+  assert.deepEqual(claimed.sort(), differ.map(([k, v]) => `${k} ${limits[k]} ${v}`).sort())
+  // Each is below WebGPU's default, so a device opened with the default limits gives every one of them.
+  for (const [k, v] of differ) assert.ok(limits[k] < v, k)
+  assert.deepEqual(SOFT_LIMITS.groupSize, [256, 256, 64])
 })
 
 test('softBackend refuses malformed options with code invalid, and its open() only adapter 0', () => {
