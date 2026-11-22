@@ -957,7 +957,7 @@ function quad(b: Buffers, r: Rect, y: number): void {
 export function regionMeshes(pack: RegionPack, l: RegionLayout, fbm: FbmSet, night: UniformNode<'float', number>, matrixMode: UniformNode<'vec4', Vector4> | null = null, transit: Pick<RegionTransit, 'markings' | 'strip'> | null = null, paint: RegionPaint | null = null): RegionScene {
   const meshes: Mesh[] = []
   let vertices = 0
-  // Every surface takes matrix mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
+  // Every surface takes rain mode (01_Initialize_World/matrixMode.ts), as the city's do: once per material, where the
   // material is made, never per mesh. The buildings' one facade is every tile's, and each wrap reads the colour under
   // it twice, so a wrap per tile doubled the shadow pass's shader with every tile until no browser could build it.
   const moded = (m: MeshStandardNodeMaterial): MeshStandardNodeMaterial => (matrixMode ? applyMatrixMode(m, matrixMode) : m)

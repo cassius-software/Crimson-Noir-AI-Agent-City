@@ -26,7 +26,7 @@ import { Fleet } from './vehicles.ts'
 import { SimCore } from './simCore.ts'
 import { POSE } from './simProtocol.ts'
 
-// Vite's `?raw` import, for Node: fleetView.ts takes matrix mode, whose WGSL is imported that way.
+// Vite's `?raw` import, for Node: fleetView.ts takes rain mode, whose WGSL is imported that way.
 registerHooks({
   load(url, context, nextLoad) {
     if (!url.endsWith('.wgsl?raw')) return nextLoad(url, context)

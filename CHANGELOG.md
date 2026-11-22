@@ -15,6 +15,23 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
 
 ### Added
 
+- **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
+  repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
+  (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0
+  for five crates of the Tauri stack by name; nothing share-alike or non-commercial), no text file holds a name from
+  the policy's list of other owners' names, every picture, icon and packed data file has a recorded origin, and
+  every directory under `third_party/` carries its licence text and notices. `src/licenceGate.test.ts` runs it with
+  the tests, and ci's Rust job gains `crate-licences`, which reads each crate's licence from the registry with
+  `cargo metadata` and fails when the committed list differs (run here: 550 crates of 6 workspaces, 0 wrong). It is
+  not legal advice: it refuses the mistakes a machine can see. Its first run found, and this change fixes: two
+  screenshots of Crimson Noir OS that still showed the terminal's earlier name, which held a film franchise's mark
+  (retaken from this commit's image in QEMU), two notes that spelled that mark, and rain mode still called by a
+  film's name in a heading and two sentences of the manual, one entry here and the comments of 22 source files (no
+  identifier, label or behaviour changed). Found and not fixed here, recorded in `docs/ip-audit.md` §8: the app packages carry no
+  notices for the Rust crates linked into them (the next change generates that file); the boot file of the
+  published release tagged `stable-beta` still contains the terminal's earlier name; and where the cover picture
+  came from is unrecorded, which the gate prints as an open question on every run. Not checked by this: clearance
+  of names in the trademark registers, and anything a lawyer has to read.
 - **A check that the web copy and every download come from one commit, and the fault that let them part.** On
   21 November 2026 the web copy, the downloads and main stood at three commits for close to five hours while every
   run was green. Two causes. The `current` workflow picked its commit from the list of ci's runs that passed, and
@@ -3436,10 +3453,10 @@ built by the two release workflows on that tag.
 
 ### Added
 
-- **Matrix mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
+- **Rain mode** ([#17](https://github.com/cassius-software/Crimson-Noir-AI-Agent-City/pull/17)): world-space falling code on every surface, as triplanar functions inside the
   page's three.js node materials (`src/01_Initialize_World/matrixMesh.wgsl`); one global state word (time, mode,
   floating origin) packed into the materials' uniform and the crowd's parameters; toggled with the M key or `rain on`
-  in the console. In matrix mode pedestrians drop to the static-world collision bit, so people and cars pass through
+  in the console. In rain mode pedestrians drop to the static-world collision bit, so people and cars pass through
   each other while the ground and lots still hold; the floating origin snaps the camera to whole metres. Lakefront
   meshes take the mode through the region path. Unverified from the cloud (no GPU): the shaders compiling and their
   look on a real device.

@@ -810,7 +810,7 @@ away; everything else dims behind the code. `G` again, or `ghost off`, fades it 
   `?post=0` there is no chain, and `ghost on` says so; the same while the screen is split (see Split screen) and on
   a lite profile, whose boot never compiles the chain (`?lite=0` brings it back; see Autoscaling).
 
-## Matrix mode
+## Rain mode
 
 `M`, or `rain on` in the console, turns every surface of the city into falling green code, drawn in world space by
 the surfaces' own materials (`01_Initialize_World/matrixMesh.wgsl`, bound by `matrixMode.ts`): a roof takes its
@@ -818,10 +818,10 @@ columns from its (x, z), a wall from its own plane, so the code sits on the faca
 props, the cars and the people and moves with them as the camera moves. The sky is never touched: it is drawn as
 ever. `M` again, or `rain off`, restores every surface at once.
 
-- **One global state.** Both pipelines read one word, `global_state` = (time, matrix mode, floating origin x, z),
+- **One global state.** Both pipelines read one word, `global_state` = (time, rain mode, floating origin x, z),
   defined once (`01_Initialize_World/globalState.ts`): the materials' uniform, and the crowd's `Params.global`
   (`03_Spawn_Agents/crowd.wgsl`), so the drawing and the simulation cannot disagree about the mode.
-- **Physics.** In matrix mode every pedestrian's physics mask drops to the static world's layer alone
+- **Physics.** In rain mode every pedestrian's physics mask drops to the static world's layer alone
   (`crowd.wgsl physicsMaskFor`): the ground still holds them at street level and the lots and the city's edge still
   keep them out of the buildings, while the other pedestrians and the cars pass through them with no push, no
   stagger and no step back. The First-Law sensing is untouched: a car still sees whoever is in its path, and the
@@ -5611,6 +5611,19 @@ entry and build) is proprietary, copyright (c) 2026 Julian Cassius Subban, all r
 `docs/`, the container build, the publish script and the Nix flake) is open source under MIT (`LICENSES/MIT.txt`); the game
 mechanics are offered under the ORC License (`NOTICE.md`). Every source file opens with its licence header, and
 `node tools/license/headers.mjs check` (CI's `license-headers` check) fails on a file without one.
+
+**The licence gate.** `node tools/license/gate.mjs` holds the repository to `tools/license/policy.json`, and
+`src/licenceGate.test.ts` runs it with every test run. It fails on four things a machine can see: a Rust crate, in
+any of the six lockfiles, that the committed list (`tools/license/crates.json`) does not name or names under a
+licence the policy does not allow (the permissive family, and MPL-2.0 for five crates by name); a name from the
+policy's list of other owners' names in any text file; a picture, icon or packed data file with no entry saying
+where it came from and whose it is; and a directory under `third_party/` without its licence text and notices. It
+also prints what the policy marks as open, a question only the owner can answer; today that is where the cover
+picture came from. CI's Rust job adds `crate-licences` (`node tools/license/gate.mjs crates --check`), which reads
+every crate's licence from the registry with `cargo metadata` and fails when the committed list differs. After a
+lockfile changes, `node tools/license/gate.mjs crates --write` rewrites the list, and its diff shows what the change
+brought in. The gate is not legal advice: it proves the files match the policy, not that the policy is enough.
+`docs/ip-audit.md` (§8) records what its first run found and what is left for the owner and a lawyer.
 
 ## Browser support and what is verified
 

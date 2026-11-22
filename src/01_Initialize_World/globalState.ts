@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LicenseRef-CrimsonNoir-Proprietary
 // Proprietary core of Crimson Noir OS / Agent City. Not open source; licensed under the terms in LICENSE.
 /**
- * Why does this file exist? Matrix mode's one global state, as numbers: the four floats every pipeline that takes the
- * mode reads (x = time, y = matrix mode, z and w = the floating origin), the physics layers and the mask the crowd's
+ * Why does this file exist? Rain mode's one global state, as numbers: the four floats every pipeline that takes the
+ * mode reads (x = time, y = rain mode, z and w = the floating origin), the physics layers and the mask the crowd's
  * compute shader applies (03_Spawn_Agents/crowd.wgsl physicsMaskFor mirrors physicsMaskFor here), the origin's snap,
  * and the one packer both uniforms go through (matrixMode.ts for the materials' vec4, 03_Spawn_Agents/crowdCompute.ts
  * for the crowd's Params.global), so the page's materials and the physics worker's crowd cannot disagree about what
@@ -15,7 +15,7 @@
 export interface GlobalState {
   /** Seconds on the clock both pipelines share (the physics realm's). */
   time: number
-  /** Matrix mode on. */
+  /** Rain mode on. */
   on: boolean
   /** The floating origin, metres: the camera's (x, z) snapped (floatingOrigin). */
   originX: number
@@ -40,7 +40,7 @@ export const MATRIX_MODE = Object.freeze({
  */
 export const PHYSICS_LAYER = Object.freeze({ world: 0x1, body: 0x2, vehicle: 0x4 })
 
-/** The mask: every layer, or (matrix mode) the static world alone, so non-building objects phase through each other but stay grounded. */
+/** The mask: every layer, or (rain mode) the static world alone, so non-building objects phase through each other but stay grounded. */
 export const PHYSICS_MASK = Object.freeze({ all: 0xffffffff, matrix: 0x00000001 })
 
 /** The mask a pedestrian carries this tick, from the global state's y (the shader computes the same: crowd.wgsl physicsMaskFor). */
