@@ -22,6 +22,7 @@ import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { offlineBridge, type ActEnd, type ActsBridge, type PendingAct, type TerminalBridge } from './bridge.ts'
 import { CITY_TURN_MAX, LINE_MS, completeLine, complete, redactForHistory, replSession, run, scrubSecrets, type CommandResult, type DiskStore, type OsHost, type OsSession, type ReplSession } from './commands.ts'
+import { LESSONS } from './lessons.ts'
 
 const BRAND = { name: 'TESTBRAND', version: '9.8.7', host: 'testhost' }
 
@@ -1387,4 +1388,22 @@ test('a host digest that answers the seal itself, not as a promise, still seals 
   const said = await settle(next)
   assert.doesNotMatch(said.join('\n'), /could not be read/)
   assert.deepEqual(all('cat a', b, next), ['kept'])
+})
+
+test('the console lessons run the same with the operating layer on: every line each of the ten asks for gets its yes, and all ten are marked finished', () => {
+  const kept: { value: string | null } = { value: null }
+  const b: TerminalBridge = { ...city(), lessons: { load: () => kept.value, save: (v) => { kept.value = v } } }
+  const s = replSession(host())
+  assert.ok(s.os, 'the layer is on')
+  LESSONS.forEach((lesson, i) => {
+    const n = i + 1
+    run(`tutorial ${n}`, b, [], s)
+    lesson.tries.forEach((t, k) => {
+      const said = run(t.type, b, [], s).lines.filter((l) => l.kind === 'sys').map((l) => l.text)
+      const last = k === lesson.tries.length - 1
+      assert.ok(said.some((w) => (last ? w.startsWith(`lesson ${n} finished`) : w.startsWith('yes:'))), `lesson ${n} try ${k + 1}: ${t.type}\n${said.join('\n')}`)
+    })
+  })
+  assert.match(run('tutorial', b, [], s).lines[1]!.text, new RegExp(`, ${LESSONS.length} of ${LESSONS.length} finished:$`))
+  assert.deepEqual(JSON.parse(kept.value!).finished, LESSONS.map((_, i) => i + 1))
 })

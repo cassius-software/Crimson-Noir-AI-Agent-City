@@ -60,7 +60,7 @@ test('bridge: the surface is one reader; the offline stand-in has no columns; th
   // The host the console builds for a run carries the tables, the elite tier's writes while that tier is open (and
   // only then the raised limits), the tier's own lock message, and the first walk's exam where the shell has one
   // (with its own refusal where it has none); nothing else of the bridge reaches the VM.
-  const handler = between(commands, '  noir(args, b, _history, _line, session) {', '  // Read-only: the walk\'s stage and its exit program.')
+  const handler = between(commands, '  noir(args, b, _history, _line, session) {', '  // The console lessons (lessons.ts) and the walk:')
   assert.match(handler, /tables = b\.soa\.tables\(\)/)
   assert.match(handler, /const writes = eliteWritesOf\(b\)/)
   assert.match(handler, /const exam = b\.exam\n/)

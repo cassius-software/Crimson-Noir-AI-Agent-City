@@ -82,7 +82,8 @@
  *   verifies from genesis;
  * - tty: the console alone (?boot=tty), which must not touch WebGPU at all, and whose `ask` (after `operator unlock`)
  *   reaches the page's router: with nothing answering on this machine it prints the router's one sentence, and every
- *   request it made was a look at this machine, none for a model file; then the on-screen keys from a pad (none shown
+ *   request it made was a look at this machine, none for a model file; the console lessons (tutorial lists them,
+ *   lesson 1 run line by line, its finished mark kept and listed); then the on-screen keys from a pad (none shown
  *   before a pad is used; Select raises them on the prompt, A types, the d-pad steps, X deletes, a click types, RT is
  *   Enter, B folds them to the chip, and a real keyboard's key puts them away);
  * - pwa: the installable copy a phone plays (tools/web/pwa.mjs, built from dist/ into a temporary folder) served as a
@@ -1976,6 +1977,21 @@ const SCENARIOS = {
         `${watch.requests.length} requests${strays.length ? `; strays ${strays.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}${files.length ? `; files ${files.slice(0, 3).map((r) => r.url.slice(0, 80)).join(', ')}` : ''}`)
       const after = await p.eval('[window.__adapterAsks, document.querySelectorAll("canvas").length]')
       check(after[0] === 0 && after[1] === 0, 'tty: and still asked for no GPU and drew no canvas', `adapter requests ${after[0]}, canvases ${after[1]}`)
+      // The console lessons (terminal/lessons.ts): tutorial lists the ten, tutorial 1 opens with the five W's and the
+      // first line to type; each line typed as asked gets its yes and the next one, and the finished lesson is kept in
+      // the page's storage (App.tsx LESSONS_KEY) and marked in the list.
+      const listed = await p.command('tutorial', /console lessons in Crimson Noir Script, 0 of 10 finished:/, 10_000)
+      const opened = await p.command('tutorial 1', /Who\? You type, and the console answers\.[\s\S]*Why\? So the console’s small computer does exactly what you write[\s\S]*try 1 of 3, type this line:\s+noir print\("hello"\);/, 10_000)
+      await p.shot('tty-lesson-open')
+      const yes = await p.command('noir print("hello");', /hello\s+yes: print shows what you give it\.[\s\S]*try 2 of 3, type this line:\s+noir print\(2 \+ 3\);/, 10_000)
+      await p.command('noir print(2 + 3);', /try 3 of 3/, 10_000)
+      const finished = await p.command('noir print(2 + 3 * 4, (2 + 3) * 4);', /14 20\s+yes: [\s\S]*lesson 1 finished \(1 of 10\); next: tutorial 2, names that remember/, 10_000)
+      await p.shot('tty-lesson')
+      const keptMarks = await p.eval(`localStorage.getItem('civic-simulation:lessons:v1')`)
+      const marked = await p.command('tutorial', /1 +your first line +\(finished\)/, 10_000)
+      check(!!listed && !!opened && !!yes && !!finished && keptMarks === '{"v":1,"finished":[1]}' && !!marked,
+        'tty: tutorial lists the console lessons; lesson 1 opens with the five W\'s, answers each line typed as asked, and its finished mark is kept and listed',
+        `listed ${!!listed}, opened ${!!opened}, yes ${!!yes}, finished ${!!finished}, kept ${keptMarks}, marked ${!!marked}`)
       // The on-screen keys (ScreenKeys.tsx) from a pad: nothing shows until a pad is used; Select raises them on the
       // prompt, the d-pad steps, A types, X deletes, a click types, RT is Enter, B folds them to the chip (the caret
       // stays), and a real keyboard's key puts them away.

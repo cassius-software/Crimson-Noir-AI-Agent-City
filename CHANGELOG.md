@@ -70,11 +70,34 @@ version, `0.9.0` (the technical design document's), which is sealed into `contai
   `^` or `` ` `` after text, and whatever else a layout puts on that key are typed like any other character (the repeats
   of a held key that opened the console are not); Esc closes it from any line. The folder imports nothing from outside
   itself and names no host clock, timer, storage or network (`os/airgap.test.ts`). Tests: 559 in 20 files under
-  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 56 in `terminal/oslayer.test.ts`, 18
+  `terminal/os/` (a 21st, `kit.test.ts`, is the system they boot and holds none), 57 in `terminal/oslayer.test.ts`, 18
   in `consoleDisk.test.ts`, which uses a stand-in for IndexedDB (the browser's real one is not exercised by them), and 9
   in `consoleWiring.test.ts`, which pins the terminal's and the page's side from their source. Not yet: attaching a
   folder of the computer, full-screen programs and app windows, networking, programs written in Crimson Noir Script.
   `docs/console-operating-layer.md` is the design and `MANUAL.md`, "Files, programs and the shell", the use.
+- **Ten console lessons in Crimson Noir Script: the tutorial's second stage.** After the first walk ends at the
+  console, `tutorial` lists ten optional lessons (your first line; names that remember; kinds of numbers; choosing and
+  repeating; your own words; reading the city; the walls; switches inside numbers; four at once; under the hood), and
+  `tutorial <n>` starts one (`src/07_Execute_Actions/terminal/lessons.ts`). The banner the console prints when the walk
+  ends now says so in a third line. Each lesson opens with the five W's (who, what, when, where, why) in words a
+  five-year-old follows, then gives one line to type at a time, on a row of its own. When the line typed is the
+  lesson's (spaces aside) and the console prints what the lesson says it prints, the lesson says what just happened and
+  gives the next line; a line of the visitor's own passes without a word, even one that prints the same thing. A
+  `noir` line that stops with an error gets a pointer back to the line on every try, and the lesson's own line doing
+  something else is told so, with `tutorial hint` saying what it needs. `tutorial hint`, `next` and `stop` steer a
+  lesson. Finished lessons are marked in the list and kept in the page's storage (`civic-simulation:lessons:v1`,
+  through the bridge's new optional `lessons` store, in the city and in the console alone), merged with what is stored
+  on every read and write, so a console opened before the city was up, or a second tab, never wipes kept marks.
+  `tutorial` alone now lists the lessons under the walk's stage; the exit program moved to `tutorial program` only. No
+  lesson asks for the ~, ^ or ` characters, because on some keyboards those keys close the console. `lessons.test.ts`
+  runs every lesson line through the real console and checks the output the lesson states: with no city and with a
+  small city, in a fresh console and all ten in one console. It also pins what the lessons say about the language (a
+  new `let` makes a new name while `=` is refused, a bare `3` beside `1.5` is taken as `3.0`, a `fn` anywhere on a line
+  but never inside `{ }`, the million-step wall, one `f32x4` sum being one order, `noir asm print(1 + 2);` being five
+  orders that cost five steps), that every try which needs an earlier line says so in its hint, the pointer on tries
+  that stop, the yes given only for the lesson's own line, and the marks merged across two consoles. The `tty` browser
+  smoke lists the lessons, runs lesson 1 line by line in Chrome, and sees its finished mark kept and listed.
+
 - **A licence gate on every pull request, and what its first run found.** `tools/license/gate.mjs` holds the
   repository to `tools/license/policy.json`: every Rust crate of the six lockfiles is on a committed list
   (`tools/license/crates.json`, 550 crates) under a licence the policy allows (the permissive family, and MPL-2.0

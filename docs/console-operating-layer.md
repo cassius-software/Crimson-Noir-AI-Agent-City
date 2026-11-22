@@ -304,12 +304,12 @@ gone, and its storage work ends with it. It is one write, committed at once (`ID
 `stale` without writing when another page of the site has said it saved a newer generation: each page says so after
 every save it kept, on a `BroadcastChannel` named after the database, and a save made as the page goes says so as soon
 as it is committed, since a page being reloaded never sees it answer (if that write then fails, the other page has been
-told `stale` wrongly, but it has been told). It also cuts short this page's timed save still with the store, which
-would hold it up behind a read: the timed save answers as the write that replaced it does, whose image holds all it
-held. A save another page made in the last few milliseconds, before its word arrived, can still be written over by it. If the store could not be read at all (refused,
-failed, or no answer), the console says so at once and every save is refused for the visit, because an image that may
-still be there must not be replaced by an empty disk. Both consoles hand the layer the same store; a console opened
-again in the same page reads the disk afresh, so it gets what was last saved.
+told `stale` wrongly, but it has been told). It also cuts short this page's timed save still with the store, which would
+hold it up behind a read: the timed save answers as the write that replaced it does, whose image holds all it held. A
+save another page made in the last few milliseconds, before its word arrived, can still be written over by it. If the
+store could not be read at all (refused, failed, or no answer), the console says so at once and every save is refused
+for the visit, because an image that may still be there must not be replaced by an empty disk. Both consoles hand the
+layer the same store; a console opened again in the same page reads the disk afresh, so it gets what was last saved.
 
 **When it is saved.** `Terminal.tsx` saves the disk 1.5 seconds after it sees a change (`SAVE_MS`; with more than 1 MiB
 in use, 1.5 seconds for each MiB, and at least 50 times as long as the last image took to make, `SAVE_SPACING`, so
@@ -695,7 +695,7 @@ The counts are as they stood when this page was written; `grep -c '^test(' <file
 - `programs.test.ts` (4): the gathered tables and the shape of every manual page.
 - `kit.test.ts` (0): the shared system under test; it holds no test of its own.
 
-Around the folder, `terminal/oslayer.test.ts` (56) holds the console to the gate, console commands in pipes, the city as
+Around the folder, `terminal/oslayer.test.ts` (57) holds the console to the gate, console commands in pipes, the city as
 files, lines typed while a program reads (and the reply to `read`), Ctrl+C, Tab, the progression check (once a line,
 none for the console commands inside it), a proposal answered only at the prompt, at most 32 console commands a turn (a
 turn's share and its time kept across answers that arrive at once, the waits between answers not counted against it,
@@ -706,7 +706,8 @@ shell never read them, `history` in a shell line (earlier entries dotted in the 
 Enters dotted in both, in that turn and a later one), every fate of the disk, a save sealed by the host's digest (or the
 layer's own when the host's is no seal, and a digest that answers without a promise) or at once as the page goes (the
 newest image asked for behind one with the store, a timed one still on its way asked again), timed, and never
-throwing, the saved seal checked by the host's digest, and the wiring in `Terminal.tsx` and `App.tsx`;
+throwing, the saved seal checked by the host's digest, the ten console lessons (`tutorial <n>`) passing with the layer
+on, and the wiring in `Terminal.tsx` and `App.tsx`;
 `consoleDisk.test.ts` (18) holds the store to its generations, its write asked for with
 its read, its refusal to write over what it could not read, a fresh read for a console opened again, the rows an image
 is set aside in (never one over another, eight at most), and the 4-second bound on the read, each save and each copy,
@@ -720,7 +721,7 @@ listener for the page starting to go, an answer's turn given as a task of its ow
 console only alone on an empty line, the repeats of the press that opened it typing nothing (`commands.test.ts` holds
 `closesOpenConsole` to the layouts, and the browser smoke test's desktop run types `~` and a `` ` `` in the console,
 closes it from an empty line and opens it again with `~` held down). That is 559 tests in the folder's 20 test files,
-and 642 with the three around it. The browser's real IndexedDB is not exercised by these tests.
+and 643 with the three around it. The browser's real IndexedDB is not exercised by these tests.
 
 ## What it does not do yet
 

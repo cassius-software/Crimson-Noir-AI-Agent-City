@@ -20,6 +20,9 @@ arrays), deterministic (no clock, no randomness; f32 is true IEEE binary32 via M
 (steps, output, memory, call depth), and it never throws out of `run`. There is no JIT and no dynamic code generation:
 the console forbids dynamic code; it is a bytecode VM.
 
+A gentle way in: the console's `tutorial` lists ten short lessons in the language (`src/07_Execute_Actions/terminal/lessons.ts`,
+MANUAL.md "The console lessons"), each line of which `lessons.test.ts` runs on this session.
+
 ## Public API (`index.ts`)
 ```ts
 export interface NoirColumns { readonly n: number }               // every table has n (rows)

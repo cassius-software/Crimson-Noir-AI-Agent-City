@@ -26,6 +26,7 @@ import { Terminal, type TerminalHandle } from './07_Execute_Actions/terminal/Ter
 import { consoleDisk } from './07_Execute_Actions/consoleDisk.ts'
 import type { LookBridge, ModelBridge, NetBridge, PendingAct, TerminalBridge } from './07_Execute_Actions/terminal/bridge.ts'
 import { consoleBridge } from './07_Execute_Actions/terminal/consoleBridge.ts'
+import { LESSONS_KEY } from './07_Execute_Actions/terminal/lessons.ts'
 import { hudLine, onDeviceReady, recruitBridge, Recruiter, speechEnv } from './08_Swarm/recruitment.ts'
 import { HUSHED_DETAIL, isOpen as micIsOpen, Microphone, voiceStatus, type MicUtterance } from './04_Connect_Hardware/microphone.ts'
 import { accessBridge, accessFromQuery, applyAccess, CAPTION_PX, cycleScale, highContrast, keepAccess, loadAccess, saveAccess, toggleContrast, type AccessSettings } from './07_Execute_Actions/access.ts'
@@ -624,6 +625,7 @@ type Options = EngineOptions & { debug: boolean; boot: BootTrack; vram: string |
 function ttyBridge(vram: string | null): TerminalBridge {
   return consoleBridge({ ...BRAND, track: 'tty' }, {
     contained: () => airgapInstalled(globalThis),
+    lessons: pageStore(LESSONS_KEY),
     mind: () => PAGE_MIND().then((m) => m.createPageMind({
       fetch: pageFetch,
       store: pageStore(COGNITION_KEY),
@@ -2270,6 +2272,8 @@ function GuiShell({ options, plan, mentored, restarted = false, walk, voice, spe
           memory: memoryBridge(memory, r),
           net: netBridge(e.net, pageStore(NET_TOKEN_KEY)),
           model: modelBridge,
+          // The console lessons' finished marks (terminal/lessons.ts), kept like every other key.
+          lessons: pageStore(LESSONS_KEY),
           // The first walk's exam, behind Crimson Noir Script's verify_ring0 / spawn_subagents / unlock_city: it reads
           // the kernel (the laws, the host's vouch for the air gap, the audit standing), sets its swarm to work through
           // the page's one team runner (lanes at the sixteen workplaces, from wherever the player stands; anyone within
