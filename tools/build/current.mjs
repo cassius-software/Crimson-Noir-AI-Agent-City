@@ -9,13 +9,10 @@
  * titled "Crimson Noir: Agent City, current build", whose files are replaced the same way after each later green run.
  * It never makes a numbered release (those stay build-release.yml's); its only tags are `current` and, for a few
  * seconds when GitHub refuses to move `current`, the stand-in `current-next`.
- * - `pick --sha <commit> [--tested <ci run id>] [--force] [--strict]`: which commit to build, given the one that
- *   started the run. It prints
+ * - `pick --sha <commit> [--force] [--strict]`: which commit to build, given the one that started the run. It prints
  *   `sha=<commit>` and `ci=<the ci run that passed on it>` (for $GITHUB_OUTPUT) for the newest commit on main that ci
  *   passed on there (a push or a run by hand, never a pull request's run), so a run that took a waiting run's place
- *   still builds the newest green commit; `--tested` is the ci run that started this one, read by its own record, so
- *   its commit counts as passed even while GitHub's list of runs does not name it yet (passedRun says what was seen);
- *   nothing on stdout, and why on stderr, when the given commit is not on main,
+ *   still builds the newest green commit; nothing on stdout, and why on stderr, when the given commit is not on main,
  *   no commit on main passed ci, the release already holds a newer one, or it holds that one for every required
  *   target (the iOS build is best effort) and that publish finished (`--force` builds it again). When GitHub cannot say whether a commit is on main, it
  *   exits 1 rather than pass the commit over. `--strict` exits 1 when refused (not on main, nothing green), for a
@@ -295,7 +292,7 @@ export function notes(state, { repo, missing = [] }) {
     '',
     `- **Checked before publishing.** ci passed on the commit: the page's type check, lint, tests and single-file build, the city in Chrome on a software WebGPU adapter, the Rust workspace on CPU and a software GPU, the SMT theorems, the IR call graph, the WebAssembly air gap and the Kani harnesses. Each UEFI image was then baked a second time from a clean build and compared byte for byte, and booted in QEMU (x86-64 on OVMF, aarch64 on edk2) through the self-test, the tutorial and the terminal's scripted run to power-off, and each ISO to its self-test. No physical machine is part of these checks.`,
     '- **Run on a device so far:** the Windows x64 app. The other apps are built and not yet run on a device.',
-    `- **On an iPhone or iPad, open the [web copy](${web}) in Safari; the \`.ipa\` is not for installing.** The web copy needs iOS 26 or iPadOS 26 or newer, the first with WebGPU (an older one shows a card that says so; Chrome and Firefox there are Safari's engine and change nothing), and Share › Add to Home Screen keeps it as an app. No iPhone installs the \`.ipa\` as it is: Apple's devices take only signed apps, so it is a build for a developer to sign with an Apple developer account (TestFlight or the App Store through the paid programme, or a free Apple ID with a sideloading tool on a computer, seven days at a time). Neither has been run on a real iPhone yet.`,
+    `- **On an iPhone or iPad, open the [web copy](${web}) in Safari; the \`.ipa\` is not for installing.** The web copy needs iOS 26 or iPadOS 26 or newer, the first with WebGPU (an older one shows a card that says so; Chrome and Firefox there are Safari's engine and change nothing), and Share › Add to Home Screen keeps it as an app. No iPhone installs the \`.ipa\` as it is: Apple's devices take only signed apps, so it is a build for a developer to sign with an Apple developer account (TestFlight or the App Store through the paid programme, or a free Apple ID with a sideloading tool on a computer, seven days at a time). **The city has not been seen running in Safari yet:** nobody has tried it on a real iPhone or iPad, and the Macs that check every change in Safari have virtual graphics that cannot draw it, so what an iPhone shows is still to be learned from one.`,
     "- **Nothing is signed.** Windows SmartScreen asks once (\"More info\", then \"Run anyway\"); Gatekeeper refuses the macOS app at first (`xattr -dr com.apple.quarantine` on the `.app`, or Privacy & Security › Open Anyway on macOS 15 and later, right-click › Open up to macOS 14; not tried on a Mac); the `.apk` carries the Android debug key; the `.ipa` is unsigned, and an iPhone refuses it until a developer signs it (above). The OS images run on a UEFI machine with Secure Boot off.",
     `- **Versions.** The apps' file names carry the version in \`package.json\` at the commit they were built from (\`${state.version}\` at this one), the \`.rpm\` with its pre-release part as its release number; the zipped macOS \`.app\`, the UEFI files and images, and the notices beside them carry none. The commit above, and each file's row, tell one current build from the next.`,
     `- **Checking a download.** \`sha256sum --check --ignore-missing ${SUMS}\` in the folder you downloaded into; \`${SUMS}\` lists every file here but itself and \`${STATE}\`, which records which commit, run and time made each.`,
@@ -356,48 +353,20 @@ export function onMain(gh, repo, sha, tip = mainTip(gh, repo), { wait = 5000 } =
   return status === 'ahead'
 }
 
-/** Whether a run GitHub describes is ci passing on main here: a push or a run by hand, in this repository, never a pull request's. */
-const passedOnMain = (r, repo) => SHA.test(r?.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo
-
-/**
- * The ci run that started this run (current.yml hands over its id), read by itself. GitHub's list of runs can leave a
- * run out for a while after it has passed, while the run's own record already says so: on 2026-11-21 pick, started 15
- * seconds after ci passed on a commit, was listed only the commit before it, which the release already held, and built
- * nothing, so the downloads stayed a merge behind until the next one. Returns { sha, ci } when that run is ci's, passed
- * on main (a push or a run by hand, in this repository) and tested `sha`; null for anything else, a run GitHub does not
- * know or an answer that cannot be read, so the list alone decides as before.
- */
-export function passedRun(gh, repo, id, sha, { wait = 5000 } = {}) {
-  if (!/^[1-9]\d{0,18}$/.test(String(id ?? ''))) return null
-  const r = attempt(gh, ['api', `repos/${repo}/actions/runs/${id}`], `read the ci run ${id}`, wait)
-  if (!r.ok) return null
-  let run
-  try { run = JSON.parse(r.out) } catch { return null }
-  if (run?.path !== '.github/workflows/ci.yml' || !passedOnMain(run, repo) || run.head_sha !== sha) return null
-  return { sha: run.head_sha, ci: run.html_url ?? '' }
-}
-
 /**
  * The newest commit on main that ci passed on there (a push, or ci run by hand, in this repository), with that run's
- * address, or null. GitHub lists runs newest first; a commit is taken only while it is still on main's history. `known`
- * is a commit ci is known to have passed on by its run's own record (passedRun): it is taken when the list does not
- * name a newer one, and when GitHub cannot say which of the two is newer this throws rather than guess.
+ * address, or null. GitHub lists runs newest first; a commit is taken only while it is still on main's history.
  */
-export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000, known = null } = {}) {
+export function newestGreen(gh, repo, tip = mainTip(gh, repo), { wait = 5000 } = {}) {
   const runs = JSON.parse(api(gh, `repos/${repo}/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=50`)).workflow_runs ?? []
   const seen = new Set()
-  let listed = null
   for (const r of runs) {
-    if (!passedOnMain(r, repo)) continue
+    if (!(SHA.test(r.head_sha ?? '') && r.conclusion === 'success' && r.head_branch === 'main' && (r.event === 'push' || r.event === 'workflow_dispatch') && r.head_repository?.full_name === repo)) continue
     if (seen.has(r.head_sha)) continue
     seen.add(r.head_sha)
-    if (onMain(gh, repo, r.head_sha, tip, { wait })) { listed = { sha: r.head_sha, ci: r.html_url }; break }
+    if (onMain(gh, repo, r.head_sha, tip, { wait })) return { sha: r.head_sha, ci: r.html_url }
   }
-  if (!known || known.sha === listed?.sha || !onMain(gh, repo, known.sha, tip, { wait })) return listed
-  if (!listed) return known
-  const status = compare(gh, repo, listed.sha, known.sha, { wait })
-  if (status === null) throw new Error(`GitHub could not compare ${listed.sha} with ${known.sha}, so which of the two commits ci passed on is the newer is unknown`)
-  return status === 'ahead' ? known : listed
+  return null
 }
 
 /**
@@ -599,14 +568,13 @@ export function placeTag(gh, repo, sha, release, { log = console.log, wait = 150
 }
 
 /** Which commit to build; see the header. Returns { sha, ci, note } or { skip, refused }. */
-export function pick({ sha, tested = '', force = false, repo, wait = 5000 }, gh) {
+export function pick({ sha, force = false, repo, wait = 5000 }, gh) {
   if (!SHA.test(sha ?? '')) return { skip: `not a commit: ${sha}`, refused: true }
   const tip = mainTip(gh, repo)
   if (!onMain(gh, repo, sha, tip, { wait })) return { skip: `${sha} is not on main (main is at ${tip}): the current build follows main alone`, refused: true }
   // The newest green commit, not only the one that started this run: one run waits at a time, and a run that took a
   // waiting one's place (a re-run, a run by hand before main's tip passed ci) must not leave the newest one unpublished.
-  // The ci run that started this one counts by its own record (passedRun), whether or not the list names it yet.
-  const green = newestGreen(gh, repo, tip, { wait, known: passedRun(gh, repo, tested, sha, { wait }) })
+  const green = newestGreen(gh, repo, tip, { wait })
   if (!green) return { skip: `ci has not passed on ${sha} or on any newer commit on main`, refused: true }
   const note = green.sha === sha ? '' : `building ${green.sha}, the newest commit on main that ci passed on (this run was started for ${sha})`
   const release = getRelease(gh, repo)
@@ -735,13 +703,13 @@ export function main(argv, gh = realGh) {
   const [cmd] = argv
   const repo = arg('repo') ?? process.env.GH_REPO
   if (!['pick', 'publish'].includes(cmd) || flag('help')) {
-    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--tested <ci run id>] [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
+    console.log('usage: node tools/build/current.mjs pick --sha <commit> [--force] [--strict]\n       node tools/build/current.mjs publish --media <dir> --sha <commit> [--source <dir>] [--ci <url>] [--run <url>] [--stage <dir>] [--move] [--summary <file>] [--dry-run] [--reused-pick]\n(GH_REPO names the repository, or --repo owner/name)')
     return cmd && !flag('help') ? 1 : 0
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(repo ?? '')) { console.error('::error::GH_REPO (or --repo owner/name) must name the repository'); return 1 }
   try {
     if (cmd === 'pick') {
-      const r = pick({ sha: arg('sha'), tested: arg('tested') ?? '', force: flag('force'), repo }, gh)
+      const r = pick({ sha: arg('sha'), force: flag('force'), repo }, gh)
       if (r.skip) {
         console.error(`${r.refused && flag('strict') ? '::error::' : '::notice::'}${r.skip}`)
         return r.refused && flag('strict') ? 1 : 0

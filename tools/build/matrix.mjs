@@ -287,7 +287,7 @@ export const TARGETS = Object.freeze([
     // and zips Payload/<app>.app into gen/apple/build/arm64/<product name>.ipa.
     plan: () => [rustupTarget(TRIPLES.ios), tauriInit('ios'), fetches(tauri('ios', 'build', '--ci', '--no-sign', '--config', NO_PAGE_BUILD, '--target', 'aarch64'))],
     collect: ({ version }) => globs(join(ROOT, 'src-tauri/gen/apple/build/arm64'), (n) => n.endsWith('.ipa')).slice(0, 1).map(([p]) => [p, `crimson-noir-agent-city_${version}_ios-arm64-unsigned.ipa`]),
-    note: 'cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid account for TestFlight or the App Store); the iPhone home-screen web copy (MANUAL.md, On an iPhone) needs none of that; not run on a Mac yet',
+    note: 'cannot be installed as it is: a device needs it re-signed (a free Apple ID with a sideloading tool, seven days at a time; a paid account for TestFlight or the App Store); the iPhone home-screen web copy (MANUAL.md, On an iPhone) needs none of that; built on a macOS runner by the workflow, not run on a device',
   },
   {
     id: 'uefi-x64', artifact: 'Crimson Noir OS, UEFI x86-64: BOOTX64.EFI, and the .img and .iso media where sh, mtools, sgdisk and xorriso are installed', hosts: ['linux', 'darwin', 'win32'],
