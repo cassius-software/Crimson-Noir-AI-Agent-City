@@ -118,7 +118,7 @@
  *   APP_MODEL's pin swapped for the tiny model's. Opened without models=1 it asks nothing under models/; opened with it,
  *   as the launcher opens it, it asks for the manifest and the model once each with no click, and keeps and loads it;
  * - walk: the first walk (?tutorial=1) end to end on its accessible path: the machine rows (Sloane's as the brain
- *   readout has her), the console opened early
+ *   readout has her), the card's five W's answered one at a time, the console opened early
  *   passing nothing, the lent hand and its rings, the markers, the look stage through the wardrobe card, the console
  *   ending the walk with Sloane's line printed, then the three Crimson Noir Script lines finding the city open; with Sloane's
  *   name question beside the walk's card at five desktop sizes and the walk's card stepping aside for it under 960 px;
@@ -2754,6 +2754,20 @@ const SCENARIOS = {
       check(/Device/.test(machine) && /(?:A phone|A laptop or desktop|A workstation)/.test(machine) && /Picture/.test(machine)
         && /(?:Ready to plan|Thinking (?:on this device|with a model on this machine|off this machine)|(?:Getting|Keeping) her model, \d+%|The app checks her model, \d+%)/.test(machine) && brainRow !== null,
         'walk: the first card reads the machine (device, picture, and Sloane as the brain readout has her)', `${machine.replace(/\s+/g, ' ').slice(0, 200)} | ${brainRow ? `${brainRow.brain}: ${brainRow.where.slice(0, 120)}` : 'the row is not the readout\'s'}`)
+      // The card answers the five W's one at a time, in a five-year-old's words: its button names the next one (Who?
+      // What? When? Where? Why?), each answer shows its W, and after Why the button is gone.
+      const asked = []
+      for (let i = 0; i < 5; i++) {
+        asked.push(await p.eval(`(() => { const b = document.querySelector('[data-walk-w]'); if (!b) return null; const t = b.textContent.trim(); b.click(); return t })()`))
+        await p.frames(2)
+      }
+      const answered = await p.eval(`[...document.querySelectorAll('[data-walk-ws] li')].map((li) => li.innerText.trim())`)
+      const askedAll = await p.eval(`!document.querySelector('[data-walk-w]')`)
+      await p.eval(`document.querySelector('[data-walk-ws]')?.scrollIntoView({ block: 'end' })`)
+      await p.frames(2)
+      await p.shot('walk-five-ws')
+      check(asked.join(' ') === 'Who? What? When? Where? Why?' && answered.length === 5 && answered.every((a, i) => a.startsWith(['Who? ', 'What? ', 'When? ', 'Where? ', 'Why? '][i])) && askedAll,
+        'walk: the card answers who, what, when, where and why, one at a time, and then has nothing left to ask', `${asked.join(' ')} | ${answered.map((a) => a.slice(0, 28)).join(' / ')} | button gone ${askedAll}`)
       // The console opened before the last stage passes nothing: the walk is held until the visitor reaches it there.
       // (Sloane's name field may still hold the keyboard, where the tilde is a character: the page takes it back first.)
       await p.eval('document.activeElement?.blur?.()')

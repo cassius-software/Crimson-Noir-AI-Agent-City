@@ -13,8 +13,9 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import ClusteredLightsNode from 'three/addons/tsl/lighting/ClusteredLightsNode.js'
-import { CityLightsNode, FIXTURE, LAMP, LIGHT_GRID, MAX_CLUSTERED_LIGHTS, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
+import { CityLightsNode, FIXTURE, LAMP, LIGHT_GRID, LampIndex, MAX_CLUSTERED_LIGHTS, lampHead, nearestLamps, roomFixtures } from './cityLights.ts'
 import { CITY, streetFurniture } from './city.ts'
+import { SEG, WINDOW_GEOMETRY, windowFurniture, type StreetGrid } from './region/streets.ts'
 import { ROOM, toWorld, workplaces } from './interiors.ts'
 
 /** The lamp pool world.ts FULL_WORLD builds (liteWiring.test.ts pins it; world.ts needs the page's WGSL hook to load here). */
@@ -58,6 +59,86 @@ test('nearestLamps: the city\'s own lamps, from a sidewalk: a tier\'s count reac
   // Nearest first, so the lit set is a disc round the focus.
   const d = out.map((i) => Math.hypot(heads[i][0] - at, heads[i][2] - at))
   for (let k = 1; k < d.length; k++) assert.ok(d[k] >= d[k - 1] - 1e-6)
+})
+
+/** A generated region's whole map as a grid, every street walked and driven: `blocks` across, its corner where engine metres put it. */
+function wholeMap(blocks: number, originX = 2000 - 1280, originZ = 2000 - 1280): StreetGrid {
+  const all = SEG.walk | SEG.drive
+  return { originX, originZ, blocks, ...WINDOW_GEOMETRY, h: new Uint8Array((blocks + 1) * blocks).fill(all), v: new Uint8Array((blocks + 1) * blocks).fill(all) }
+}
+
+test('LampIndex: the same lamps, in the same order, at the same squared radius as nearestLamps, from anywhere, ties included', () => {
+  const g = wholeMap(36)
+  const heads = windowFurniture(g, 7).lamps.map(lampHead)
+  assert.ok(heads.length > 10_000, `${heads.length} lamps`)
+  const index = new LampIndex(heads)
+  assert.equal(index.count, heads.length)
+  const P = CITY.pitch, span = g.blocks * P
+  // Foci where the grid's symmetry ties many lamps (crossings, block middles, kerbs), cell edges of the index (every
+  // 40 m from the lowest head), the map's corners and beyond them, and a deterministic scatter.
+  const foci: [number, number][] = []
+  for (const [u, v] of [[0, 0], [0.5, 0.5], [12, 12], [12.5, 3], [35.5, 35.5], [36, 36], [-0.5, 18], [18, 36.25], [-3, -3], [40, 18], [250, -90]]) foci.push([g.originX + u * P, g.originZ + v * P])
+  const x0 = Math.min(...heads.map((h) => h[0])), z0 = Math.min(...heads.map((h) => h[2]))
+  for (let k = 0; k < 8; k++) foci.push([x0 + 40 * (k + 3), z0 + 40 * (k + 5)])
+  foci.push([g.originX + 12 * P + WINDOW_GEOMETRY.furniture, g.originZ + 7 * P + 10])
+  let seed = 12345
+  const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296 }
+  for (let k = 0; k < 60; k++) foci.push([g.originX - 60 + next() * (span + 120), g.originZ - 60 + next() * (span + 120)])
+  const s = scratch()
+  const a: number[] = [], b: number[] = []
+  let ties = 0
+  for (const [fx, fz] of foci) {
+    for (const count of [1, 2, 32, 192, 384]) {
+      const want = nearestLamps(heads, fx, fz, count, a, s)
+      const got = index.nearest(fx, fz, count, b)
+      assert.equal(got, want, `(${fx}, ${fz}) × ${count}: the same squared radius`)
+      assert.deepEqual(b, a, `(${fx}, ${fz}) × ${count}: the same lamps in the same order`)
+      // A tie across the last place: the lamp just outside has the same distance as the farthest chosen.
+      if (a.length === count) {
+        const outside = heads.findIndex((h, i) => !a.includes(i) && Math.fround((h[0] - fx) ** 2 + (h[2] - fz) ** 2) === want)
+        if (outside >= 0) ties++
+      }
+    }
+  }
+  assert.ok(ties > 0, 'some choices were cut through a tie, and the index cut it where the sort did')
+})
+
+test('LampIndex: a count over a quarter of the lamps, no count, a focus that is not finite and no lamps are nearestLamps\' own answers', () => {
+  const heads = windowFurniture(wholeMap(6), 7).lamps.map(lampHead)
+  const index = new LampIndex(heads)
+  const s = scratch()
+  const a: number[] = [], b: number[] = []
+  for (const [fx, fz, count] of [[2000, 2000, Math.ceil(heads.length / 4) + 1], [2000, 2000, heads.length + 9], [2000, 2000, 0], [2000, 2000, -3], [Number.NaN, 2000, 8], [2000, Number.POSITIVE_INFINITY, 8]]) {
+    const want = nearestLamps(heads, fx, fz, count, a, s)
+    const got = index.nearest(fx, fz, count, b)
+    assert.ok(Object.is(got, want), `(${fx}, ${fz}) × ${count}: ${got} vs ${want}`)
+    assert.equal(b.length, a.length)
+    if (Number.isFinite(fx) && Number.isFinite(fz)) assert.deepEqual(b, a)
+  }
+  const none = new LampIndex([])
+  assert.equal(none.nearest(0, 0, 4, b), 0)
+  assert.deepEqual(b, [])
+})
+
+test('LampIndex: a focus kilometres off the map answers at once, the map\'s nearest corner lamps', () => {
+  const heads = windowFurniture(wholeMap(36), 7).lamps.map(lampHead)
+  const index = new LampIndex(heads)
+  const a: number[] = [], b: number[] = []
+  const t0 = performance.now()
+  const got = index.nearest(-1e7, -1e7, 32, b)
+  const ms = performance.now() - t0
+  assert.equal(got, nearestLamps(heads, -1e7, -1e7, 32, a, scratch()))
+  assert.deepEqual(b, a)
+  assert.ok(ms < 250, `${ms.toFixed(1)} ms: the rings start at the map, not at the focus`)
+  // Farther than a double counts cells one by one (a physics fault could throw the player there): nearestLamps' answer,
+  // at once, never a ring counter that stops moving.
+  for (const [fx, fz] of [[1e18, 3000], [3000, -4e17], [-1e30, 1e30], [Number.MAX_VALUE, 0]]) {
+    const t1 = performance.now()
+    const far = index.nearest(fx, fz, 32, b)
+    assert.ok(Object.is(far, nearestLamps(heads, fx, fz, 32, a, scratch())), `(${fx}, ${fz})`)
+    assert.deepEqual(b, a)
+    assert.ok(performance.now() - t1 < 250, `(${fx}, ${fz}): answered at once`)
+  }
 })
 
 test('lampHead: the head over the kerb, LAMP.reach along the arm, at LAMP.height', () => {

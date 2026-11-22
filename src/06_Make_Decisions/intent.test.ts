@@ -435,7 +435,7 @@ test('markdown brief golden: goal, why-chain, root intent, plan (now vs. later, 
     '',
     '**Goal:** make it night',
     '',
-    '## Why',
+    '## Questions asked',
     '1. Is it the look you’re after, or fewer people about? — **Fewer people**',
     '',
     '## Root intent',
@@ -448,7 +448,7 @@ test('markdown brief golden: goal, why-chain, root intent, plan (now vs. later, 
     '- [ ] Thin the crowd — `03_Spawn_Agents/crowdCompute.ts`, `05_Observe_Environment/governor.ts`, `07_Execute_Actions/engine.ts`',
     '',
     '---',
-    '_Written by the concierge’s 5-Whys engine (deterministic, offline). Module paths are under `src/`._',
+    '_Written by the concierge’s goal questions (deterministic, offline). Module paths are under `src/`._',
     '',
   ].join('\n'))
   assert.match(m.brief().markdown, /- \[ \] Set the clock/, 'unticked until the host applies it')
@@ -456,7 +456,8 @@ test('markdown brief golden: goal, why-chain, root intent, plan (now vs. later, 
 
 test('markdown brief: no questions, nothing mapped, and the unsupported are each said plainly', () => {
   const clear = new FiveWhys('mute').brief().markdown
-  assert.match(clear, /## Why\n_No questions needed: the goal was clear\._/)
+  assert.match(clear, /## Questions asked\n_No questions needed: the goal was clear\._/)
+  assert.doesNotMatch(clear, /5-Whys|## Why\b/, 'short questions, not five whys')
   assert.match(clear, /### Now — the Concierge applies these\n- \[ \] Turn the sound off — `07_Execute_Actions\/audio\.ts`/)
   assert.doesNotMatch(clear, /### Later/)
   const none = ask('pizza', 'The controls').brief()

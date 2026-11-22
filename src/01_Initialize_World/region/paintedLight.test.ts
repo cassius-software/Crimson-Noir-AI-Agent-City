@@ -378,9 +378,11 @@ test('the region\'s lawn, pavement, asphalt and road markings glow by the pictur
 test('the world bakes the picture for a street window alone and hands it to the region; the engine sends the lit lots (source pins)', () => {
   const read = (p: string): string => readFileSync(new URL(p, import.meta.url), 'utf8').replace(/\s+/g, ' ')
   const world = read('../world.ts'), engine = read('../../07_Execute_Actions/engine.ts'), region = read('./regionWorld.ts')
-  assert.ok(world.includes('if (region?.streets) { const picture = bakePaintedLight({ window: region.streets, lamps: furniture.lamps, interiors: region.interiors ?? [], frontages: regionFrontages(region.pack, region.layout, paintBounds(region.streets), SPILL.reach), })'), 'baked from the window\'s own lamps, the lit lots and the frontages round it')
+  // The window's own lamps (World.sensors), never the whole map's a region draws: a lamp past the window would paint a
+  // pool the picture's edge cuts (propTiles.test.ts holds the picture's edge dark for the world's own input).
+  assert.ok(world.includes('if (region?.streets) { const picture = bakePaintedLight({ window: region.streets, lamps: sensors.lamps, interiors: region.interiors ?? [], frontages: regionFrontages(region.pack, region.layout, paintBounds(region.streets), SPILL.reach), })'), 'baked from the window\'s own lamps, the lit lots and the frontages round it')
   assert.ok(world.includes('const map = paintTexture(picture) renderer.initTexture(map)'), 'uploaded at boot, not at the first night frame')
-  assert.ok(world.includes('paint = { originX: picture.originX, originZ: picture.originZ, size: picture.size, map, night, real: realLight, floors: paintFloors }'), 'with the night, the real light\'s reach and the fixtures\' switch')
+  assert.ok(world.includes('paint = { originX: picture.originX, originZ: picture.originZ, size: picture.size, map, night, real: realLight, floors: paintFloors, props: tiled ? { focus: propFocus, reach: propReach } : null, }'), 'with the night, the real light\'s reach, the fixtures\' switch and the props\' focus and reach')
   assert.ok(world.includes('regionMeshes(region.pack, region.layout, fbm, night, matrixMode.globalState, region.transit ?? null, paint)'))
   // The floors under real fixtures show only while those are off; the glow of the city joins the fill only then too.
   assert.ok(world.includes('for (const l of fixtureLights) l.visible = litLamps > 0 paintFloors.value = litLamps > 0 ? 0 : 1'))
